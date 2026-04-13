@@ -1,0 +1,205 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - goos: linux
+            goarch: amd64
+            suffix: linux_amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux_arm64
+          - goos: linux
+            goarch: arm
+            goarm: "7"
+            suffix: linux_armv7
+          - goos: linux
+            goarch: "386"
+            suffix: linux_386
+          - goos: linux
+            goarch: riscv64
+            suffix: linux_riscv64
+          - goos: linux
+            goarch: ppc64le
+            suffix: linux_ppc64le
+          - goos: linux
+            goarch: s390x
+            suffix: linux_s390x
+          # macOS
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin_amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin_arm64
+          # Windows
+          - goos: windows
+            goarch: amd64
+            suffix: windows_amd64
+            ext: .exe
+          - goos: windows
+            goarch: arm64
+            suffix: windows_arm64
+            ext: .exe
+          - goos: windows
+            goarch: "386"
+            suffix: windows_386
+            ext: .exe
+          # BSDs
+          - goos: freebsd
+            goarch: amd64
+            suffix: freebsd_amd64
+          - goos: freebsd
+            goarch: arm64
+            suffix: freebsd_arm64
+          - goos: openbsd
+            goarch: amd64
+            suffix: openbsd_amd64
+          - goos: openbsd
+            goarch: arm64
+            suffix: openbsd_arm64
+          - goos: netbsd
+            goarch: amd64
+            suffix: netbsd_amd64
+          - goos: netbsd
+            goarch: arm64
+            suffix: netbsd_arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          COMMIT=${GITHUB_SHA::8}
+          go build -tags noassets \
+            -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+            -o dotkeeper${{ matrix.ext }} \
+            ./cmd/dotkeeper
+
+      - name: Archive
+        run: |
+          NAME=dotkeeper_${GITHUB_REF#refs/tags/v}_${{ matrix.suffix }}
+          mkdir -p "${NAME}"
+          cp dotkeeper${{ matrix.ext }} LICENSE README.md dotkeeper.toml.example "${NAME}/"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            zip "${NAME}.zip" -r "${NAME}"
+          else
+            tar czf "${NAME}.tar.gz" "${NAME}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.suffix }}
+          path: dotkeeper_*.*
+
+  package:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goarch: amd64
+            nfpm_arch: amd64
+            suffix: linux_amd64
+          - goarch: arm64
+            nfpm_arch: arm64
+            suffix: linux_arm64
+          - goarch: arm
+            nfpm_arch: armhf
+            suffix: linux_armv7
+          - goarch: "386"
+            nfpm_arch: "386"
+            suffix: linux_386
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-${{ matrix.suffix }}
+
+      - name: Extract binary
+        run: |
+          tar xzf dotkeeper_*_${{ matrix.suffix }}.tar.gz
+          cp dotkeeper_*_${{ matrix.suffix }}/dotkeeper .
+
+      - name: Install nFPM
+        run: |
+          curl -sfL https://github.com/goreleaser/nfpm/releases/latest/download/nfpm_linux_amd64.tar.gz | tar xz nfpm
+          chmod +x nfpm
+
+      - name: Set version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+
+      - name: Build deb
+        run: ./nfpm pkg --config nfpm.yml --packager deb --target dotkeeper_${VERSION}_${{ matrix.nfpm_arch }}.deb
+        env:
+          NFPM_ARCH: ${{ matrix.nfpm_arch }}
+
+      - name: Build rpm
+        run: ./nfpm pkg --config nfpm.yml --packager rpm --target dotkeeper_${VERSION}_${{ matrix.nfpm_arch }}.rpm
+        env:
+          NFPM_ARCH: ${{ matrix.nfpm_arch }}
+
+      - name: Build apk
+        run: ./nfpm pkg --config nfpm.yml --packager apk --target dotkeeper_${VERSION}_${{ matrix.nfpm_arch }}.apk
+        env:
+          NFPM_ARCH: ${{ matrix.nfpm_arch }}
+
+      - name: Build archlinux
+        run: ./nfpm pkg --config nfpm.yml --packager archlinux --target dotkeeper_${VERSION}_${{ matrix.nfpm_arch }}.pkg.tar.zst
+        env:
+          NFPM_ARCH: ${{ matrix.nfpm_arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.suffix }}
+          path: dotkeeper_*.*
+
+  release:
+    needs: [build, package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          sha256sum dotkeeper_* > checksums_sha256.txt
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          gh release create "${VERSION}" \
+            --title "dotkeeper ${VERSION}" \
+            --generate-notes \
+            artifacts/dotkeeper_* \
+            artifacts/checksums_sha256.txt
