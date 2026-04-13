@@ -1,0 +1,15 @@
+# Managed by dotkeeper — https://github.com/julian-corbet/dotkeeper
+# This file is tracked in git for resilience.
+
+[repo]
+name = "dotkeeper"
+added = "2026-04-14T21:35:36Z"
+added_by = "CORBET-ELITEBOOK"
+
+[machines]
+
+[machines."CORBET-ELITEBOOK"]
+last_seen = "2026-04-14T21:36:04Z"
+
+[machines."CORBET-CACHYOS"]
+last_seen = "2026-04-15T00:01:26Z"

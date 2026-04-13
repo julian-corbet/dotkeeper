@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  # Only run on manual pushes, not auto-sync commits.
+  # Auto-sync commits start with "auto:" — we skip those in the job.
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Skip auto-sync commits from dotkeeper's git timer
+    if: "!startsWith(github.event.head_commit.message, 'auto:')"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -tags noassets ./cmd/dotkeeper
+
+      - name: Test
+        run: go test -tags noassets ./...
+
+      - name: Vet
+        run: go vet -tags noassets ./...
+
+  # lint:
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-go@v5
+  #       with:
+  #         go-version-file: go.mod
+  #     - uses: golangci/golangci-lint-action@v6
+  #       with:
+  #         args: --build-tags noassets
+  #   # TODO: enable when golangci-lint supports Go 1.26+

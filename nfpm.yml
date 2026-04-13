@@ -1,0 +1,31 @@
+name: dotkeeper
+arch: ${NFPM_ARCH}
+version: ${VERSION}
+maintainer: Julian Corbet
+description: P2P repo sync with git history — embedded Syncthing + git auto-sync
+homepage: https://github.com/julian-corbet/dotkeeper
+license: AGPL-3.0
+vendor: Julian Corbet
+
+depends:
+  - git
+
+contents:
+  - src: dotkeeper
+    dst: /usr/bin/dotkeeper
+
+  - src: dotkeeper.toml.example
+    dst: /usr/share/doc/dotkeeper/dotkeeper.toml.example
+
+  - src: README.md
+    dst: /usr/share/doc/dotkeeper/README.md
+
+  - src: LICENSE
+    dst: /usr/share/licenses/dotkeeper/LICENSE
+
+rpm:
+  group: Applications/System
+
+deb:
+  section: utils
+  priority: optional
