@@ -1,0 +1,12 @@
+[Unit]
+Description=dotkeeper embedded Syncthing instance
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart="/usr/local/bin/dotkeeper" start
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
