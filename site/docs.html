@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Documentation &mdash; dotkeeper</title>
+  <meta name="description" content="dotkeeper documentation: architecture, commands, configuration, platform support, and comparison to alternatives.">
+  <link rel="canonical" href="https://dotkeeper.corbet.ch/docs.html">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav>
+  <a href="/" class="nav-brand" style="text-decoration:none;color:var(--text)">dotkeeper</a>
+  <div class="nav-links">
+    <a href="/">Home</a>
+    <a href="https://github.com/julian-corbet/dotkeeper">GitHub</a>
+    <a href="https://github.com/julian-corbet/dotkeeper/releases" class="btn-nav">Download</a>
+  </div>
+</nav>
+
+<div class="docs-content">
+
+<h1>Documentation</h1>
+<p>Everything you need to know about running dotkeeper.</p>
+
+<!-- WHY -->
+<div class="docs-section">
+  <h2>Why dotkeeper?</h2>
+  <p>If you work on multiple machines, you know the friction: code edited on the laptop but not pushed, config files that drift, dotfiles that only exist on one machine. You can solve pieces of this with git, Syncthing, or cloud sync &mdash; but each has gaps.</p>
+  <p>dotkeeper combines Syncthing's real-time P2P sync with git's versioned history into a single tool. Files sync instantly between machines. Git auto-commits on a schedule so nothing is ever lost.</p>
+
+  <h3>Compared to alternatives</h3>
+  <table class="comp-table">
+    <thead>
+      <tr><th></th><th>Without dotkeeper</th><th>With dotkeeper</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><strong>Git alone</strong></td><td>Must remember to commit and push. Uncommitted work doesn't sync.</td><td>All files sync instantly. Git runs on autopilot.</td></tr>
+      <tr><td><strong>Syncthing alone</strong></td><td>No version history. Deletions propagate everywhere.</td><td>Git history for every change. Roll back anytime.</td></tr>
+      <tr><td><strong>Cloud sync</strong></td><td>Third-party server. File locking. No git. Costs money.</td><td>Peer-to-peer. No accounts. Free forever.</td></tr>
+      <tr><td><strong>rsync / Unison</strong></td><td>Manual or cron-only. No real-time. No history.</td><td>Real-time sync + scheduled versioned backup.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ARCHITECTURE -->
+<div class="docs-section">
+  <h2>Architecture</h2>
+  <p>dotkeeper embeds the Syncthing library as a Go dependency. The entire sync engine compiles into a single binary &mdash; no separate Syncthing installation needed.</p>
+
+  <h3>Dual sync strategy</h3>
+  <ul>
+    <li><strong>Syncthing</strong> handles instant, bidirectional file sync. Changes propagate in seconds.</li>
+    <li><strong>Git</strong> handles versioned history and remote backup. Auto-commits run on a configurable schedule (hourly, daily, weekly).</li>
+  </ul>
+
+  <h3>Isolated ports</h3>
+  <table>
+    <thead><tr><th>Port</th><th>Protocol</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>18384</code></td><td>HTTP</td><td>REST API (loopback only)</td></tr>
+      <tr><td><code>12000</code></td><td>TCP + QUIC</td><td>Syncthing file sync</td></tr>
+      <tr><td><code>11027</code></td><td>UDP</td><td>Local discovery</td></tr>
+    </tbody>
+  </table>
+  <p>These are separate from Syncthing's default ports (8384, 22000, 21027), so dotkeeper never interferes with an existing Syncthing installation.</p>
+
+  <h3>Three config files</h3>
+  <table>
+    <thead><tr><th>File</th><th>Location</th><th>Purpose</th><th>Synced?</th></tr></thead>
+    <tbody>
+      <tr><td><code>machine.toml</code></td><td><code>~/.config/dotkeeper/</code></td><td>Local identity (name, slot)</td><td>Never</td></tr>
+      <tr><td><code>config.toml</code></td><td><code>~/.config/dotkeeper/</code></td><td>Shared settings (machines, repos, ignore patterns)</td><td>Via Syncthing</td></tr>
+      <tr><td><code>dotkeeper.toml</code></td><td>Each managed repo</td><td>Breadcrumb log (machines, timestamps)</td><td>Via git</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- COMMANDS -->
+<div class="docs-section">
+  <h2>Commands</h2>
+
+  <h3>Setup</h3>
+  <table>
+    <tbody>
+      <tr><td><code>dotkeeper init</code></td><td>Initialize this machine. Creates identity, generates Syncthing keys, starts service. Flags: <code>--name</code>, <code>--slot</code>, <code>--force</code>.</td></tr>
+      <tr><td><code>dotkeeper join &lt;ID&gt;</code></td><td>Join an existing setup. Pass the device ID from <code>dotkeeper init</code> on the first machine. Config syncs automatically.</td></tr>
+      <tr><td><code>dotkeeper pair</code></td><td>Re-apply config. Adds all devices and folders to Syncthing. Run after config changes.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Repos</h3>
+  <table>
+    <tbody>
+      <tr><td><code>dotkeeper add &lt;path&gt;</code></td><td>Add one or more repos to sync. Auto-detects git. Flags: <code>--no-git</code>, <code>--name</code>.</td></tr>
+      <tr><td><code>dotkeeper remove &lt;name&gt;</code></td><td>Stop syncing a repo. Files are untouched, only sync is stopped.</td></tr>
+      <tr><td><code>dotkeeper sync</code></td><td>Run git backup now on all configured repos. Pull, commit, push.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Service</h3>
+  <table>
+    <tbody>
+      <tr><td><code>dotkeeper start</code></td><td>Start embedded Syncthing in foreground. Used by service managers.</td></tr>
+      <tr><td><code>dotkeeper stop</code></td><td>Stop the Syncthing service.</td></tr>
+      <tr><td><code>dotkeeper install-timer</code></td><td>Install scheduled git backup. Uses the interval from <code>config.toml</code>.</td></tr>
+      <tr><td><code>dotkeeper status</code></td><td>Show machine info, Syncthing status, repos, peers, and timer state.</td></tr>
+      <tr><td><code>dotkeeper version</code></td><td>Print version and commit.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- QUICK START -->
+<div class="docs-section">
+  <h2>Quick start</h2>
+
+  <h3>First machine</h3>
+  <pre><code>dotkeeper init --name laptop --slot 0
+dotkeeper add ~/dotfiles ~/projects/myapp
+dotkeeper install-timer</code></pre>
+
+  <h3>Second machine</h3>
+  <pre><code># Use the device ID shown by init on the first machine
+dotkeeper join KFZZ7TP-GH5OLNL-WNSTHWQ-...
+dotkeeper install-timer</code></pre>
+  <p>After joining, the shared config syncs automatically. All repos configured on the first machine will start syncing.</p>
+
+  <h3>Adding repos later</h3>
+  <pre><code># On any machine — config syncs to all others
+dotkeeper add ~/new-project
+dotkeeper pair   # on other machines, to pick up the new repo</code></pre>
+</div>
+
+<!-- PLATFORMS -->
+<div class="docs-section">
+  <h2>Platform support</h2>
+  <table>
+    <thead><tr><th>OS</th><th>Architectures</th><th>Service manager</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Linux</strong></td><td>amd64, arm64, armv7, 386, riscv64, ppc64le, s390x</td><td>systemd or cron</td></tr>
+      <tr><td><strong>macOS</strong></td><td>amd64, arm64 (Apple Silicon)</td><td>launchd</td></tr>
+      <tr><td><strong>Windows</strong></td><td>amd64, arm64, 386</td><td>Task Scheduler</td></tr>
+      <tr><td><strong>FreeBSD</strong></td><td>amd64, arm64</td><td>cron</td></tr>
+      <tr><td><strong>OpenBSD</strong></td><td>amd64, arm64</td><td>cron</td></tr>
+      <tr><td><strong>NetBSD</strong></td><td>amd64, arm64</td><td>cron</td></tr>
+    </tbody>
+  </table>
+  <p>Pre-built binaries and packages (.deb, .rpm, .apk, .pkg.tar.zst) are available for Linux architectures in every release.</p>
+</div>
+
+<!-- GIT TIMER -->
+<div class="docs-section">
+  <h2>Git timer configuration</h2>
+  <p>The git backup schedule is set in <code>config.toml</code>:</p>
+  <pre><code>[sync]
+git_interval = "daily"      # hourly, daily, weekly, monthly, 2h, 6h, 12h
+slot_offset_minutes = 5     # minutes between each machine's timer</code></pre>
+  <p>Each machine gets a <strong>slot number</strong> (set during init). The timer fires at <code>base_time + (slot * offset)</code>. With slot offset 5 and daily interval:</p>
+  <ul>
+    <li>Machine 0 (slot 0): 02:00</li>
+    <li>Machine 1 (slot 1): 02:05</li>
+    <li>Machine 2 (slot 2): 02:10</li>
+  </ul>
+  <p>This prevents simultaneous pushes to the same git remote.</p>
+</div>
+
+<!-- IGNORE PATTERNS -->
+<div class="docs-section">
+  <h2>Ignore patterns</h2>
+  <p>dotkeeper auto-generates <code>.stignore</code> files with sensible defaults. These are Syncthing ignore patterns &mdash; they control what Syncthing syncs, not what git tracks.</p>
+  <p>Default patterns include:</p>
+  <pre><code>.git
+*.sync-conflict-*
+node_modules
+__pycache__
+*.pyc
+*.o, *.so, *.dylib, *.exe, *.dll
+*.sqlite3, *.sqlite3-journal
+.DS_Store, Thumbs.db, desktop.ini
+target/, dist/, build/
+.idea/, .vscode/ (volatile state only)</code></pre>
+  <p>Customize by editing the <code>ignore</code> list in <code>config.toml</code>. Changes sync to all machines.</p>
+</div>
+
+<!-- SECURITY -->
+<div class="docs-section">
+  <h2>Security</h2>
+  <ul>
+    <li><strong>machine.toml</strong> and <strong>config.toml</strong> are created with <code>0600</code> permissions</li>
+    <li><strong>config.xml</strong> (Syncthing, contains API key) is <code>0600</code></li>
+    <li>Config and data directories are <code>0700</code></li>
+    <li>The Syncthing API listens on <code>127.0.0.1</code> only, authenticated via API key</li>
+    <li>No telemetry, no crash reporting, no usage statistics</li>
+    <li>PID files are validated against injection (regex: <code>^\d+$</code>)</li>
+    <li>All GitHub Actions are pinned by commit SHA</li>
+  </ul>
+  <p>Report vulnerabilities to <strong>julian.corbet@gmail.com</strong>. See <a href="https://github.com/julian-corbet/dotkeeper/blob/main/SECURITY.md">SECURITY.md</a> for details.</p>
+</div>
+
+<!-- CONTRIBUTING -->
+<div class="docs-section">
+  <h2>Contributing</h2>
+  <p>dotkeeper is AGPL-3.0 licensed. Contributions are welcome.</p>
+  <pre><code>git clone https://github.com/julian-corbet/dotkeeper
+cd dotkeeper
+make test         # run 118 tests + 6 fuzz targets
+make build        # build the binary</code></pre>
+  <p>The test suite includes unit tests, fuzz tests, golden file tests, adversarial input tests, concurrent sync tests, CLI smoke tests, and error injection tests. See <a href="https://github.com/julian-corbet/dotkeeper/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> for the full guide.</p>
+</div>
+
+</div><!-- /docs-content -->
+
+<footer>
+  <div class="footer-links">
+    <a href="/">Home</a>
+    <a href="https://github.com/julian-corbet/dotkeeper">Source</a>
+    <a href="https://github.com/julian-corbet/dotkeeper/releases">Releases</a>
+    <a href="https://github.com/julian-corbet/dotkeeper/issues">Issues</a>
+  </div>
+  <p>
+    <a href="https://github.com/julian-corbet/dotkeeper/blob/main/LICENSE">AGPL-3.0</a> &middot;
+    <a href="https://github.com/julian-corbet">Julian Corbet</a> &middot;
+    Powered by <a href="https://syncthing.net">Syncthing</a>
+  </p>
+</footer>
+
+</body>
+</html>
