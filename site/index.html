@@ -4,177 +4,208 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>dotkeeper &mdash; P2P repo sync with git history</title>
-  <meta name="description" content="Keep code, configs, and dotfiles in sync across machines. Embedded Syncthing for real-time P2P sync, git for versioned backup. One binary, zero servers.">
-  <meta name="theme-color" content="#0f172a" media="(prefers-color-scheme: dark)">
-  <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
-  <link rel="canonical" href="https://dotkeeper.corbet.ch">
-  <meta property="og:title" content="dotkeeper &mdash; P2P repo sync with git history">
-  <meta property="og:description" content="Real-time file sync + automatic git backup. One binary, zero servers.">
+  <meta name="description" content="Keep your code, configs, and dotfiles in sync across machines. Embedded Syncthing for real-time file sync, git for history and backup. One binary, zero config servers.">
+  <meta name="theme-color" content="#0f172a">
+  <meta property="og:title" content="dotkeeper">
+  <meta property="og:description" content="P2P repo sync with git history. One binary, zero config servers.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://dotkeeper.corbet.ch">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128256;</text></svg>">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<!-- ============ NAV ============ -->
-<nav>
-  <div class="nav-brand">dotkeeper</div>
-  <div class="nav-links">
-    <a href="/docs">Docs</a>
-    <a href="https://github.com/julian-corbet/dotkeeper">GitHub</a>
-    <a href="https://github.com/julian-corbet/dotkeeper/releases" class="btn-nav">Download</a>
-  </div>
-</nav>
-
-<!-- ============ HERO: WHAT ============ -->
 <header class="hero">
-  <h1>Your repos, everywhere.</h1>
-  <p class="hero-sub">Real-time sync between machines. Automatic git backup. One binary.</p>
+  <nav>
+    <a href="https://github.com/julian-corbet/dotkeeper" class="nav-link">GitHub</a>
+    <a href="https://github.com/julian-corbet/dotkeeper/releases" class="nav-link">Releases</a>
+    <a href="#install" class="nav-link">Install</a>
+  </nav>
+  <div class="hero-content">
+    <h1>dotkeeper</h1>
+    <p class="tagline">P2P repo sync with git history</p>
+    <p class="subtitle">Keep your code, configs, and dotfiles in sync across every machine.<br>Real-time file sync via embedded Syncthing. Automatic git backup. One binary.</p>
+    <div class="cta">
+      <a href="#install" class="btn btn-primary">Get Started</a>
+      <a href="https://github.com/julian-corbet/dotkeeper" class="btn btn-secondary">View Source</a>
+    </div>
+  </div>
 </header>
 
-<!-- ============ VISUAL: THE CONCEPT ============ -->
-<section class="concept">
-  <div class="concept-diagram">
-    <div class="machine">
-      <div class="machine-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      </div>
-      <span>Laptop</span>
-    </div>
-    <div class="sync-lines">
-      <div class="sync-line sync-st">
-        <span>Syncthing</span>
-        <div class="line"></div>
-        <small>real-time, P2P</small>
-      </div>
-      <div class="sync-line sync-git">
-        <span>Git</span>
-        <div class="line"></div>
-        <small>scheduled backup</small>
-      </div>
-    </div>
-    <div class="machine">
-      <div class="machine-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      </div>
-      <span>Desktop</span>
-    </div>
-  </div>
-  <p class="concept-caption">Syncthing handles instant file sync. Git handles history. dotkeeper runs both.</p>
-</section>
+<main>
 
-<!-- ============ WHY ============ -->
-<section class="why">
-  <div class="why-grid">
-    <div class="why-card">
-      <div class="why-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 002 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/></svg>
-      </div>
-      <h3>Single binary</h3>
-      <p>Syncthing compiled in. No separate install, no daemon, no conflicts.</p>
-    </div>
-    <div class="why-card">
-      <div class="why-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
-      </div>
-      <h3>No servers</h3>
-      <p>Peer-to-peer. No cloud, no accounts, no subscriptions. Your files stay yours.</p>
-    </div>
-    <div class="why-card">
-      <div class="why-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-      </div>
-      <h3>Git history</h3>
-      <p>Auto-commit, auto-push. Every change versioned. Roll back anytime.</p>
-    </div>
-    <div class="why-card">
-      <div class="why-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-      </div>
-      <h3>Every platform</h3>
-      <p>Linux, macOS, Windows, BSDs. Native service management on each.</p>
-    </div>
-    <div class="why-card">
-      <div class="why-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-      </div>
-      <h3>Private</h3>
-      <p>No telemetry, no tracking, no crash reports. Fully offline-capable.</p>
-    </div>
-    <div class="why-card">
-      <div class="why-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
-      </div>
-      <h3>Conflict-free</h3>
-      <p>Staggered git timers per machine. Pushes never collide.</p>
-    </div>
-  </div>
-</section>
-
-<!-- ============ HOW ============ -->
-<section class="how">
+<section class="how-it-works">
   <h2>How it works</h2>
-  <div class="terminal">
-    <div class="t-bar">
-      <div class="t-dots"><span></span><span></span><span></span></div>
-      <div class="t-title">terminal</div>
+  <div class="flow">
+    <div class="flow-step">
+      <div class="flow-icon">1</div>
+      <h3>Initialize</h3>
+      <p><code>dotkeeper init</code> on your first machine. Generates a Syncthing identity and creates your config.</p>
     </div>
-    <pre class="t-body"><code><span class="p">$</span> <span class="cmd">dotkeeper init --name laptop</span>
-<span class="o">[dotkeeper] machine: laptop (slot 0)
-[dotkeeper] Syncthing identity generated
-[dotkeeper] device ID: </span><span class="id">KFZZ7TP-GH5OLNL-WNSTHWQ-...</span>
-
-<span class="p">$</span> <span class="cmd">dotkeeper add ~/dotfiles ~/projects/webapp</span>
-<span class="o">[dotkeeper] added: dotfiles   </span><span class="d">&rarr;</span><span class="o"> ~/dotfiles </span><span class="d">(git: yes)</span>
-<span class="o">[dotkeeper] added: webapp     </span><span class="d">&rarr;</span><span class="o"> ~/projects/webapp </span><span class="d">(git: yes)</span>
-
-<span class="p">$</span> <span class="cmd">dotkeeper status</span>
-<span class="h">=== Syncthing ===</span>
-  Status: <span class="ok">running</span>     Peers: <span class="ok">1</span>
-
-<span class="h">=== Repos ===</span>
-  dotfiles  ~/dotfiles          <span class="ok">[ok, git, syncthing]</span>
-  webapp    ~/projects/webapp   <span class="ok">[ok, git, syncthing]</span>
-
-<span class="h">=== Git Backup ===</span>
-  Timer: <span class="ok">active</span> (daily)</code></pre>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step">
+      <div class="flow-icon">2</div>
+      <h3>Join</h3>
+      <p><code>dotkeeper join &lt;DEVICE-ID&gt;</code> on other machines. Config syncs automatically via Syncthing.</p>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-step">
+      <div class="flow-icon">3</div>
+      <h3>Add repos</h3>
+      <p><code>dotkeeper add ~/project</code> starts syncing. Files propagate in real-time. Git backs up on schedule.</p>
+    </div>
   </div>
 </section>
 
-<!-- ============ WHERE (INSTALL) ============ -->
+<section class="features">
+  <h2>Features</h2>
+  <div class="feature-grid">
+    <div class="feature">
+      <h3>Zero infrastructure</h3>
+      <p>No cloud server, no VPN, no SSH tunnel. Machines find each other via Syncthing's discovery network and connect peer-to-peer.</p>
+    </div>
+    <div class="feature">
+      <h3>Single binary</h3>
+      <p>Syncthing is compiled into the dotkeeper binary. Download, run, done. No separate Syncthing installation, no conflicts with existing setups.</p>
+    </div>
+    <div class="feature">
+      <h3>Git history</h3>
+      <p>Scheduled git auto-commit and push. Every change is versioned. Roll back to any point in time. Works with your existing remotes.</p>
+    </div>
+    <div class="feature">
+      <h3>Conflict-free by design</h3>
+      <p>Syncthing handles real-time sync. Git timers are staggered per machine (slot offsets) so pushes never collide.</p>
+    </div>
+    <div class="feature">
+      <h3>Cross-platform</h3>
+      <p>Linux, macOS, Windows, FreeBSD, OpenBSD, NetBSD. Platform-native service management: systemd, launchd, Task Scheduler, cron.</p>
+    </div>
+    <div class="feature">
+      <h3>Privacy-first</h3>
+      <p>No telemetry, no crash reporting, no usage tracking. Syncthing's full network stack for connectivity, with all reporting disabled.</p>
+    </div>
+  </div>
+</section>
+
+<section class="architecture">
+  <h2>Architecture</h2>
+  <pre class="arch-diagram"><code>  Machine A                          Machine B
+  +-----------------+                +-----------------+
+  | dotkeeper       |  Syncthing     | dotkeeper       |
+  |   embedded ST --|---(P2P sync)---|--  embedded ST  |
+  |   git timer   --|---> remote <---|--  git timer    |
+  +-----------------+                +-----------------+
+        |                                   |
+   ~/.config/dotkeeper/              ~/.config/dotkeeper/
+     machine.toml (local)              machine.toml (local)
+     config.toml  (synced)             config.toml  (synced)</code></pre>
+  <div class="arch-details">
+    <div class="arch-detail">
+      <h3>Isolated Syncthing</h3>
+      <p>Runs on its own ports (API: 18384, sync: 12000, discovery: 11027). Never touches your existing Syncthing installation.</p>
+    </div>
+    <div class="arch-detail">
+      <h3>Three-file config</h3>
+      <p><strong>machine.toml</strong> &mdash; local identity, never synced. <strong>config.toml</strong> &mdash; shared settings, synced via Syncthing. <strong>dotkeeper.toml</strong> &mdash; per-repo breadcrumb, tracked in git.</p>
+    </div>
+    <div class="arch-detail">
+      <h3>Smart .stignore</h3>
+      <p>Auto-generated ignore patterns: build artifacts, lockfiles, editor state, SQLite journals. Syncs what matters, skips what doesn't.</p>
+    </div>
+  </div>
+</section>
+
 <section id="install" class="install">
   <h2>Install</h2>
-  <div class="install-row">
-    <div class="install-card primary">
-      <h3>Download</h3>
-      <p>Pre-built for 18 platforms.<br>Also .deb, .rpm, .apk, .pkg.tar.zst.</p>
-      <a href="https://github.com/julian-corbet/dotkeeper/releases/latest" class="btn btn-primary">Latest Release</a>
+  <div class="install-methods">
+
+    <div class="install-method">
+      <h3>Download binary</h3>
+      <p>Grab the latest release for your platform:</p>
+      <a href="https://github.com/julian-corbet/dotkeeper/releases/latest" class="btn btn-primary">Download from GitHub</a>
     </div>
-    <div class="install-card">
-      <h3>Arch Linux</h3>
+
+    <div class="install-method">
+      <h3>Arch Linux (AUR)</h3>
       <pre><code>yay -S dotkeeper-bin</code></pre>
     </div>
-    <div class="install-card">
-      <h3>From source</h3>
+
+    <div class="install-method">
+      <h3>Build from source</h3>
       <pre><code>git clone https://github.com/julian-corbet/dotkeeper
-cd dotkeeper && make install</code></pre>
+cd dotkeeper
+make install</code></pre>
+      <p>Requires Go 1.22+ and git.</p>
     </div>
+
   </div>
 </section>
 
-<!-- ============ FOOTER ============ -->
-<footer>
-  <div class="footer-links">
-    <a href="/docs">Docs</a>
-    <a href="https://github.com/julian-corbet/dotkeeper">Source</a>
-    <a href="https://github.com/julian-corbet/dotkeeper/releases">Releases</a>
-    <a href="https://github.com/julian-corbet/dotkeeper/issues">Issues</a>
-    <a href="https://github.com/julian-corbet/dotkeeper/blob/main/CONTRIBUTING.md">Contribute</a>
+<section class="quickstart">
+  <h2>Quick start</h2>
+  <div class="terminal">
+    <div class="terminal-header">
+      <span class="terminal-dot red"></span>
+      <span class="terminal-dot yellow"></span>
+      <span class="terminal-dot green"></span>
+    </div>
+    <pre class="terminal-body"><code><span class="prompt">$</span> dotkeeper init --name laptop --slot 0
+<span class="output">[dotkeeper] machine: laptop (slot 0)
+[dotkeeper] Syncthing identity generated
+[dotkeeper] device ID: XXXXXXX-XXXXXXX-XXXXXXX-...</span>
+
+<span class="prompt">$</span> dotkeeper add ~/Documents/project ~/dotfiles
+<span class="output">[dotkeeper] added: project → ~/Documents/project (git: yes)
+[dotkeeper] added: dotfiles → ~/dotfiles (git: yes)
+[dotkeeper] config updated</span>
+
+<span class="prompt">$</span> dotkeeper install-timer
+<span class="output">[dotkeeper] timer installed (daily, slot 0, systemd)</span>
+
+<span class="prompt">$</span> dotkeeper status
+<span class="output">=== Machine ===
+  Name: laptop
+  Slot: 0
+
+=== Syncthing (embedded, API 127.0.0.1:18384) ===
+  Status: running
+  Peers: 1
+  Folders: 3
+
+=== Repos ===
+  project:  ~/Documents/project [ok, git, syncthing]
+  dotfiles: ~/dotfiles [ok, git, syncthing]
+
+=== Git Backup Timer ===
+  Status: active</span></code></pre>
   </div>
+</section>
+
+<section class="commands">
+  <h2>Commands</h2>
+  <table>
+    <tbody>
+      <tr><td><code>dotkeeper init</code></td><td>Initialize this machine</td></tr>
+      <tr><td><code>dotkeeper join &lt;ID&gt;</code></td><td>Join an existing setup</td></tr>
+      <tr><td><code>dotkeeper add &lt;path&gt;</code></td><td>Add repos to sync</td></tr>
+      <tr><td><code>dotkeeper remove &lt;name&gt;</code></td><td>Remove a repo from sync</td></tr>
+      <tr><td><code>dotkeeper pair</code></td><td>Apply config to Syncthing</td></tr>
+      <tr><td><code>dotkeeper sync</code></td><td>Run git backup now</td></tr>
+      <tr><td><code>dotkeeper status</code></td><td>Show full status</td></tr>
+      <tr><td><code>dotkeeper install-timer</code></td><td>Install scheduled git backup</td></tr>
+      <tr><td><code>dotkeeper start</code></td><td>Start embedded Syncthing</td></tr>
+      <tr><td><code>dotkeeper stop</code></td><td>Stop Syncthing service</td></tr>
+    </tbody>
+  </table>
+</section>
+
+</main>
+
+<footer>
   <p>
-    <a href="https://github.com/julian-corbet/dotkeeper/blob/main/LICENSE">AGPL-3.0</a> &middot;
-    <a href="https://github.com/julian-corbet">Julian Corbet</a> &middot;
-    Powered by <a href="https://syncthing.net">Syncthing</a>
+    dotkeeper is <a href="https://github.com/julian-corbet/dotkeeper/blob/main/LICENSE">AGPL-3.0</a> licensed.
+    Built by <a href="https://github.com/julian-corbet">Julian Corbet</a>.
+    Powered by <a href="https://syncthing.net">Syncthing</a>.
   </p>
 </footer>
 
