@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
 )
@@ -175,6 +176,26 @@ func LoadSharedConfig() (*SharedConfig, error) {
 	return &cfg, nil
 }
 
+// sanitizeTOMLKey ensures a key is valid UTF-8 for TOML serialization.
+// Replaces invalid bytes with underscores.
+func sanitizeTOMLKey(key string) string {
+	if utf8.ValidString(key) {
+		return key
+	}
+	var b strings.Builder
+	for i := 0; i < len(key); {
+		r, size := utf8.DecodeRuneInString(key[i:])
+		if r == utf8.RuneError && size <= 1 {
+			b.WriteByte('_')
+			i++
+		} else {
+			b.WriteRune(r)
+			i += size
+		}
+	}
+	return b.String()
+}
+
 // WriteSharedConfig writes config.toml. Generates TOML manually for readability.
 func WriteSharedConfig(cfg *SharedConfig) error {
 	dir := ConfigDir()
@@ -198,7 +219,7 @@ func WriteSharedConfig(cfg *SharedConfig) error {
 
 	b.WriteString("\n[machines]\n")
 	for name, m := range cfg.Machines {
-		b.WriteString(fmt.Sprintf("\n[machines.%q]\n", name))
+		b.WriteString(fmt.Sprintf("\n[machines.%q]\n", sanitizeTOMLKey(name)))
 		b.WriteString(fmt.Sprintf("hostname = %q\n", m.Hostname))
 		b.WriteString(fmt.Sprintf("slot = %d\n", m.Slot))
 		b.WriteString(fmt.Sprintf("syncthing_id = %q\n", m.SyncthingID))
@@ -277,7 +298,7 @@ func WriteRepoLog(repoPath string, log *RepoLog) error {
 	if len(log.Machines) > 0 {
 		b.WriteString("\n[machines]\n")
 		for name, m := range log.Machines {
-			b.WriteString(fmt.Sprintf("\n[machines.%q]\n", name))
+			b.WriteString(fmt.Sprintf("\n[machines.%q]\n", sanitizeTOMLKey(name)))
 			b.WriteString(fmt.Sprintf("last_seen = %q\n", m.LastSeen))
 		}
 	}

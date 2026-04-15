@@ -256,8 +256,12 @@ func initCmd() *cobra.Command {
 			time.Sleep(2 * time.Second) // give Syncthing a moment to start
 			client := apiClient()
 			if err := client.Ping(); err == nil {
-				client.AddOrUpdateFolder("dotkeeper-config", "dotkeeper-config", config.ConfigDir(), nil)
-				writeConfigStignore()
+				if err := client.AddOrUpdateFolder("dotkeeper-config", "dotkeeper-config", config.ConfigDir(), nil); err != nil {
+					fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: config folder: %v\n", err)
+				}
+				if err := writeConfigStignore(); err != nil {
+					fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: .stignore: %v\n", err)
+				}
 			}
 
 			// 6. Print result
@@ -360,8 +364,12 @@ func joinCmd() *cobra.Command {
 			}
 
 			// 6. Share config directory with peer
-			client.AddOrUpdateFolder("dotkeeper-config", "dotkeeper-config", config.ConfigDir(), []string{peerDeviceID, deviceID})
-			writeConfigStignore()
+			if err := client.AddOrUpdateFolder("dotkeeper-config", "dotkeeper-config", config.ConfigDir(), []string{peerDeviceID, deviceID}); err != nil {
+				fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: config folder: %v\n", err)
+			}
+			if err := writeConfigStignore(); err != nil {
+				fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: .stignore: %v\n", err)
+			}
 
 			// 7. Wait for config.toml to arrive from peer
 			fmt.Println("[dotkeeper] waiting for config from peer... (timeout: 120s)")
@@ -403,7 +411,9 @@ func joinCmd() *cobra.Command {
 			// 9. Apply config — add all devices and folders
 			for _, m := range cfg.Machines {
 				if m.SyncthingID != "" && m.SyncthingID != deviceID {
-					client.AddDevice(m.SyncthingID, m.Hostname)
+					if err := client.AddDevice(m.SyncthingID, m.Hostname); err != nil {
+						fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: add device %s: %v\n", m.Hostname, err)
+					}
 				}
 			}
 			configureAllFolders(client, cfg)
@@ -567,7 +577,9 @@ func pairCmd() *cobra.Command {
 			for _, m := range cfg.Machines {
 				if m.SyncthingID != "" && m.SyncthingID != myID {
 					fmt.Printf("[dotkeeper] adding device: %s (%s)\n", m.Hostname, truncateID(m.SyncthingID))
-					client.AddDevice(m.SyncthingID, m.Hostname)
+					if err := client.AddDevice(m.SyncthingID, m.Hostname); err != nil {
+						fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: add device %s: %v\n", m.Hostname, err)
+					}
 				}
 			}
 
@@ -578,8 +590,12 @@ func pairCmd() *cobra.Command {
 					allIDs = append(allIDs, m.SyncthingID)
 				}
 			}
-			client.AddOrUpdateFolder("dotkeeper-config", "dotkeeper-config", config.ConfigDir(), allIDs)
-			writeConfigStignore()
+			if err := client.AddOrUpdateFolder("dotkeeper-config", "dotkeeper-config", config.ConfigDir(), allIDs); err != nil {
+				fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: config folder: %v\n", err)
+			}
+			if err := writeConfigStignore(); err != nil {
+				fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: .stignore: %v\n", err)
+			}
 
 			configureAllFolders(client, cfg)
 			fmt.Println("[dotkeeper] pairing complete")
