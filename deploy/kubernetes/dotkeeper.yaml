@@ -1,0 +1,170 @@
+# dotkeeper Kubernetes deployment
+#
+# Syncthing needs stable identity (certificate + device ID), so this
+# uses a StatefulSet with persistent volumes — not a Deployment.
+#
+# Apply:  kubectl apply -f dotkeeper.yaml
+# Init:   kubectl exec dotkeeper-0 -- dotkeeper init --name k8s-node
+# Add:    kubectl exec dotkeeper-0 -- dotkeeper add /repos/myproject
+# Status: kubectl exec dotkeeper-0 -- dotkeeper status
+# Logs:   kubectl logs dotkeeper-0
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dotkeeper
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dotkeeper-config
+  namespace: dotkeeper
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 100Mi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dotkeeper-data
+  namespace: dotkeeper
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: dotkeeper
+  namespace: dotkeeper
+  labels:
+    app: dotkeeper
+spec:
+  serviceName: dotkeeper
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dotkeeper
+  template:
+    metadata:
+      labels:
+        app: dotkeeper
+    spec:
+      containers:
+        - name: dotkeeper
+          image: ghcr.io/julian-corbet/dotkeeper:latest
+          command: ["dotkeeper", "start"]
+          env:
+            - name: XDG_CONFIG_HOME
+              value: /config
+            - name: XDG_DATA_HOME
+              value: /data
+          ports:
+            - containerPort: 12000
+              protocol: TCP
+              name: sync-tcp
+            - containerPort: 12000
+              protocol: UDP
+              name: sync-quic
+            - containerPort: 11027
+              protocol: UDP
+              name: discovery
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: data
+              mountPath: /data
+            # Mount repos via additional PVCs or hostPath
+            # - name: repos
+            #   mountPath: /repos
+          resources:
+            requests:
+              memory: 64Mi
+              cpu: 50m
+            limits:
+              memory: 256Mi
+              cpu: 500m
+          livenessProbe:
+            exec:
+              command: ["dotkeeper", "version"]
+            initialDelaySeconds: 5
+            periodSeconds: 60
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: dotkeeper-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: dotkeeper-data
+
+---
+# Headless service for StatefulSet + NodePort for Syncthing sync
+apiVersion: v1
+kind: Service
+metadata:
+  name: dotkeeper
+  namespace: dotkeeper
+spec:
+  selector:
+    app: dotkeeper
+  ports:
+    - port: 12000
+      targetPort: 12000
+      protocol: TCP
+      name: sync-tcp
+    - port: 12000
+      targetPort: 12000
+      protocol: UDP
+      name: sync-quic
+    - port: 11027
+      targetPort: 11027
+      protocol: UDP
+      name: discovery
+  type: NodePort
+
+---
+# Optional: CronJob for scheduled git sync
+# Runs 'dotkeeper sync' on a schedule instead of using dotkeeper's
+# built-in timer (useful when you want K8s-native scheduling)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: dotkeeper-sync
+  namespace: dotkeeper
+spec:
+  schedule: "0 2 * * *"  # daily at 02:00
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: sync
+              image: ghcr.io/julian-corbet/dotkeeper:latest
+              command: ["dotkeeper", "sync"]
+              env:
+                - name: XDG_CONFIG_HOME
+                  value: /config
+                - name: XDG_DATA_HOME
+                  value: /data
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+                - name: data
+                  mountPath: /data
+          restartPolicy: OnFailure
+          volumes:
+            - name: config
+              persistentVolumeClaim:
+                claimName: dotkeeper-config
+            - name: data
+              persistentVolumeClaim:
+                claimName: dotkeeper-data
