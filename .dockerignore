@@ -1,0 +1,15 @@
+.git
+.github
+.wrangler
+site
+deploy
+packaging
+*.md
+!README.md
+LICENSE
+dotkeeper
+dotkeeper-bin
+nfpm.yml
+nfpm.yaml
+Makefile
+docker-compose.yml

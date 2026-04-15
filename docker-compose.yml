@@ -1,0 +1,28 @@
+# docker compose up -d
+# Runs dotkeeper with Syncthing daemon + scheduled git sync
+#
+# Mount your repos under /repos/ and configure them with:
+#   docker exec dotkeeper dotkeeper add /repos/myproject
+
+services:
+  dotkeeper:
+    image: ghcr.io/julian-corbet/dotkeeper:latest
+    container_name: dotkeeper
+    restart: unless-stopped
+    command: start
+    volumes:
+      - dotkeeper-config:/config
+      - dotkeeper-data:/data
+      # Mount your repos here — add as many as needed
+      # - ~/dotfiles:/repos/dotfiles
+      # - ~/projects/myapp:/repos/myapp
+    ports:
+      - "12000:12000/tcp"   # Syncthing file sync
+      - "12000:12000/udp"   # Syncthing QUIC
+      - "11027:11027/udp"   # Syncthing local discovery
+    environment:
+      - TZ=UTC
+
+volumes:
+  dotkeeper-config:
+  dotkeeper-data:
