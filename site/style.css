@@ -6,8 +6,8 @@
   --bg-alt: #1e293b;
   --text: #e2e8f0;
   --text-dim: #94a3b8;
-  --accent: #38bdf8;
-  --accent-hover: #7dd3fc;
+  --accent: #60a5fa;
+  --accent-hover: #93c5fd;
   --code-bg: #1e293b;
   --border: #334155;
   --radius: 8px;
@@ -20,8 +20,8 @@
     --bg-alt: #f8fafc;
     --text: #1e293b;
     --text-dim: #64748b;
-    --accent: #0284c7;
-    --accent-hover: #0369a1;
+    --accent: #3b82f6;
+    --accent-hover: #2563eb;
     --code-bg: #f1f5f9;
     --border: #e2e8f0;
   }
