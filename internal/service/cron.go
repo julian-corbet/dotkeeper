@@ -44,11 +44,15 @@ func (c *Cron) InstallSyncthing(binaryPath string) error {
 		return fmt.Errorf("starting syncthing: %w", err)
 	}
 	pid := cmd.Process.Pid
-	os.MkdirAll(filepath.Dir(c.pidFile()), 0o700)
-	os.WriteFile(c.pidFile(), []byte(fmt.Sprintf("%d", pid)), 0o600)
+	if err := os.MkdirAll(filepath.Dir(c.pidFile()), 0o700); err != nil {
+		return fmt.Errorf("creating PID directory: %w", err)
+	}
+	if err := os.WriteFile(c.pidFile(), []byte(fmt.Sprintf("%d", pid)), 0o600); err != nil {
+		return fmt.Errorf("writing PID file: %w", err)
+	}
 
 	// Release the process so it survives after we exit
-	cmd.Process.Release()
+	_ = cmd.Process.Release()
 
 	// Add to crontab for reboot persistence
 	return c.addCrontab(fmt.Sprintf("@reboot %s start", binaryPath))
