@@ -226,6 +226,12 @@ func envWith(tmp string) []string {
 		"XDG_CONFIG_HOME="+filepath.Join(tmp, "config"),
 		"XDG_DATA_HOME="+filepath.Join(tmp, "data"),
 		"HOME="+tmp,
+		// Git identity for CI environments where HOME override
+		// loses the global gitconfig
+		"GIT_AUTHOR_NAME=test",
+		"GIT_AUTHOR_EMAIL=test@test.com",
+		"GIT_COMMITTER_NAME=test",
+		"GIT_COMMITTER_EMAIL=test@test.com",
 	)
 }
 
