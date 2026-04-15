@@ -20,6 +20,11 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.name "CI"
+          git config --global user.email "ci@dotkeeper.dev"
+
       - name: Build
         run: go build -tags noassets ./cmd/dotkeeper
 

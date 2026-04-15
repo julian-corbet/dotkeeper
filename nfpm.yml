@@ -1,6 +1,8 @@
 name: dotkeeper
 arch: ${NFPM_ARCH}
 version: ${VERSION}
+section: utils
+priority: optional
 maintainer: Julian Corbet
 description: P2P repo sync with git history — embedded Syncthing + git auto-sync
 homepage: https://github.com/julian-corbet/dotkeeper
@@ -25,7 +27,3 @@ contents:
 
 rpm:
   group: Applications/System
-
-deb:
-  section: utils
-  priority: optional
