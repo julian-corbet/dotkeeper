@@ -8,8 +8,11 @@ added_by = "laptop"
 
 [machines]
 
-[machines."laptop"]
+[machines.laptop]
 last_seen = "2026-04-14T21:36:04Z"
 
-[machines."desktop"]
-last_seen = "2026-04-15T00:01:26Z"
+[machines.desktop]
+last_seen = "2026-04-16T00:00:36Z"
+
+[machines.test-machine]
+last_seen = "2026-04-16T00:05:14Z"
