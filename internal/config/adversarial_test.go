@@ -18,8 +18,8 @@ func TestLoadSharedConfigDefaults(t *testing.T) {
 
 	// Write a minimal config with no sync section
 	dir := filepath.Join(tmp, "dotkeeper")
-	os.MkdirAll(dir, 0o700)
-	os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
 [sync]
 
 [syncthing]
@@ -48,8 +48,8 @@ func TestLoadSharedConfigExplicitValues(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	dir := filepath.Join(tmp, "dotkeeper")
-	os.MkdirAll(dir, 0o700)
-	os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
 [sync]
 git_interval = "weekly"
 slot_offset_minutes = 10
@@ -73,8 +73,8 @@ func TestEmptyConfig(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	dir := filepath.Join(tmp, "dotkeeper")
-	os.MkdirAll(dir, 0o700)
-	os.WriteFile(filepath.Join(dir, "config.toml"), []byte(""), 0o600)
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.WriteFile(filepath.Join(dir, "config.toml"), []byte(""), 0o600)
 
 	cfg, err := LoadSharedConfig()
 	if err != nil {
@@ -95,7 +95,7 @@ func TestMalformedTOML(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	dir := filepath.Join(tmp, "dotkeeper")
-	os.MkdirAll(dir, 0o700)
+	_ = os.MkdirAll(dir, 0o700)
 
 	cases := []struct {
 		name    string
@@ -109,7 +109,7 @@ func TestMalformedTOML(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			os.WriteFile(filepath.Join(dir, "config.toml"), []byte(tc.content), 0o600)
+			_ = os.WriteFile(filepath.Join(dir, "config.toml"), []byte(tc.content), 0o600)
 			_, err := LoadSharedConfig()
 			if err == nil {
 				t.Log("no error (TOML parser accepted it) — that's fine")
@@ -198,8 +198,8 @@ func TestRepoLogWithSymlink(t *testing.T) {
 	realDir := filepath.Join(tmp, "real")
 	linkDir := filepath.Join(tmp, "link")
 
-	os.MkdirAll(realDir, 0o755)
-	os.Symlink(realDir, linkDir)
+	_ = os.MkdirAll(realDir, 0o755)
+	_ = os.Symlink(realDir, linkDir)
 
 	// Create via symlink
 	if err := CreateRepoLog(linkDir, "test-repo", "machine_a"); err != nil {
@@ -226,8 +226,8 @@ func TestConfigUnknownKeys(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	dir := filepath.Join(tmp, "dotkeeper")
-	os.MkdirAll(dir, 0o700)
-	os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.WriteFile(filepath.Join(dir, "config.toml"), []byte(`
 [sync]
 git_interval = "daily"
 slot_offset_minutes = 5

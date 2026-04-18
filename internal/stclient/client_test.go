@@ -19,7 +19,7 @@ func TestPing(t *testing.T) {
 		if r.Header.Get("X-API-Key") != "test-key" {
 			t.Error("missing or wrong API key")
 		}
-		w.Write([]byte(`{"ping":"pong"}`))
+		_, _ = w.Write([]byte(`{"ping":"pong"}`))
 	}))
 	defer server.Close()
 
@@ -36,7 +36,7 @@ func TestPing(t *testing.T) {
 
 func TestGetStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{
+		_ = json.NewEncoder(w).Encode(map[string]string{
 			"myID": "AAAAAAA-BBBBBBB-CCCCCCC-DDDDDDD",
 		})
 	}))
@@ -59,12 +59,12 @@ func TestAddDevice(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/config"):
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"devices": []any{},
 				"folders": []any{},
 			})
 		case r.Method == "PUT" && strings.HasSuffix(r.URL.Path, "/config"):
-			json.NewDecoder(r.Body).Decode(&lastConfig)
+			_ = json.NewDecoder(r.Body).Decode(&lastConfig)
 			w.WriteHeader(200)
 		default:
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
@@ -99,7 +99,7 @@ func TestAddDeviceSkipsDuplicate(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case "GET":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"devices": []any{
 					map[string]any{"deviceID": "EXISTING-ID", "name": "existing"},
 				},
@@ -129,15 +129,15 @@ func TestAddOrUpdateFolder(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/config"):
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"devices": []any{},
 				"folders": []any{},
 			})
 		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, "/status"):
-			json.NewEncoder(w).Encode(map[string]string{"myID": "MY-ID"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"myID": "MY-ID"})
 		case r.Method == "PUT":
 			callCount++
-			json.NewDecoder(r.Body).Decode(&lastConfig)
+			_ = json.NewDecoder(r.Body).Decode(&lastConfig)
 			w.WriteHeader(200)
 		}
 	}))

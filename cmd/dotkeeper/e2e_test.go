@@ -83,25 +83,22 @@ func TestE2EAddRepo(t *testing.T) {
 	// Init first
 	cmd := exec.Command(binary, "init", "--name", "test-machine", "--slot", "0")
 	cmd.Env = envWith(tmp)
-	cmd.CombinedOutput()
+	_, _ = cmd.CombinedOutput()
 
 	// Create a fake repo to add
 	repoDir := filepath.Join(tmp, "my-project")
-	os.MkdirAll(repoDir, 0o755)
+	_ = os.MkdirAll(repoDir, 0o755)
 
 	// Init it as a git repo
 	gitInit := exec.Command("git", "init", repoDir)
 	gitInit.Env = gitEnv()
-	gitInit.CombinedOutput()
+	_, _ = gitInit.CombinedOutput()
 
-	// Add it
+	// Add it — may fail due to Syncthing not running for folder config; that's OK.
+	// The config update and repo log should still happen.
 	cmd = exec.Command(binary, "add", repoDir)
 	cmd.Env = envWith(tmp)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		// May fail due to Syncthing not running for folder config — that's OK
-		// The config update and repo log should still happen
-	}
+	out, _ := cmd.CombinedOutput()
 	output := string(out)
 
 	if !strings.Contains(output, "added: my-project") {
@@ -157,7 +154,7 @@ func TestE2ESyncGitRepo(t *testing.T) {
 	runGit(tmp, "init", "--bare", bare)
 	runGit(tmp, "clone", bare, work)
 	runGit(work, "checkout", "-b", "main")
-	os.WriteFile(filepath.Join(work, "README.md"), []byte("# test\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "README.md"), []byte("# test\n"), 0o644)
 	runGit(work, "add", ".")
 	runGit(work, "commit", "-m", "initial")
 	runGit(work, "push", "-u", "origin", "main")
@@ -165,15 +162,15 @@ func TestE2ESyncGitRepo(t *testing.T) {
 	// Init dotkeeper
 	cmd := exec.Command(binary, "init", "--name", "test-machine", "--slot", "0")
 	cmd.Env = envWith(tmp)
-	cmd.CombinedOutput()
+	_, _ = cmd.CombinedOutput()
 
 	// Add the repo
 	cmd = exec.Command(binary, "add", work)
 	cmd.Env = envWith(tmp)
-	cmd.CombinedOutput()
+	_, _ = cmd.CombinedOutput()
 
 	// Create a change
-	os.WriteFile(filepath.Join(work, "new-file.txt"), []byte("synced\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "new-file.txt"), []byte("synced\n"), 0o644)
 
 	// Run sync
 	cmd = exec.Command(binary, "sync")

@@ -53,7 +53,7 @@ func SetupGitRepo(t *testing.T) string {
 	gitCmd(t, tmp, "clone", bare, work)
 	gitCmd(t, work, "checkout", "-b", "main")
 
-	os.WriteFile(filepath.Join(work, "README.md"), []byte("# test\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "README.md"), []byte("# test\n"), 0o644)
 	gitCmd(t, work, "add", ".")
 	gitCmd(t, work, "commit", "-m", "initial")
 	gitCmd(t, work, "push", "-u", "origin", "main")
@@ -74,7 +74,7 @@ func SetupGitRepoWithRemote(t *testing.T) (string, string, string) {
 	gitCmd(t, tmp, "clone", bare, work1)
 	gitCmd(t, work1, "checkout", "-b", "main")
 
-	os.WriteFile(filepath.Join(work1, "README.md"), []byte("# test\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work1, "README.md"), []byte("# test\n"), 0o644)
 	gitCmd(t, work1, "add", ".")
 	gitCmd(t, work1, "commit", "-m", "initial")
 	gitCmd(t, work1, "push", "-u", "origin", "main")
@@ -196,7 +196,7 @@ func GoldenCheck(t *testing.T, name, got string) {
 	path := filepath.Join("testdata", name+".golden")
 
 	if *updateGolden {
-		os.MkdirAll("testdata", 0o755)
+		_ = os.MkdirAll("testdata", 0o755)
 		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
 			t.Fatalf("updating golden file: %v", err)
 		}
