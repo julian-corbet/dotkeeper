@@ -97,13 +97,14 @@ func TestAddDeviceSkipsDuplicate(t *testing.T) {
 	putCalled := false
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == "GET" {
+		switch r.Method {
+		case "GET":
 			json.NewEncoder(w).Encode(map[string]any{
 				"devices": []any{
 					map[string]any{"deviceID": "EXISTING-ID", "name": "existing"},
 				},
 			})
-		} else if r.Method == "PUT" {
+		case "PUT":
 			putCalled = true
 			w.WriteHeader(200)
 		}
