@@ -5,12 +5,17 @@ on:
   release:
     types: [published]
 
-permissions:
-  contents: write
+# Least privilege at workflow level; the one job below elevates only what it needs.
+permissions: read-all
 
 jobs:
   update-packages:
     runs-on: ubuntu-latest
+    # Downloads release assets and pushes updates to external tap/bucket/AUR repos.
+    # `contents: write` retained at job level for safety; the external repo updates
+    # are done via separate auth (gh api / SSH key) and do not require this scope.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
