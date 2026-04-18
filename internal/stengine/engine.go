@@ -212,6 +212,7 @@ func (e *Engine) generateConfig(configFile, certFile, keyFile string) error {
 	// Disable only privacy-invasive and self-management features
 	cfg.Options.URAccepted = -1           // no usage reporting
 	cfg.Options.CREnabled = false         // no crash reporting
+	cfg.Options.CRURL = ""                // blank out crash-report endpoint
 	cfg.Options.AutoUpgradeIntervalH = 0  // we manage our own binary
 	cfg.Options.StartBrowser = false      // headless
 
