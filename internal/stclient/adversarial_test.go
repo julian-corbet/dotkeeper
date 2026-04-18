@@ -102,9 +102,10 @@ func TestAddDevicePutConfigFails(t *testing.T) {
 	requestCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestCount++
-		if r.Method == "GET" {
+		switch r.Method {
+		case "GET":
 			w.Write([]byte(`{"devices":[],"folders":[]}`))
-		} else if r.Method == "PUT" {
+		case "PUT":
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 	}))

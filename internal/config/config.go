@@ -205,31 +205,31 @@ func WriteSharedConfig(cfg *SharedConfig) error {
 	b.WriteString("# dotkeeper shared config — synced between machines via Syncthing\n\n")
 
 	b.WriteString("[sync]\n")
-	b.WriteString(fmt.Sprintf("git_interval = %q\n", cfg.Sync.GitInterval))
-	b.WriteString(fmt.Sprintf("slot_offset_minutes = %d\n", cfg.Sync.SlotOffsetMinutes))
+	fmt.Fprintf(&b, "git_interval = %q\n", cfg.Sync.GitInterval)
+	fmt.Fprintf(&b, "slot_offset_minutes = %d\n", cfg.Sync.SlotOffsetMinutes)
 
 	b.WriteString("\n[syncthing]\n")
 	b.WriteString("ignore = [\n")
 	for _, p := range cfg.Syncthing.Ignore {
-		b.WriteString(fmt.Sprintf("    %q,\n", p))
+		fmt.Fprintf(&b, "    %q,\n", p)
 	}
 	b.WriteString("]\n")
 
 	b.WriteString("\n[machines]\n")
 	for name, m := range cfg.Machines {
-		b.WriteString(fmt.Sprintf("\n[machines.%q]\n", sanitizeTOMLKey(name)))
-		b.WriteString(fmt.Sprintf("hostname = %q\n", m.Hostname))
-		b.WriteString(fmt.Sprintf("slot = %d\n", m.Slot))
-		b.WriteString(fmt.Sprintf("syncthing_id = %q\n", m.SyncthingID))
+		fmt.Fprintf(&b, "\n[machines.%q]\n", sanitizeTOMLKey(name))
+		fmt.Fprintf(&b, "hostname = %q\n", m.Hostname)
+		fmt.Fprintf(&b, "slot = %d\n", m.Slot)
+		fmt.Fprintf(&b, "syncthing_id = %q\n", m.SyncthingID)
 	}
 
 	if len(cfg.Repos) > 0 {
 		b.WriteString("\n")
 		for _, r := range cfg.Repos {
 			b.WriteString("[[repos]]\n")
-			b.WriteString(fmt.Sprintf("name = %q\n", r.Name))
-			b.WriteString(fmt.Sprintf("path = %q\n", r.Path))
-			b.WriteString(fmt.Sprintf("git = %v\n", r.Git))
+			fmt.Fprintf(&b, "name = %q\n", r.Name)
+			fmt.Fprintf(&b, "path = %q\n", r.Path)
+			fmt.Fprintf(&b, "git = %v\n", r.Git)
 			b.WriteString("\n")
 		}
 	}
@@ -289,9 +289,9 @@ func WriteRepoLog(repoPath string, log *RepoLog) error {
 	b.WriteString("# This file is tracked in git for resilience.\n\n")
 
 	b.WriteString("[repo]\n")
-	b.WriteString(fmt.Sprintf("name = %q\n", log.Repo.Name))
-	b.WriteString(fmt.Sprintf("added = %q\n", log.Repo.Added))
-	b.WriteString(fmt.Sprintf("added_by = %q\n", log.Repo.AddedBy))
+	fmt.Fprintf(&b, "name = %q\n", log.Repo.Name)
+	fmt.Fprintf(&b, "added = %q\n", log.Repo.Added)
+	fmt.Fprintf(&b, "added_by = %q\n", log.Repo.AddedBy)
 
 	path := filepath.Join(repoPath, "dotkeeper.toml")
 	return os.WriteFile(path, []byte(b.String()), 0o644)
@@ -386,4 +386,3 @@ func DefaultIgnorePatterns() []string {
 		"*.orig",
 	}
 }
-
