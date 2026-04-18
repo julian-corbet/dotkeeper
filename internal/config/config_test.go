@@ -255,22 +255,36 @@ func TestRepoLog(t *testing.T) {
 	if log.Repo.AddedBy != "test-machine" {
 		t.Errorf("added_by = %q, want %q", log.Repo.AddedBy, "test-machine")
 	}
-	if _, ok := log.Machines["test-machine"]; !ok {
-		t.Error("machine entry missing")
+	if log.Repo.Added == "" {
+		t.Error("added timestamp missing")
 	}
+}
 
-	// Touch
-	if err := TouchRepoLog(tmp, "other-machine"); err != nil {
-		t.Fatalf("TouchRepoLog: %v", err)
+// TestRepoLogHasNoMachineBlock verifies the per-repo dotkeeper.toml does
+// NOT contain a [machines] section — machine-scoped state lives in the
+// synced config.toml, not the git-tracked per-repo log.
+func TestRepoLogHasNoMachineBlock(t *testing.T) {
+	tmp := t.TempDir()
+	if err := CreateRepoLog(tmp, "r", "m"); err != nil {
+		t.Fatalf("CreateRepoLog: %v", err)
 	}
+	data, err := os.ReadFile(filepath.Join(tmp, "dotkeeper.toml"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if s := string(data); contains(s, "[machines") || contains(s, "last_seen") {
+		t.Errorf("per-repo dotkeeper.toml leaked machine state:\n%s", s)
+	}
+}
 
-	log, _ = LoadRepoLog(tmp)
-	if _, ok := log.Machines["other-machine"]; !ok {
-		t.Error("other-machine not added by TouchRepoLog")
+// contains is a tiny helper to avoid importing strings into this file.
+func contains(hay, needle string) bool {
+	for i := 0; i+len(needle) <= len(hay); i++ {
+		if hay[i:i+len(needle)] == needle {
+			return true
+		}
 	}
-	if _, ok := log.Machines["test-machine"]; !ok {
-		t.Error("original machine entry lost after TouchRepoLog")
-	}
+	return false
 }
 
 func TestLoadRepoLogMissing(t *testing.T) {

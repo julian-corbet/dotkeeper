@@ -85,26 +85,16 @@ func TestRepoLogRoundTrip(t *testing.T) {
 		t.Fatalf("CreateRepoLog: %v", err)
 	}
 
-	// Touch from another machine
-	if err := TouchRepoLog(tmp, "machine_b"); err != nil {
-		t.Fatalf("TouchRepoLog: %v", err)
-	}
-
 	log, err := LoadRepoLog(tmp)
 	if err != nil {
 		t.Fatalf("LoadRepoLog: %v", err)
 	}
 
-	if len(log.Machines) != 2 {
-		data, _ := os.ReadFile(filepath.Join(tmp, "dotkeeper.toml"))
-		t.Fatalf("expected 2 machines, got %d.\nFile:\n%s", len(log.Machines), data)
+	if log.Repo.Name != "test-repo" {
+		t.Errorf("repo name = %q, want %q", log.Repo.Name, "test-repo")
 	}
-
-	if _, ok := log.Machines["machine_a"]; !ok {
-		t.Error("machine_a missing")
-	}
-	if _, ok := log.Machines["machine_b"]; !ok {
-		t.Error("machine_b missing")
+	if log.Repo.AddedBy != "machine_a" {
+		t.Errorf("added_by = %q, want %q", log.Repo.AddedBy, "machine_a")
 	}
 }
 
@@ -113,7 +103,6 @@ func TestRepoLogNoConflictMarkers(t *testing.T) {
 	tmp := t.TempDir()
 
 	CreateRepoLog(tmp, "test", "machine_a")
-	TouchRepoLog(tmp, "machine_b")
 
 	data, _ := os.ReadFile(filepath.Join(tmp, "dotkeeper.toml"))
 	content := string(data)
