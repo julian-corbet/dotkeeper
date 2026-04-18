@@ -20,7 +20,7 @@ jobs:
       # context; without actions:read it fails "Resource not accessible".
       actions: read
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           # Default GITHUB_TOKEN lacks contents:read here because the job-
           # level permissions block narrows the workflow's read-all down to
