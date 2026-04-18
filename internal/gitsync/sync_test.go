@@ -42,7 +42,7 @@ func setupGitRepo(t *testing.T) string {
 	run(work, "git", "checkout", "-b", "main")
 
 	// Initial commit
-	os.WriteFile(filepath.Join(work, "README.md"), []byte("# test\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "README.md"), []byte("# test\n"), 0o644)
 	run(work, "git", "add", ".")
 	run(work, "git", "commit", "-m", "initial")
 	run(work, "git", "push", "-u", "origin", "main")
@@ -63,7 +63,7 @@ func TestSyncRepoWithChanges(t *testing.T) {
 	work := setupGitRepo(t)
 
 	// Create a new file
-	os.WriteFile(filepath.Join(work, "new-file.txt"), []byte("hello\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "new-file.txt"), []byte("hello\n"), 0o644)
 
 	err := SyncRepo(work, "test-machine")
 	if err != nil {
@@ -91,10 +91,10 @@ func TestSyncRepoMultipleFiles(t *testing.T) {
 	work := setupGitRepo(t)
 
 	// Create multiple files
-	os.WriteFile(filepath.Join(work, "a.txt"), []byte("a\n"), 0o644)
-	os.WriteFile(filepath.Join(work, "b.txt"), []byte("b\n"), 0o644)
-	os.MkdirAll(filepath.Join(work, "subdir"), 0o755)
-	os.WriteFile(filepath.Join(work, "subdir/c.txt"), []byte("c\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "a.txt"), []byte("a\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "b.txt"), []byte("b\n"), 0o644)
+	_ = os.MkdirAll(filepath.Join(work, "subdir"), 0o755)
+	_ = os.WriteFile(filepath.Join(work, "subdir/c.txt"), []byte("c\n"), 0o644)
 
 	err := SyncRepo(work, "test-machine")
 	if err != nil {
@@ -129,7 +129,7 @@ func TestSyncRepoRemoteUnreachable(t *testing.T) {
 	// Break the remote
 	cmd := exec.Command("git", "remote", "set-url", "origin", "/nonexistent/path")
 	cmd.Dir = work
-	cmd.Run()
+	_ = cmd.Run()
 
 	err := SyncRepo(work, "test-machine")
 	if err == nil {
@@ -144,11 +144,11 @@ func TestSyncRepoRespectGitignore(t *testing.T) {
 	work := setupGitRepo(t)
 
 	// Create .gitignore
-	os.WriteFile(filepath.Join(work, ".gitignore"), []byte("*.log\nsecret.env\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, ".gitignore"), []byte("*.log\nsecret.env\n"), 0o644)
 	// Create files — one tracked, one ignored
-	os.WriteFile(filepath.Join(work, "tracked.txt"), []byte("tracked\n"), 0o644)
-	os.WriteFile(filepath.Join(work, "debug.log"), []byte("ignored\n"), 0o644)
-	os.WriteFile(filepath.Join(work, "secret.env"), []byte("PASSWORD=x\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "tracked.txt"), []byte("tracked\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "debug.log"), []byte("ignored\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "secret.env"), []byte("PASSWORD=x\n"), 0o644)
 
 	err := SyncRepo(work, "test-machine")
 	if err != nil {
@@ -176,7 +176,7 @@ func TestSyncRepoIdempotent(t *testing.T) {
 	work := setupGitRepo(t)
 
 	// First sync — no changes
-	SyncRepo(work, "test-machine")
+	_ = SyncRepo(work, "test-machine")
 
 	// Count commits
 	cmd := exec.Command("git", "rev-list", "--count", "HEAD")
@@ -184,7 +184,7 @@ func TestSyncRepoIdempotent(t *testing.T) {
 	out1, _ := cmd.Output()
 
 	// Second sync — still no changes
-	SyncRepo(work, "test-machine")
+	_ = SyncRepo(work, "test-machine")
 
 	cmd = exec.Command("git", "rev-list", "--count", "HEAD")
 	cmd.Dir = work
@@ -223,7 +223,7 @@ func TestSyncRepoPullsRemoteChanges(t *testing.T) {
 	run(tmp, "git", "init", "--bare", bare)
 	run(tmp, "git", "clone", bare, work1)
 	run(work1, "git", "checkout", "-b", "main")
-	os.WriteFile(filepath.Join(work1, "README.md"), []byte("# test\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work1, "README.md"), []byte("# test\n"), 0o644)
 	run(work1, "git", "add", ".")
 	run(work1, "git", "commit", "-m", "initial")
 	run(work1, "git", "push", "-u", "origin", "main")
@@ -231,7 +231,7 @@ func TestSyncRepoPullsRemoteChanges(t *testing.T) {
 	run(work2, "git", "checkout", "main")
 
 	// Commit on work1 and push
-	os.WriteFile(filepath.Join(work1, "from-work1.txt"), []byte("from work1\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work1, "from-work1.txt"), []byte("from work1\n"), 0o644)
 	run(work1, "git", "add", ".")
 	run(work1, "git", "commit", "-m", "from work1")
 	run(work1, "git", "push")

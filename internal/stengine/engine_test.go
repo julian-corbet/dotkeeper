@@ -227,7 +227,7 @@ func TestAPIKeyNoConfig(t *testing.T) {
 // config.xml without panicking.
 func TestAPIKeyMalformedXML(t *testing.T) {
 	tmp := t.TempDir()
-	os.WriteFile(filepath.Join(tmp, "config.xml"), []byte("<broken"), 0o600)
+	_ = os.WriteFile(filepath.Join(tmp, "config.xml"), []byte("<broken"), 0o600)
 
 	eng := New(tmp, t.TempDir(), "0.1.1-test")
 	_, err := eng.APIKey()

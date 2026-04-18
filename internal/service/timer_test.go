@@ -105,7 +105,7 @@ func TestSlotOffsetBounds(t *testing.T) {
 		}
 		// Parse minute field
 		var minute int
-		fmt.Sscanf(got, "%d", &minute)
+		_, _ = fmt.Sscanf(got, "%d", &minute)
 		if minute < 0 || minute > 59 {
 			t.Errorf("calendarToCron(%q) has minute %d out of [0,59]", tt.onCalendar, minute)
 		}
