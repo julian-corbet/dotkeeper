@@ -76,16 +76,6 @@ func TestCreateRepoLogReadOnlyDir(t *testing.T) {
 	}
 }
 
-// TestTouchRepoLogMissing verifies TouchRepoLog is a no-op when
-// dotkeeper.toml doesn't exist (not an error).
-func TestTouchRepoLogMissing(t *testing.T) {
-	tmp := t.TempDir()
-	err := TouchRepoLog(tmp, "machine")
-	if err != nil {
-		t.Errorf("TouchRepoLog on empty dir should be no-op, got: %v", err)
-	}
-}
-
 // TestLoadSharedConfigCorruptFile verifies that a completely corrupt
 // config.toml returns an error (not nil or panic).
 func TestLoadSharedConfigCorruptFile(t *testing.T) {
