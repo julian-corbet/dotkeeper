@@ -112,7 +112,13 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dist-${{ matrix.suffix }}
-          path: dotkeeper_*.*
+          # Explicit extensions — `dotkeeper_*.*` also matches the staging
+          # directory (e.g. dotkeeper_0.1.1_linux_amd64) because its name
+          # contains dots, which then surfaces as a directory in the release
+          # job and breaks `sha256sum`.
+          path: |
+            dotkeeper_*.tar.gz
+            dotkeeper_*.zip
 
   package:
     needs: build
@@ -183,7 +189,11 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: packages-${{ matrix.suffix }}
-          path: dotkeeper_*.*
+          path: |
+            dotkeeper_*.deb
+            dotkeeper_*.rpm
+            dotkeeper_*.apk
+            dotkeeper_*.pkg.tar.zst
 
   release:
     needs: [build, package]
