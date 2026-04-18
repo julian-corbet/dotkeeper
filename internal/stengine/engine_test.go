@@ -20,7 +20,7 @@ func TestSetupCreatesDirectories(t *testing.T) {
 	configDir := filepath.Join(tmp, "config", "syncthing")
 	dataDir := filepath.Join(tmp, "data", "syncthing")
 
-	eng := New(configDir, dataDir)
+	eng := New(configDir, dataDir, "0.1.1-test")
 	if err := eng.Setup(); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestSetupGeneratesCertificate(t *testing.T) {
 	configDir := filepath.Join(tmp, "config", "syncthing")
 	dataDir := filepath.Join(tmp, "data", "syncthing")
 
-	eng := New(configDir, dataDir)
+	eng := New(configDir, dataDir, "0.1.1-test")
 	if err := eng.Setup(); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestSetupGeneratesConfig(t *testing.T) {
 	configDir := filepath.Join(tmp, "config", "syncthing")
 	dataDir := filepath.Join(tmp, "data", "syncthing")
 
-	eng := New(configDir, dataDir)
+	eng := New(configDir, dataDir, "0.1.1-test")
 	if err := eng.Setup(); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestSetupConfigPermissions(t *testing.T) {
 	configDir := filepath.Join(tmp, "config", "syncthing")
 	dataDir := filepath.Join(tmp, "data", "syncthing")
 
-	eng := New(configDir, dataDir)
+	eng := New(configDir, dataDir, "0.1.1-test")
 	if err := eng.Setup(); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestSetupIdempotent(t *testing.T) {
 	configDir := filepath.Join(tmp, "config", "syncthing")
 	dataDir := filepath.Join(tmp, "data", "syncthing")
 
-	eng := New(configDir, dataDir)
+	eng := New(configDir, dataDir, "0.1.1-test")
 	if err := eng.Setup(); err != nil {
 		t.Fatalf("Setup #1: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestDeviceID(t *testing.T) {
 	configDir := filepath.Join(tmp, "config", "syncthing")
 	dataDir := filepath.Join(tmp, "data", "syncthing")
 
-	eng := New(configDir, dataDir)
+	eng := New(configDir, dataDir, "0.1.1-test")
 	if err := eng.Setup(); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestDeviceIDStable(t *testing.T) {
 	configDir := filepath.Join(tmp, "config", "syncthing")
 	dataDir := filepath.Join(tmp, "data", "syncthing")
 
-	eng := New(configDir, dataDir)
+	eng := New(configDir, dataDir, "0.1.1-test")
 	if err := eng.Setup(); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestDeviceIDStable(t *testing.T) {
 // TestDeviceIDNoCert verifies that DeviceID fails gracefully
 // when no certificate exists.
 func TestDeviceIDNoCert(t *testing.T) {
-	eng := New(t.TempDir(), t.TempDir())
+	eng := New(t.TempDir(), t.TempDir(), "0.1.1-test")
 	_, err := eng.DeviceID()
 	if err == nil {
 		t.Error("expected error when no certificate exists")
@@ -199,7 +199,7 @@ func TestAPIKey(t *testing.T) {
 	configDir := filepath.Join(tmp, "config", "syncthing")
 	dataDir := filepath.Join(tmp, "data", "syncthing")
 
-	eng := New(configDir, dataDir)
+	eng := New(configDir, dataDir, "0.1.1-test")
 	if err := eng.Setup(); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestAPIKey(t *testing.T) {
 // TestAPIKeyNoConfig verifies that APIKey fails gracefully
 // when no config.xml exists.
 func TestAPIKeyNoConfig(t *testing.T) {
-	eng := New(t.TempDir(), t.TempDir())
+	eng := New(t.TempDir(), t.TempDir(), "0.1.1-test")
 	_, err := eng.APIKey()
 	if err == nil {
 		t.Error("expected error when no config.xml exists")
@@ -229,7 +229,7 @@ func TestAPIKeyMalformedXML(t *testing.T) {
 	tmp := t.TempDir()
 	os.WriteFile(filepath.Join(tmp, "config.xml"), []byte("<broken"), 0o600)
 
-	eng := New(tmp, t.TempDir())
+	eng := New(tmp, t.TempDir(), "0.1.1-test")
 	_, err := eng.APIKey()
 	if err == nil {
 		t.Error("expected error for malformed XML")
@@ -243,7 +243,7 @@ func TestConfigXMLStructure(t *testing.T) {
 	configDir := filepath.Join(tmp, "config", "syncthing")
 	dataDir := filepath.Join(tmp, "data", "syncthing")
 
-	eng := New(configDir, dataDir)
+	eng := New(configDir, dataDir, "0.1.1-test")
 	if err := eng.Setup(); err != nil {
 		t.Fatalf("Setup: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestConfigXMLStructure(t *testing.T) {
 
 // TestNewEngine verifies basic Engine construction.
 func TestNewEngine(t *testing.T) {
-	eng := New("/config", "/data")
+	eng := New("/config", "/data", "0.1.1-test")
 	if eng == nil {
 		t.Fatal("New returned nil")
 	}
