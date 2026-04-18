@@ -50,19 +50,21 @@ func redirectSyncthingLogs() (*os.File, error) {
 	// the real stdout (systemd journal, user terminal).
 	origFD, err := unix.Dup(int(os.Stdout.Fd()))
 	if err != nil {
-		logFile.Close()
+		// Cleanup errors here are swallowed — the outer dup failure is what
+		// the caller needs to see.
+		_ = logFile.Close()
 		return nil, fmt.Errorf("dup stdout: %w", err)
 	}
 
 	// Point fd 1 at the log file. Syncthing's captured *os.File for stdout
 	// still writes via fd 1, so its output now lands in the log file.
 	if err := unix.Dup2(int(logFile.Fd()), int(os.Stdout.Fd())); err != nil {
-		logFile.Close()
-		unix.Close(origFD)
+		_ = logFile.Close()
+		_ = unix.Close(origFD)
 		return nil, fmt.Errorf("dup2 stdout: %w", err)
 	}
 	// The log file's fd is no longer needed — fd 1 is the duplicate.
-	logFile.Close()
+	_ = logFile.Close()
 
 	return os.NewFile(uintptr(origFD), "dotkeeper-stdout"), nil
 }
