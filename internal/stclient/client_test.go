@@ -169,6 +169,11 @@ func TestAddOrUpdateFolder(t *testing.T) {
 			t.Error("own device ID should not be in folder devices")
 		}
 	}
+
+	// Verify the marker-file override is propagated (item 6 of v0.1.1).
+	if folder["markerName"] != FolderMarkerName {
+		t.Errorf("markerName = %v, want %q", folder["markerName"], FolderMarkerName)
+	}
 }
 
 func TestPingFailure(t *testing.T) {

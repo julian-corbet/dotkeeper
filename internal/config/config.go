@@ -316,7 +316,7 @@ func DefaultIgnorePatterns() []string {
 	return []string{
 		".git",
 		"*.sync-conflict-*",
-		".stfolder",
+		".dkfolder",
 		".stignore",
 		"(?d).DS_Store",
 		"(?d)Thumbs.db",
