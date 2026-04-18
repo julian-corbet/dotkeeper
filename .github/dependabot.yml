@@ -6,6 +6,16 @@ updates:
       interval: weekly
     commit-message:
       prefix: "deps"
+    # Batch security updates separately so they can be prioritised.
+    groups:
+      go-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      go-deps:
+        applies-to: version-updates
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
@@ -13,3 +23,14 @@ updates:
       interval: weekly
     commit-message:
       prefix: "ci"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "docker"
