@@ -82,13 +82,13 @@ func TestSyncRepoSpacesInPath(t *testing.T) {
 	run(tmp, "git", "clone", bare, work)
 	run(work, "git", "checkout", "-b", "main")
 
-	os.WriteFile(filepath.Join(work, "README.md"), []byte("# test\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "README.md"), []byte("# test\n"), 0o644)
 	run(work, "git", "add", ".")
 	run(work, "git", "commit", "-m", "initial")
 	run(work, "git", "push", "-u", "origin", "main")
 
 	// Create a file and sync
-	os.WriteFile(filepath.Join(work, "data.txt"), []byte("hello\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "data.txt"), []byte("hello\n"), 0o644)
 	if err := SyncRepo(work, "test-machine"); err != nil {
 		t.Fatalf("SyncRepo with spaces in path: %v", err)
 	}

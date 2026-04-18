@@ -19,7 +19,7 @@ func TestConcurrentSyncSameRepo(t *testing.T) {
 	work := setupGitRepo(t)
 
 	// Create a file so there's something to commit
-	os.WriteFile(filepath.Join(work, "concurrent.txt"), []byte("test\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "concurrent.txt"), []byte("test\n"), 0o644)
 
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
@@ -67,8 +67,8 @@ func TestConcurrentSyncDifferentRepos(t *testing.T) {
 	work1 := setupGitRepo(t)
 	work2 := setupGitRepoNamed(t, "repo2")
 
-	os.WriteFile(filepath.Join(work1, "file1.txt"), []byte("one\n"), 0o644)
-	os.WriteFile(filepath.Join(work2, "file2.txt"), []byte("two\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work1, "file1.txt"), []byte("one\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work2, "file2.txt"), []byte("two\n"), 0o644)
 
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
@@ -101,7 +101,7 @@ func TestRapidSequentialSync(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		// Alternate between changes and no-changes
 		if i%2 == 0 {
-			os.WriteFile(filepath.Join(work, "rapid.txt"),
+			_ = os.WriteFile(filepath.Join(work, "rapid.txt"),
 				[]byte("iteration "+string(rune('0'+i))+"\n"), 0o644)
 		}
 		if err := SyncRepo(work, "machine-a"); err != nil {
@@ -144,7 +144,7 @@ func setupGitRepoNamed(t *testing.T, name string) string {
 	run(tmp, "git", "init", "--bare", bare)
 	run(tmp, "git", "clone", bare, work)
 	run(work, "git", "checkout", "-b", "main")
-	os.WriteFile(filepath.Join(work, "README.md"), []byte("# "+name+"\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(work, "README.md"), []byte("# "+name+"\n"), 0o644)
 	run(work, "git", "add", ".")
 	run(work, "git", "commit", "-m", "initial")
 	run(work, "git", "push", "-u", "origin", "main")

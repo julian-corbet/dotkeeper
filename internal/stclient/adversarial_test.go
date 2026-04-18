@@ -14,7 +14,7 @@ import (
 func TestPingHTTP500(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("Internal Server Error"))
+		_, _ = w.Write([]byte("Internal Server Error"))
 	}))
 	defer server.Close()
 
@@ -42,7 +42,7 @@ func TestPingHTTP403(t *testing.T) {
 // TestGetStatusTruncatedJSON verifies graceful handling of truncated JSON.
 func TestGetStatusTruncatedJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`{"myID": "AAAA`)) // truncated
+		_, _ = w.Write([]byte(`{"myID": "AAAA`)) // truncated
 	}))
 	defer server.Close()
 
@@ -58,7 +58,7 @@ func TestGetStatusTruncatedJSON(t *testing.T) {
 func TestGetStatusHTMLErrorPage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("<html><body>Service Unavailable</body></html>"))
+		_, _ = w.Write([]byte("<html><body>Service Unavailable</body></html>"))
 	}))
 	defer server.Close()
 
@@ -72,7 +72,7 @@ func TestGetStatusHTMLErrorPage(t *testing.T) {
 // TestGetStatusEmptyBody verifies handling of empty response body.
 func TestGetStatusEmptyBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(""))
+		_, _ = w.Write([]byte(""))
 	}))
 	defer server.Close()
 
@@ -104,7 +104,7 @@ func TestAddDevicePutConfigFails(t *testing.T) {
 		requestCount++
 		switch r.Method {
 		case "GET":
-			w.Write([]byte(`{"devices":[],"folders":[]}`))
+			_, _ = w.Write([]byte(`{"devices":[],"folders":[]}`))
 		case "PUT":
 			w.WriteHeader(http.StatusInternalServerError)
 		}
@@ -126,7 +126,7 @@ func TestAddOrUpdateFolderMergesExisting(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/rest/config":
-			w.Write([]byte(`{
+			_, _ = w.Write([]byte(`{
 				"devices": [],
 				"folders": [{
 					"id": "existing-folder",
@@ -137,10 +137,10 @@ func TestAddOrUpdateFolderMergesExisting(t *testing.T) {
 				}]
 			}`))
 		case r.Method == "GET" && r.URL.Path == "/rest/system/status":
-			w.Write([]byte(`{"myID": "MY-ID"}`))
+			_, _ = w.Write([]byte(`{"myID": "MY-ID"}`))
 		case r.Method == "PUT":
 			json := make([]byte, r.ContentLength)
-			r.Body.Read(json)
+			_, _ = r.Body.Read(json)
 			// Simple enough to just check the raw bytes
 			putConfig = map[string]any{"raw": string(json)}
 			w.WriteHeader(200)
@@ -180,7 +180,7 @@ func TestClientTimeout(t *testing.T) {
 // TestGetConfigInvalidJSON verifies handling of valid HTTP but invalid JSON config.
 func TestGetConfigInvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`not json at all`))
+		_, _ = w.Write([]byte(`not json at all`))
 	}))
 	defer server.Close()
 

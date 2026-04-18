@@ -24,8 +24,8 @@ func TestWriteConfigReadOnlyDir(t *testing.T) {
 
 	tmp := t.TempDir()
 	// Make the parent read-only so the config dir CAN'T be created
-	os.Chmod(tmp, 0o500)
-	defer os.Chmod(tmp, 0o700) // restore for cleanup
+	_ = os.Chmod(tmp, 0o500)
+	defer func() { _ = os.Chmod(tmp, 0o700) }() // restore for cleanup
 
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
 	cfg := &SharedConfig{
@@ -48,8 +48,8 @@ func TestWriteMachineConfigReadOnlyDir(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	os.Chmod(tmp, 0o500)
-	defer os.Chmod(tmp, 0o700)
+	_ = os.Chmod(tmp, 0o500)
+	defer func() { _ = os.Chmod(tmp, 0o700) }()
 
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
 
@@ -67,8 +67,8 @@ func TestCreateRepoLogReadOnlyDir(t *testing.T) {
 	}
 
 	tmp := t.TempDir()
-	os.Chmod(tmp, 0o500)
-	defer os.Chmod(tmp, 0o700)
+	_ = os.Chmod(tmp, 0o500)
+	defer func() { _ = os.Chmod(tmp, 0o700) }()
 
 	err := CreateRepoLog(tmp, "test", "machine")
 	if err == nil {
@@ -83,8 +83,8 @@ func TestLoadSharedConfigCorruptFile(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	dir := filepath.Join(tmp, "dotkeeper")
-	os.MkdirAll(dir, 0o700)
-	os.WriteFile(filepath.Join(dir, "config.toml"), []byte("{{{{BROKEN"), 0o600)
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.WriteFile(filepath.Join(dir, "config.toml"), []byte("{{{{BROKEN"), 0o600)
 
 	_, err := LoadSharedConfig()
 	if err == nil {
@@ -98,8 +98,8 @@ func TestLoadMachineConfigCorruptFile(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
 	dir := filepath.Join(tmp, "dotkeeper")
-	os.MkdirAll(dir, 0o700)
-	os.WriteFile(filepath.Join(dir, "machine.toml"), []byte("not = [valid = toml"), 0o600)
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.WriteFile(filepath.Join(dir, "machine.toml"), []byte("not = [valid = toml"), 0o600)
 
 	_, err := LoadMachineConfig()
 	if err == nil {
@@ -110,7 +110,7 @@ func TestLoadMachineConfigCorruptFile(t *testing.T) {
 // TestLoadRepoLogCorruptFile verifies corrupt dotkeeper.toml handling.
 func TestLoadRepoLogCorruptFile(t *testing.T) {
 	tmp := t.TempDir()
-	os.WriteFile(filepath.Join(tmp, "dotkeeper.toml"), []byte("\x00\x01GARBAGE"), 0o644)
+	_ = os.WriteFile(filepath.Join(tmp, "dotkeeper.toml"), []byte("\x00\x01GARBAGE"), 0o644)
 
 	_, err := LoadRepoLog(tmp)
 	if err == nil {
@@ -133,7 +133,7 @@ func TestExpandPathNoHome(t *testing.T) {
 func TestBrokenSymlinkAsRepoPath(t *testing.T) {
 	tmp := t.TempDir()
 	link := filepath.Join(tmp, "broken-link")
-	os.Symlink("/nonexistent/path/that/does/not/exist", link)
+	_ = os.Symlink("/nonexistent/path/that/does/not/exist", link)
 
 	// CreateRepoLog should fail — target doesn't exist
 	err := CreateRepoLog(link, "test", "machine")

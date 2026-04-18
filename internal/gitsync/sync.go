@@ -26,8 +26,10 @@ func SyncRepo(repoPath, machineName string) error {
 
 	// Pull with rebase
 	if _, err := runCapture(repoPath, "git", "pull", "--rebase", "--autostash", "--quiet"); err != nil {
-		// Abort rebase and try plain pull
-		runCapture(repoPath, "git", "rebase", "--abort")
+		// Abort rebase and try plain pull. Ignore abort errors — if the rebase
+		// wasn't actually in progress this will fail harmlessly, and the pull
+		// below is what matters.
+		_, _ = runCapture(repoPath, "git", "rebase", "--abort")
 		if stderr, err := runCapture(repoPath, "git", "pull", "--autostash", "--quiet"); err != nil {
 			return fmt.Errorf("pull failed: %s", strings.TrimSpace(stderr))
 		}
@@ -91,7 +93,8 @@ func countAhead(dir string) int {
 	}
 	s := strings.TrimSpace(string(out))
 	var n int
-	fmt.Sscanf(s, "%d", &n)
+	// Parse failure returns n=0, which is the correct "unknown" fallback.
+	_, _ = fmt.Sscanf(s, "%d", &n)
 	return n
 }
 

@@ -178,7 +178,7 @@ func (c *Client) get(endpoint string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("API returned %d", resp.StatusCode)
 	}
@@ -200,7 +200,7 @@ func (c *Client) put(endpoint string, data any) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("API returned %d", resp.StatusCode)
 	}
