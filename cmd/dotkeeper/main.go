@@ -23,8 +23,11 @@ import (
 	"github.com/julian-corbet/dotkeeper/internal/stengine"
 )
 
+// Version is dotkeeper's release version. It overrides Syncthing's embedded
+// build.Version for BEP handshake purposes (see internal/stengine).
+// Injected via -ldflags="-X main.version=..." at release build time.
 var (
-	version = "dev"
+	version = "0.1.1"
 	commit  = "none"
 )
 
@@ -55,7 +58,7 @@ func main() {
 // --- Helpers ---
 
 func engine() *stengine.Engine {
-	return stengine.New(config.STConfigDir(), config.STDataDir())
+	return stengine.New(config.STConfigDir(), config.STDataDir(), version)
 }
 
 func apiClient() *stclient.Client {

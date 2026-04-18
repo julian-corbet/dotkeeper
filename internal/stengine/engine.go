@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/syncthing/syncthing/lib/build"
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/locations"
@@ -37,14 +38,18 @@ const (
 type Engine struct {
 	configDir string
 	dataDir   string
+	version   string
 	app       *stlib.App
 }
 
 // New creates an engine with the given config and data directories.
-func New(configDir, dataDir string) *Engine {
+// The version string (e.g. "0.1.1") is injected into Syncthing's build.Version
+// so the BEP handshake reports dotkeeper's version rather than "unknown-dev".
+func New(configDir, dataDir, version string) *Engine {
 	return &Engine{
 		configDir: configDir,
 		dataDir:   dataDir,
+		version:   version,
 	}
 }
 
@@ -98,6 +103,13 @@ func (e *Engine) Start(ctx context.Context) error {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
 		return fmt.Errorf("loading certificate: %w", err)
+	}
+
+	// Override Syncthing's build.Version so the BEP handshake reports
+	// dotkeeper's version. ClientName remains "syncthing" — it is a
+	// string literal in lib/connections/service.go and has no public hook.
+	if e.version != "" {
+		build.Version = "v" + e.version
 	}
 
 	// Suppress default syncthing logging
