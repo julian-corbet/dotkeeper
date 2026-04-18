@@ -25,7 +25,13 @@ jobs:
         with:
           results_file: results.sarif
           results_format: sarif
-          publish_results: true
+          # Private repos need a PAT with read access for checks that query
+          # org/admin APIs (branch protection, webhooks, etc.). SCORECARD_TOKEN
+          # is a fine-grained PAT scoped to this repo, read-only.
+          repo_token: ${{ secrets.SCORECARD_TOKEN }}
+          # publish_results uploads to the OpenSSF public results API, which
+          # rejects private repos. Disabled until the repo flips public.
+          publish_results: false
 
       - uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
         with:
