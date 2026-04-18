@@ -39,6 +39,21 @@ make build && make install
 
 Or download a binary from [Releases](https://github.com/julian-corbet/dotkeeper/releases).
 
+> **Note — building with `go install`**
+>
+> dotkeeper embeds Syncthing as a library, which transitively pulls in
+> `lib/api`. That package expects a generator-produced `auto.Assets`
+> symbol (Syncthing's web GUI). Since dotkeeper only uses the REST
+> API, always build with the `noassets` tag:
+>
+> ```bash
+> go install -tags noassets github.com/julian-corbet/dotkeeper/cmd/dotkeeper@latest
+> ```
+>
+> The `Makefile`, `Dockerfile`, and release workflow all set this tag
+> automatically. A naked `go build ./cmd/dotkeeper` will fail with
+> `undefined: auto.Assets` — this is expected.
+
 ### First machine
 
 ```bash
