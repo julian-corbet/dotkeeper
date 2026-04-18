@@ -5,8 +5,8 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write
+# Least privilege at workflow level; only the `release` job elevates to write.
+permissions: read-all
 
 jobs:
   build:
@@ -198,6 +198,9 @@ jobs:
   release:
     needs: [build, package]
     runs-on: ubuntu-latest
+    # Creates the GitHub Release and uploads artifacts to it.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
