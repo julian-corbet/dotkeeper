@@ -16,6 +16,11 @@ import (
 const (
 	// APIAddress is the loopback address for dotkeeper's isolated Syncthing.
 	APIAddress = "127.0.0.1:18384"
+
+	// FolderMarkerName is the marker directory placed at each shared folder
+	// root so Syncthing can recognise it. Renamed from the default ".stfolder"
+	// to ".dkfolder" to keep user-facing surfaces free of Syncthing branding.
+	FolderMarkerName = ".dkfolder"
 )
 
 // Client talks to the Syncthing REST API.
@@ -138,6 +143,7 @@ func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 		"fsWatcherDelayS":  1,
 		"ignorePerms":      false,
 		"autoNormalize":    true,
+		"markerName":       FolderMarkerName,
 	}
 
 	folders, _ := cfg["folders"].([]any)
@@ -149,6 +155,7 @@ func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 			fm["label"] = label
 			fm["path"] = path
 			fm["devices"] = folderDevices
+			fm["markerName"] = FolderMarkerName
 			folders[i] = fm
 			found = true
 			break

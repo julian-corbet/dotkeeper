@@ -23,7 +23,7 @@ ignore = [
 
     # Syncthing internals — conflict files must not propagate
     "*.sync-conflict-*",
-    ".stfolder",
+    ".dkfolder",
     ".stignore",
 
     # OS metadata
