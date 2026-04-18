@@ -16,6 +16,9 @@ jobs:
     permissions:
       security-events: write
       id-token: write
+      # codeql-action/upload-sarif queries the workflow-run API for
+      # context; without actions:read it fails "Resource not accessible".
+      actions: read
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
