@@ -19,6 +19,11 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
+          # Default GITHUB_TOKEN lacks contents:read here because the job-
+          # level permissions block narrows the workflow's read-all down to
+          # security-events:write + id-token:write only. Use the PAT to
+          # clone the private repo.
+          token: ${{ secrets.SCORECARD_TOKEN }}
           persist-credentials: false
 
       - uses: ossf/scorecard-action@62b2cac7ed8198b15735ed49ab1e5cf35480ba46 # v2.4.0
