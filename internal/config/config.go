@@ -63,19 +63,17 @@ type MachineConfig struct {
 
 // --- Per-repo log (dotkeeper.toml in each repo) ---
 
+// RepoLog holds the per-repo metadata that lives in the repo root as
+// dotkeeper.toml and is tracked in git. It is intentionally scope-limited to
+// repo-level identity — machine tracking lives in the shared config.toml.
 type RepoLog struct {
-	Repo     RepoLogInfo                `toml:"repo"`
-	Machines map[string]RepoLogMachine  `toml:"machines"`
+	Repo RepoLogInfo `toml:"repo"`
 }
 
 type RepoLogInfo struct {
 	Name    string `toml:"name"`
 	Added   string `toml:"added"`
 	AddedBy string `toml:"added_by"`
-}
-
-type RepoLogMachine struct {
-	LastSeen string `toml:"last_seen"`
 }
 
 // --- Path helpers ---
@@ -295,34 +293,8 @@ func WriteRepoLog(repoPath string, log *RepoLog) error {
 	b.WriteString(fmt.Sprintf("added = %q\n", log.Repo.Added))
 	b.WriteString(fmt.Sprintf("added_by = %q\n", log.Repo.AddedBy))
 
-	if len(log.Machines) > 0 {
-		b.WriteString("\n[machines]\n")
-		for name, m := range log.Machines {
-			b.WriteString(fmt.Sprintf("\n[machines.%q]\n", sanitizeTOMLKey(name)))
-			b.WriteString(fmt.Sprintf("last_seen = %q\n", m.LastSeen))
-		}
-	}
-
 	path := filepath.Join(repoPath, "dotkeeper.toml")
 	return os.WriteFile(path, []byte(b.String()), 0o644)
-}
-
-// TouchRepoLog updates the last_seen timestamp for this machine in a repo's dotkeeper.toml.
-func TouchRepoLog(repoPath, machineName string) error {
-	log, err := LoadRepoLog(repoPath)
-	if err != nil {
-		return err
-	}
-	if log == nil {
-		return nil // no dotkeeper.toml in this repo, skip
-	}
-	if log.Machines == nil {
-		log.Machines = make(map[string]RepoLogMachine)
-	}
-	log.Machines[machineName] = RepoLogMachine{
-		LastSeen: time.Now().UTC().Format(time.RFC3339),
-	}
-	return WriteRepoLog(repoPath, log)
 }
 
 // CreateRepoLog creates a new dotkeeper.toml in a repo.
@@ -333,9 +305,6 @@ func CreateRepoLog(repoPath, repoName, machineName string) error {
 			Name:    repoName,
 			Added:   now,
 			AddedBy: machineName,
-		},
-		Machines: map[string]RepoLogMachine{
-			machineName: {LastSeen: now},
 		},
 	}
 	return WriteRepoLog(repoPath, log)

@@ -49,24 +49,21 @@ func FuzzTOMLRoundTrip(f *testing.F) {
 	})
 }
 
-// FuzzRepoLogRoundTrip tests that CreateRepoLog → TouchRepoLog → LoadRepoLog
-// never panics for arbitrary machine names.
+// FuzzRepoLogRoundTrip tests that CreateRepoLog → LoadRepoLog
+// never panics for arbitrary repo/machine names.
 func FuzzRepoLogRoundTrip(f *testing.F) {
-	f.Add("test-repo", "machine_a", "machine_b")
-	f.Add("", "", "")
-	f.Add("repo\"name", "key[0]", "host.name")
-	f.Add("日本語", "中文", "العربية")
+	f.Add("test-repo", "machine_a")
+	f.Add("", "")
+	f.Add("repo\"name", "key[0]")
+	f.Add("日本語", "中文")
 
-	f.Fuzz(func(t *testing.T, repoName, machine1, machine2 string) {
+	f.Fuzz(func(t *testing.T, repoName, machine1 string) {
 		tmp := t.TempDir()
 
 		// Must not panic
 		if err := CreateRepoLog(tmp, repoName, machine1); err != nil {
 			return
 		}
-
-		// Touch must not panic
-		_ = TouchRepoLog(tmp, machine2)
 
 		// Load must not panic
 		log, err := LoadRepoLog(tmp)

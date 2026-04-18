@@ -625,9 +625,6 @@ func syncCmd() *cobra.Command {
 			for _, repo := range gitRepos {
 				path := config.ExpandPath(repo.Path)
 
-				// Update per-repo log
-				config.TouchRepoLog(path, machineKey(machine.Name))
-
 				if err := gitsync.SyncRepo(path, machine.Name); err != nil {
 					fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: %s: %v\n", repo.Name, err)
 				}
