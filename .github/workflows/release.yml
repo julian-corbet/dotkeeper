@@ -146,7 +146,13 @@ jobs:
 
       - name: Install nFPM
         run: |
-          curl -sfL https://github.com/goreleaser/nfpm/releases/latest/download/nfpm_linux_amd64.tar.gz | tar xz nfpm
+          # Download first, then extract — piped curl|tar can't retry a
+          # partial stream, which caused v0.1.1's initial release to fail
+          # on one matrix shard with "gzip: unexpected end of file".
+          curl -sfL --retry 3 --retry-delay 5 --retry-all-errors \
+            -o nfpm.tar.gz \
+            https://github.com/goreleaser/nfpm/releases/latest/download/nfpm_linux_amd64.tar.gz
+          tar xzf nfpm.tar.gz nfpm
           chmod +x nfpm
 
       - name: Set version
