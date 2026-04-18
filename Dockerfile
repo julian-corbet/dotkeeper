@@ -15,7 +15,7 @@
 #     ghcr.io/julian-corbet/dotkeeper start
 
 # --- Build stage ---
-FROM golang:1.26-alpine AS build
+FROM golang:1.26-alpine@sha256:f85330846cde1e57ca9ec309382da3b8e6ae3ab943d2739500e08c86393a21b1 AS build
 
 RUN apk add --no-cache git
 
@@ -33,7 +33,7 @@ RUN CGO_ENABLED=0 go build -tags noassets \
     -o /dotkeeper ./cmd/dotkeeper
 
 # --- Runtime stage ---
-FROM alpine:3.21
+FROM alpine:3.21@sha256:48b0309ca019d89d40f670aa1bc06e426dc0931948452e8491e3d65087abc07d
 
 RUN apk add --no-cache git ca-certificates tzdata
 
