@@ -1,9 +1,32 @@
 name: Publish Packages
 
-# Runs after a GitHub Release is published (triggered by the release workflow)
+# Manual trigger only. See NOTES below before running.
+#
+# Originally wired to `on: release: [published]`, but GitHub deliberately does
+# not fire release events for releases created by GITHUB_TOKEN (the release.yml
+# workflow uses GITHUB_TOKEN). So this never ran automatically, and after
+# v0.1.2 we converted it to workflow_dispatch so the situation is explicit
+# rather than silently broken.
+#
+# To run: `gh workflow run publish-packages.yml -f version=X.Y.Z` after a
+# release is published and its assets are visible.
+#
+# PREREQUISITES before this can succeed:
+# - A PAT with `repo` scope on julian-corbet's account, stored as secret
+#   `PACKAGES_TOKEN`. GITHUB_TOKEN cannot write to the external repos
+#   (julian-corbet/homebrew-dotkeeper, julian-corbet/scoop-dotkeeper).
+# - AUR SSH key stored as `AUR_SSH_KEY` (this one is already wired).
+# - The external tap/bucket/AUR repos exist and are writable by the PAT.
+#
+# UNTIL the above is set up, this workflow will fail at the `gh api ... PUT`
+# steps for Homebrew/Scoop. AUR step self-skips if `AUR_SSH_KEY` is missing.
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (without the v prefix, e.g. 0.1.2)'
+        required: true
+        type: string
 
 # Least privilege at workflow level; the one job below elevates only what it needs.
 permissions: read-all
@@ -21,13 +44,13 @@ jobs:
 
       - name: Set version
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
+          VERSION="${{ inputs.version }}"
           echo "VERSION=${VERSION}" >> $GITHUB_ENV
           echo "TAG=v${VERSION}" >> $GITHUB_ENV
 
       - name: Download release checksums
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           gh release download "${TAG}" --pattern "checksums_sha256.txt" --dir /tmp
           cat /tmp/checksums_sha256.txt
@@ -45,7 +68,7 @@ jobs:
       # === Homebrew ===
       - name: Update Homebrew formula
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           cat > /tmp/dotkeeper.rb << 'FORMULA'
           class Dotkeeper < Formula
@@ -107,7 +130,7 @@ jobs:
       # === Scoop ===
       - name: Update Scoop manifest
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN || secrets.GITHUB_TOKEN }}
         run: |
           cat > /tmp/dotkeeper.json << MANIFEST
           {
