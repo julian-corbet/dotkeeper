@@ -41,6 +41,12 @@ jobs:
           # rejects private repos. Disabled until the repo flips public.
           publish_results: false
 
-      - uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
+      # Code Scanning (which consumes SARIF) requires GitHub Advanced Security,
+      # which isn't available for personal private repos. Archive results as a
+      # workflow artifact instead. When the repo goes public, swap this back
+      # to github/codeql-action/upload-sarif for the Security tab view.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          sarif_file: results.sarif
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 30
