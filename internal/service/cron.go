@@ -75,11 +75,13 @@ func (c *Cron) StopSyncthing() error {
 	}
 	pid := strings.TrimSpace(string(data))
 	if !pidRegex.MatchString(pid) {
-		os.Remove(c.pidFile())
+		_ = os.Remove(c.pidFile())
 		return fmt.Errorf("corrupt PID file: %q", pid)
 	}
-	exec.Command("kill", pid).Run()
-	os.Remove(c.pidFile())
+	// Best-effort stop: a kill failure (already dead, no permission) is not
+	// actionable here and shouldn't prevent us from cleaning up the PID file.
+	_ = exec.Command("kill", pid).Run()
+	_ = os.Remove(c.pidFile())
 	return nil
 }
 
@@ -125,14 +127,15 @@ func calendarToCron(onCalendar string) string {
 	hour, minute := 2, 0
 	for i := 0; i < len(onCalendar)-1; i++ {
 		if onCalendar[i] == ':' && i > 0 {
-			fmt.Sscanf(onCalendar[i+1:], "%d", &minute)
+			// Parse failures leave the zero-valued default in place, which is fine.
+			_, _ = fmt.Sscanf(onCalendar[i+1:], "%d", &minute)
 			before := onCalendar[:i]
 			lastSpace := strings.LastIndex(before, " ")
 			hourStr := before
 			if lastSpace >= 0 {
 				hourStr = before[lastSpace+1:]
 			}
-			fmt.Sscanf(hourStr, "%d", &hour)
+			_, _ = fmt.Sscanf(hourStr, "%d", &hour)
 			break
 		}
 	}

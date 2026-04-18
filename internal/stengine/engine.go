@@ -62,9 +62,11 @@ func (e *Engine) Setup() error {
 		return err
 	}
 
-	// Set Syncthing's locations to our isolated paths
-	locations.SetBaseDir(locations.ConfigBaseDir, e.configDir)
-	locations.SetBaseDir(locations.DataBaseDir, e.dataDir)
+	// Set Syncthing's locations to our isolated paths. SetBaseDir only errors
+	// on unknown BaseDirEnum values, which we're passing as library constants,
+	// so the returned error is structurally impossible here.
+	_ = locations.SetBaseDir(locations.ConfigBaseDir, e.configDir)
+	_ = locations.SetBaseDir(locations.DataBaseDir, e.dataDir)
 
 	configFile := locations.Get(locations.ConfigFile)
 	certFile := locations.Get(locations.CertFile)
@@ -92,8 +94,10 @@ func (e *Engine) Setup() error {
 // Start launches the embedded Syncthing instance in the foreground.
 // Blocks until stopped via context cancellation or signal.
 func (e *Engine) Start(ctx context.Context) error {
-	locations.SetBaseDir(locations.ConfigBaseDir, e.configDir)
-	locations.SetBaseDir(locations.DataBaseDir, e.dataDir)
+	// SetBaseDir only errors on unknown BaseDirEnum values; library constants
+	// cannot trigger that branch.
+	_ = locations.SetBaseDir(locations.ConfigBaseDir, e.configDir)
+	_ = locations.SetBaseDir(locations.DataBaseDir, e.dataDir)
 
 	certFile := locations.Get(locations.CertFile)
 	keyFile := locations.Get(locations.KeyFile)
@@ -158,7 +162,8 @@ func (e *Engine) Start(ctx context.Context) error {
 		return fmt.Errorf("starting syncthing: %w", err)
 	}
 
-	fmt.Fprintln(ourStdout, "[dotkeeper] embedded Syncthing started on", GUIAddress)
+	// Informational banner; losing this to a closed stdout isn't worth failing on.
+	_, _ = fmt.Fprintln(ourStdout, "[dotkeeper] embedded Syncthing started on", GUIAddress)
 
 	// Wait for context cancellation or app exit
 	go func() {
@@ -243,7 +248,7 @@ func (e *Engine) generateConfig(configFile, certFile, keyFile string) error {
 	if err != nil {
 		return err
 	}
-	defer fd.Close()
+	defer func() { _ = fd.Close() }()
 
 	wrapper := config.Wrap(configFile, cfg, deviceID, events.NoopLogger)
 	return wrapper.Save()

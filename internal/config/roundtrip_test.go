@@ -102,7 +102,7 @@ func TestRepoLogRoundTrip(t *testing.T) {
 func TestRepoLogNoConflictMarkers(t *testing.T) {
 	tmp := t.TempDir()
 
-	CreateRepoLog(tmp, "test", "machine_a")
+	_ = CreateRepoLog(tmp, "test", "machine_a")
 
 	data, _ := os.ReadFile(filepath.Join(tmp, "dotkeeper.toml"))
 	content := string(data)
@@ -119,7 +119,7 @@ func TestFilePermissions(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
 
-	WriteMachineConfig("test", 0)
+	_ = WriteMachineConfig("test", 0)
 	info, err := os.Stat(MachineConfigPath())
 	if err != nil {
 		t.Fatalf("stat machine.toml: %v", err)
@@ -128,7 +128,7 @@ func TestFilePermissions(t *testing.T) {
 		t.Errorf("machine.toml perm = %o, want 0600", perm)
 	}
 
-	WriteSharedConfig(&SharedConfig{
+	_ = WriteSharedConfig(&SharedConfig{
 		Sync:      SyncConfig{GitInterval: "daily", SlotOffsetMinutes: 5},
 		Syncthing: SyncthingConfig{Ignore: []string{".git"}},
 		Machines:  make(map[string]MachineEntry),
