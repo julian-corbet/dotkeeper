@@ -8,11 +8,11 @@ added_by = "CORBET-ELITEBOOK"
 
 [machines]
 
-[machines.CORBET-CACHYOS]
-last_seen = "2026-04-17T00:00:57Z"
-
-[machines.test-machine]
-last_seen = "2026-04-17T00:06:14Z"
-
 [machines.CORBET-ELITEBOOK]
 last_seen = "2026-04-14T21:36:04Z"
+
+[machines.CORBET-CACHYOS]
+last_seen = "2026-04-18T00:00:57Z"
+
+[machines.test-machine]
+last_seen = "2026-04-18T00:05:14Z"
