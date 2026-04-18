@@ -13,13 +13,16 @@ on:
       - 'go.sum'
       - 'Dockerfile'
 
-permissions:
-  contents: read
-  packages: write
+# Least privilege at workflow level; the one job below elevates only what it needs.
+permissions: read-all
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    # Pushes image to GHCR; needs write on packages.
+    permissions:
+      contents: read
+      packages: write
     # Skip auto-sync commits
     if: "!startsWith(github.event.head_commit.message, 'auto:')"
     steps:
