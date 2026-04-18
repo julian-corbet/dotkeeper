@@ -34,3 +34,18 @@ dotkeeper embeds Syncthing and manages git repositories. Security-relevant areas
 ## Dependency Security
 
 dotkeeper tracks known vulnerabilities in its dependency tree via `govulncheck`. The embedded Syncthing library is the largest dependency surface. We update to the latest Syncthing release with each dotkeeper release.
+
+### Known unresolved advisories
+
+As of v0.1.2, `govulncheck -tags noassets ./...` reports two outstanding advisories, both in `github.com/quic-go/quic-go`:
+
+| Advisory | Status | Notes |
+|----------|--------|-------|
+| [GO-2025-4017](https://pkg.go.dev/vuln/GO-2025-4017) | **Called** (reachable) | Tracked; see below |
+| [GO-2025-4233](https://pkg.go.dev/vuln/GO-2025-4233) | Module-only (not reached by dotkeeper code paths) | Tracked |
+
+**Why not fixed:** Upstream fixes exist in quic-go v0.54.1 / v0.57.0, but Syncthing v1.30.0 (the version dotkeeper embeds) has API incompatibilities with those quic-go versions — `quic-go/logging` was removed, and `quic.Connection` / `quic.Stream` changed from value types to pointer types. Bumping quic-go without a matching Syncthing release breaks the build.
+
+**Tracking plan:** monitor the [Syncthing release feed](https://github.com/syncthing/syncthing/releases) for a version that bumps quic-go past v0.54.1. At that point, a dotkeeper patch release will clear both advisories.
+
+**Impact assessment for dotkeeper operators:** dotkeeper uses Syncthing's QUIC listener for peer-to-peer sync. The reachable advisory (GO-2025-4017) is an issue in server-side session-ticket handling. Mitigation: if this is a concern for your deployment, disable QUIC in the generated Syncthing config — dotkeeper also listens on TCP at `:12000`, and TCP is unaffected.
