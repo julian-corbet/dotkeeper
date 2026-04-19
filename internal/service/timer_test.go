@@ -64,7 +64,7 @@ func TestMachineKeyEquivalent(t *testing.T) {
 	}{
 		{"my-desktop", true},
 		{"my.machine.local", true},     // dots should be replaced
-		{"laptop", true},
+		{"HOST-EXAMPLE-01", true},
 		{"machine with spaces", true},
 	}
 
