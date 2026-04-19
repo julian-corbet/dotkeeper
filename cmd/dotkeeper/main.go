@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -942,6 +943,8 @@ func conflictCmd() *cobra.Command {
 	}
 	cmd.AddCommand(conflictListCmd())
 	cmd.AddCommand(conflictResolveAllCmd())
+	cmd.AddCommand(conflictKeepCmd())
+	cmd.AddCommand(conflictAcceptCmd())
 	return cmd
 }
 
@@ -952,6 +955,7 @@ func conflictListCmd() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			cfg := requireConfig()
 			roots := managedFolderPaths(cfg)
+			shortToHost := deviceShortToHostname(cfg)
 
 			var all []conflict.Conflict
 			for _, root := range roots {
@@ -969,7 +973,7 @@ func conflictListCmd() *cobra.Command {
 			}
 
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(tw, "FOLDER\tORIGINAL FILE\tTIMESTAMP\tOTHER MACHINE")
+			_, _ = fmt.Fprintln(tw, "FOLDER\tORIGINAL FILE\tTIMESTAMP\tFROM")
 			for _, c := range all {
 				folder := containingFolder(c.Path, roots)
 				rel, err := filepath.Rel(folder, filepath.Dir(c.Path))
@@ -980,16 +984,41 @@ func conflictListCmd() *cobra.Command {
 				if rel != "" {
 					original = filepath.Join(rel, c.OriginalName)
 				}
+				from := c.DeviceIDShort
+				if host, ok := shortToHost[c.DeviceIDShort]; ok {
+					from = host
+				}
 				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
 					config.ContractPath(folder),
 					original,
 					c.Timestamp.Format("2006-01-02 15:04:05"),
-					c.DeviceIDShort,
+					from,
 				)
 			}
 			_ = tw.Flush()
 		},
 	}
+}
+
+// deviceShortToHostname builds a lookup from the 7-character short-form
+// device ID (as embedded in a sync-conflict filename) to the friendly
+// hostname registered in the shared config's [machines] table.
+//
+// Syncthing's full device ID is a 63-char dash-separated base32 string
+// like "UUS6FSQ-...-..." where the leading 7-char segment is exactly the
+// short form the conflict filename uses. Entries without a SyncthingID
+// (possible on a freshly-joined peer before its cert has propagated) are
+// skipped; callers treat a missing entry as "fall back to the short ID".
+func deviceShortToHostname(cfg *config.SharedConfig) map[string]string {
+	out := make(map[string]string, len(cfg.Machines))
+	for _, m := range cfg.Machines {
+		if len(m.SyncthingID) < 7 {
+			continue
+		}
+		short := m.SyncthingID[:7]
+		out[short] = m.Hostname
+	}
+	return out
 }
 
 // conflictResolveAllCmd walks every managed folder, finds conflicts,
@@ -1077,4 +1106,243 @@ func containingFolder(path string, roots []string) string {
 		return filepath.Dir(path)
 	}
 	return best
+}
+
+// conflictKeepCmd implements `dotkeeper conflict keep <path>`: drop the
+// sync-conflict variant and leave the canonical file untouched. No git
+// activity because nothing tracked changed.
+func conflictKeepCmd() *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:   "keep <path>",
+		Short: "Delete the sync-conflict variant and keep the current file as-is",
+		Long: "Removes the .sync-conflict-* file for the given path and leaves the canonical\n" +
+			"file unchanged. No git commit — nothing tracked changed.\n\n" +
+			"<path> may be either the canonical file or the explicit variant filename.\n" +
+			"With --all, processes every pending conflict in every managed folder.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if all && len(args) > 0 {
+				return fmt.Errorf("--all takes no arguments")
+			}
+			if !all && len(args) != 1 {
+				return fmt.Errorf("exactly one <path> required (or use --all)")
+			}
+			return nil
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg := requireConfig()
+			if all {
+				n := runKeepAll(cfg)
+				fmt.Printf("kept %d conflict(s)\n", n)
+				return
+			}
+			if err := runKeepOne(cfg, args[0]); err != nil {
+				fmt.Fprintf(os.Stderr, "[dotkeeper] ERROR: %v\n", err)
+				os.Exit(1)
+			}
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "apply to every pending conflict across all managed folders")
+	return cmd
+}
+
+// conflictAcceptCmd implements `dotkeeper conflict accept <path>`:
+// replace the canonical file with the variant's contents, delete the
+// variant, and commit with a scoped message.
+func conflictAcceptCmd() *cobra.Command {
+	var all bool
+	cmd := &cobra.Command{
+		Use:   "accept <path>",
+		Short: "Replace the current file with the sync-conflict variant and commit",
+		Long: "Overwrites the canonical file with the contents of the .sync-conflict-* variant,\n" +
+			"removes the variant, and creates a git commit scoped to that single path:\n" +
+			"  auto: accept sync conflict for <relpath> (from <deviceShort>)\n\n" +
+			"<path> may be either the canonical file or the explicit variant filename.\n" +
+			"With --all, processes every pending conflict in every managed folder;\n" +
+			"canonicals with multiple variants are skipped (resolve them explicitly).",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if all && len(args) > 0 {
+				return fmt.Errorf("--all takes no arguments")
+			}
+			if !all && len(args) != 1 {
+				return fmt.Errorf("exactly one <path> required (or use --all)")
+			}
+			return nil
+		},
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg := requireConfig()
+			ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+			defer cancel()
+
+			if all {
+				n := runAcceptAll(ctx, cfg)
+				fmt.Printf("accepted %d conflict(s)\n", n)
+				return
+			}
+			if err := runAcceptOne(ctx, cfg, args[0]); err != nil {
+				fmt.Fprintf(os.Stderr, "[dotkeeper] ERROR: %v\n", err)
+				os.Exit(1)
+			}
+		},
+	}
+	cmd.Flags().BoolVar(&all, "all", false, "apply to every pending conflict across all managed folders")
+	return cmd
+}
+
+// resolveTarget resolves a user-supplied <path> into the exact set of
+// variants to act on. Accepts either a canonical path or a variant
+// path and always returns absolute paths.
+//
+// Returns (variants, canonical, nil) on success. Returns a non-nil
+// error when:
+//   - the path corresponds to no conflict at all ("no conflict for X"),
+//   - the path is a canonical with multiple variants (caller must pick
+//     one explicitly); the error lists them so the user can copy one.
+func resolveTarget(rawPath string) ([]conflict.Conflict, string, error) {
+	absPath, err := filepath.Abs(config.ExpandPath(rawPath))
+	if err != nil {
+		return nil, "", fmt.Errorf("resolving %q: %w", rawPath, err)
+	}
+
+	// If the user passed a variant path directly, honour it exactly —
+	// we still want to check the same directory for OTHER variants so
+	// an "accept this one" on a three-way split doesn't silently leave
+	// the other variant behind — but we return only the one they asked
+	// for. The --all path handles cross-canonical iteration elsewhere.
+	if conflict.IsConflictName(absPath) {
+		parsed, err := conflict.Parse(filepath.Base(absPath))
+		if err != nil {
+			return nil, "", fmt.Errorf("parsing %q: %w", absPath, err)
+		}
+		if _, err := os.Stat(absPath); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil, "", fmt.Errorf("no conflict for %s", rawPath)
+			}
+			return nil, "", fmt.Errorf("stat %s: %w", absPath, err)
+		}
+		parsed.Path = absPath
+		canonical := filepath.Join(filepath.Dir(absPath), parsed.OriginalName)
+		return []conflict.Conflict{*parsed}, canonical, nil
+	}
+
+	// Canonical path: find every variant next to it.
+	variants, err := conflict.FindVariants(absPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, "", fmt.Errorf("no conflict for %s", rawPath)
+		}
+		return nil, "", fmt.Errorf("scanning %s: %w", filepath.Dir(absPath), err)
+	}
+	if len(variants) == 0 {
+		return nil, "", fmt.Errorf("no conflict for %s", rawPath)
+	}
+	if len(variants) > 1 {
+		var b strings.Builder
+		fmt.Fprintf(&b, "%s has %d variants — pass one explicitly:", rawPath, len(variants))
+		for _, v := range variants {
+			fmt.Fprintf(&b, "\n  %s", v.Path)
+		}
+		return nil, "", fmt.Errorf("%s", b.String())
+	}
+	return variants, absPath, nil
+}
+
+// runKeepOne implements `dotkeeper conflict keep <path>` for a single
+// path argument.
+func runKeepOne(cfg *config.SharedConfig, rawPath string) error {
+	variants, _, err := resolveTarget(rawPath)
+	if err != nil {
+		return err
+	}
+	_ = cfg // reserved for future hostname-aware messaging
+	for _, v := range variants {
+		if err := conflict.Keep(v); err != nil {
+			return fmt.Errorf("keep %s: %w", v.Path, err)
+		}
+		fmt.Printf("kept: %s\n", v.Path)
+	}
+	return nil
+}
+
+// runKeepAll iterates every conflict across every managed folder and
+// calls Keep on each. Errors are logged but do not abort the sweep —
+// one stubborn variant shouldn't prevent cleanup of the rest.
+func runKeepAll(cfg *config.SharedConfig) int {
+	roots := managedFolderPaths(cfg)
+	var kept int
+	for _, root := range roots {
+		found, err := conflict.Scan(root)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: scanning %s: %v\n", root, err)
+			continue
+		}
+		for _, c := range found {
+			if err := conflict.Keep(c); err != nil {
+				fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: keep %s: %v\n", c.Path, err)
+				continue
+			}
+			fmt.Printf("kept: %s\n", c.Path)
+			kept++
+		}
+	}
+	return kept
+}
+
+// runAcceptOne implements `dotkeeper conflict accept <path>` for a
+// single path argument.
+func runAcceptOne(ctx context.Context, cfg *config.SharedConfig, rawPath string) error {
+	variants, canonical, err := resolveTarget(rawPath)
+	if err != nil {
+		return err
+	}
+	repoRoot := containingFolder(canonical, managedFolderPaths(cfg))
+	for _, v := range variants {
+		if err := conflict.Accept(ctx, v, repoRoot); err != nil {
+			return fmt.Errorf("accept %s: %w", v.Path, err)
+		}
+		fmt.Printf("accepted: %s\n", v.Path)
+	}
+	return nil
+}
+
+// runAcceptAll iterates every conflict across every managed folder.
+// Canonicals with multiple variants are skipped with a warning — the
+// user must resolve them explicitly so they pick the one they want.
+func runAcceptAll(ctx context.Context, cfg *config.SharedConfig) int {
+	roots := managedFolderPaths(cfg)
+	var accepted int
+
+	// Group conflicts by canonical path first so we can detect and
+	// skip multi-variant cases before any disk writes happen.
+	type key struct{ canonical string }
+	groups := make(map[key][]conflict.Conflict)
+	for _, root := range roots {
+		found, err := conflict.Scan(root)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: scanning %s: %v\n", root, err)
+			continue
+		}
+		for _, c := range found {
+			canonical := filepath.Join(filepath.Dir(c.Path), c.OriginalName)
+			k := key{canonical: canonical}
+			groups[k] = append(groups[k], c)
+		}
+	}
+
+	for k, variants := range groups {
+		if len(variants) > 1 {
+			fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: %s has %d variants — skipping; resolve explicitly\n",
+				k.canonical, len(variants))
+			continue
+		}
+		v := variants[0]
+		repoRoot := containingFolder(k.canonical, roots)
+		if err := conflict.Accept(ctx, v, repoRoot); err != nil {
+			fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: accept %s: %v\n", v.Path, err)
+			continue
+		}
+		fmt.Printf("accepted: %s\n", v.Path)
+		accepted++
+	}
+	return accepted
 }
