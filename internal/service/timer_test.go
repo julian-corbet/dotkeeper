@@ -64,7 +64,7 @@ func TestMachineKeyEquivalent(t *testing.T) {
 	}{
 		{"my-desktop", true},
 		{"my.machine.local", true},     // dots should be replaced
-		{"CORBET-ELITEBOOK", true},
+		{"MY-LAPTOP-01", true},
 		{"machine with spaces", true},
 	}
 
