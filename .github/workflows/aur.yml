@@ -1,0 +1,235 @@
+name: Publish to AUR
+
+# Fires when a release tag is pushed. Runs concurrently with release.yml and
+# waits for the release assets (checksums) to appear before updating the two
+# AUR packages:
+#   - dotkeeper-bin: pre-built tarballs from the GitHub release
+#   - dotkeeper-git: builds from main HEAD (pkgver bumped on tag for display)
+#
+# Manual trigger is available for one-off re-pushes of a specific version.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version without v-prefix (e.g. 0.3.1)'
+        required: true
+        type: string
+
+permissions: read-all
+
+jobs:
+  aur:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Wait for GitHub release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # release.yml runs in parallel; assets appear after all build jobs
+          # finish. Poll the release endpoint until checksums_sha256.txt exists.
+          for i in $(seq 1 60); do
+            if gh release view "v${VERSION}" --repo julian-corbet/dotkeeper \
+                --json assets -q '.assets[].name' 2>/dev/null | grep -q '^checksums_sha256.txt$'; then
+              echo "release assets ready"
+              exit 0
+            fi
+            echo "waiting for release v${VERSION} assets ($i/60)..."
+            sleep 15
+          done
+          echo "release v${VERSION} assets never appeared — giving up"
+          exit 1
+
+      - name: Download checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          gh release download "v${VERSION}" --repo julian-corbet/dotkeeper \
+            --pattern 'checksums_sha256.txt' --dir /tmp
+
+      - name: Set up AUR SSH
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          if [ -z "$AUR_SSH_KEY" ]; then
+            echo "::error::AUR_SSH_KEY secret is not set"
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          printf '%s' "$AUR_SSH_KEY" > ~/.ssh/aur_key
+          chmod 600 ~/.ssh/aur_key
+          cat > ~/.ssh/config <<EOF
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur_key
+            User aur
+            StrictHostKeyChecking accept-new
+          EOF
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts 2>/dev/null
+          git config --global user.name 'Julian Corbet'
+          git config --global user.email 'julian.corbet@gmail.com'
+
+      - name: Update dotkeeper-bin
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          SHA_AMD64=$(awk '/linux_amd64.tar.gz$/{print $1}' /tmp/checksums_sha256.txt)
+          SHA_ARM64=$(awk '/linux_arm64.tar.gz$/{print $1}' /tmp/checksums_sha256.txt)
+          if [ -z "$SHA_AMD64" ] || [ -z "$SHA_ARM64" ]; then
+            echo "::error::Missing linux amd64/arm64 checksums"
+            cat /tmp/checksums_sha256.txt
+            exit 1
+          fi
+
+          rm -rf /tmp/aur-bin
+          git clone ssh://aur@aur.archlinux.org/dotkeeper-bin.git /tmp/aur-bin
+          cd /tmp/aur-bin
+
+          cat > PKGBUILD <<PKGEOF
+          # Maintainer: Julian Corbet <julian.corbet@gmail.com>
+          pkgname=dotkeeper-bin
+          pkgver=${VERSION}
+          pkgrel=1
+          pkgdesc="P2P file sync with git history — embedded Syncthing + staggered git auto-backup"
+          arch=('x86_64' 'aarch64')
+          url="https://dotkeeper.corbet.ch"
+          license=('AGPL-3.0-only')
+          depends=('git')
+          provides=('dotkeeper')
+          conflicts=('dotkeeper' 'dotkeeper-git')
+          source_x86_64=("dotkeeper_\${pkgver}_linux_amd64.tar.gz::https://github.com/julian-corbet/dotkeeper/releases/download/v\${pkgver}/dotkeeper_\${pkgver}_linux_amd64.tar.gz")
+          source_aarch64=("dotkeeper_\${pkgver}_linux_arm64.tar.gz::https://github.com/julian-corbet/dotkeeper/releases/download/v\${pkgver}/dotkeeper_\${pkgver}_linux_arm64.tar.gz")
+          sha256sums_x86_64=('${SHA_AMD64}')
+          sha256sums_aarch64=('${SHA_ARM64}')
+
+          package() {
+              local _arch
+              [ "\$CARCH" = "x86_64" ] && _arch="amd64" || _arch="arm64"
+              cd "\${srcdir}/dotkeeper_\${pkgver}_linux_\${_arch}"
+              install -Dm755 dotkeeper "\${pkgdir}/usr/bin/dotkeeper"
+              install -Dm644 LICENSE "\${pkgdir}/usr/share/licenses/\${pkgname}/LICENSE"
+              install -Dm644 README.md "\${pkgdir}/usr/share/doc/\${pkgname}/README.md"
+              install -Dm644 dotkeeper.toml.example "\${pkgdir}/usr/share/doc/\${pkgname}/dotkeeper.toml.example"
+          }
+          PKGEOF
+
+          cat > .SRCINFO <<SRCEOF
+          pkgbase = dotkeeper-bin
+          	pkgdesc = P2P file sync with git history — embedded Syncthing + staggered git auto-backup
+          	pkgver = ${VERSION}
+          	pkgrel = 1
+          	url = https://dotkeeper.corbet.ch
+          	arch = x86_64
+          	arch = aarch64
+          	license = AGPL-3.0-only
+          	depends = git
+          	provides = dotkeeper
+          	conflicts = dotkeeper
+          	conflicts = dotkeeper-git
+          	source_x86_64 = dotkeeper_${VERSION}_linux_amd64.tar.gz::https://github.com/julian-corbet/dotkeeper/releases/download/v${VERSION}/dotkeeper_${VERSION}_linux_amd64.tar.gz
+          	sha256sums_x86_64 = ${SHA_AMD64}
+          	source_aarch64 = dotkeeper_${VERSION}_linux_arm64.tar.gz::https://github.com/julian-corbet/dotkeeper/releases/download/v${VERSION}/dotkeeper_${VERSION}_linux_arm64.tar.gz
+          	sha256sums_aarch64 = ${SHA_ARM64}
+
+          pkgname = dotkeeper-bin
+          SRCEOF
+
+          if git diff --quiet; then
+            echo "No changes — dotkeeper-bin already at ${VERSION}"
+          else
+            git add PKGBUILD .SRCINFO
+            git commit -m "Update to ${VERSION}"
+            git push origin master
+          fi
+
+      - name: Update dotkeeper-git (pkgver bump)
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          # dotkeeper-git rebuilds from HEAD on every install via pkgver(),
+          # but we bump the displayed pkgver on each tagged release so the
+          # AUR page doesn't look stale.
+          rm -rf /tmp/aur-git
+          git clone ssh://aur@aur.archlinux.org/dotkeeper-git.git /tmp/aur-git
+          cd /tmp/aur-git
+
+          cat > PKGBUILD <<PKGEOF
+          # Maintainer: Julian Corbet <julian.corbet@gmail.com>
+          pkgname=dotkeeper-git
+          _gitname=dotkeeper
+          pkgver=${VERSION}
+          pkgrel=1
+          pkgdesc="P2P file sync with git history — embedded Syncthing + staggered git auto-backup (bleeding-edge, builds from main)"
+          arch=('x86_64' 'aarch64')
+          url="https://dotkeeper.corbet.ch"
+          license=('AGPL-3.0-only')
+          depends=('git')
+          makedepends=('go' 'git')
+          provides=('dotkeeper')
+          conflicts=('dotkeeper' 'dotkeeper-bin')
+          source=("\${_gitname}::git+https://github.com/julian-corbet/dotkeeper.git")
+          sha256sums=('SKIP')
+
+          pkgver() {
+              cd "\${srcdir}/\${_gitname}"
+              ( set -o pipefail
+                git describe --long --tags 2>/dev/null | sed 's/^v//;s/\\([^-]*-g\\)/r\\1/;s/-/./g' ||
+                printf "r%s.%s" "\$(git rev-list --count HEAD)" "\$(git rev-parse --short HEAD)"
+              )
+          }
+
+          build() {
+              cd "\${srcdir}/\${_gitname}"
+              make build
+          }
+
+          package() {
+              cd "\${srcdir}/\${_gitname}"
+              install -Dm755 dotkeeper "\${pkgdir}/usr/bin/dotkeeper"
+              install -Dm644 LICENSE "\${pkgdir}/usr/share/licenses/\${pkgname}/LICENSE"
+              install -Dm644 README.md "\${pkgdir}/usr/share/doc/\${pkgname}/README.md"
+              install -Dm644 dotkeeper.toml.example "\${pkgdir}/usr/share/doc/\${pkgname}/dotkeeper.toml.example"
+          }
+          PKGEOF
+
+          cat > .SRCINFO <<SRCEOF
+          pkgbase = dotkeeper-git
+          	pkgdesc = P2P file sync with git history — embedded Syncthing + staggered git auto-backup (bleeding-edge, builds from main)
+          	pkgver = ${VERSION}
+          	pkgrel = 1
+          	url = https://dotkeeper.corbet.ch
+          	arch = x86_64
+          	arch = aarch64
+          	license = AGPL-3.0-only
+          	makedepends = go
+          	makedepends = git
+          	depends = git
+          	provides = dotkeeper
+          	conflicts = dotkeeper
+          	conflicts = dotkeeper-bin
+          	source = dotkeeper::git+https://github.com/julian-corbet/dotkeeper.git
+          	sha256sums = SKIP
+
+          pkgname = dotkeeper-git
+          SRCEOF
+
+          if git diff --quiet; then
+            echo "No changes — dotkeeper-git already at ${VERSION}"
+          else
+            git add PKGBUILD .SRCINFO
+            git commit -m "Bump pkgver to ${VERSION} (git HEAD builds via pkgver())"
+            git push origin master
+          fi
