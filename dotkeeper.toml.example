@@ -12,6 +12,15 @@ git_interval = "daily"
 # Stagger window: each machine slot offsets by this many minutes
 slot_offset_minutes = 5
 
+# Auto-resolve trivial Syncthing sync-conflict files.
+#   true  (default) — dotkeeper deletes hash-identical duplicates and
+#                     auto-merges cleanly-mergeable text files via
+#                     `git merge-file`, producing a scoped auto-commit.
+#   false           — dotkeeper only logs conflicts; resolution is manual.
+# Binaries, files not yet committed, and overlapping edits are always
+# left in place for human judgement.
+auto_resolve_conflicts = true
+
 [syncthing]
 # Patterns excluded from Syncthing sync (written to .stignore in each folder).
 # These are defaults — edit to match your workflow.
