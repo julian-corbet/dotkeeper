@@ -67,15 +67,17 @@ Two layers, two failure modes, two mitigations:
 
 If the same file is edited on two machines before Syncthing propagates the change, Syncthing keeps both versions — the loser becomes `<file>.sync-conflict-<timestamp>-<deviceID>.<ext>`. In practice this is rare because the latency is seconds and most humans only operate one machine at a time.
 
-**What dotkeeper does:** actively detects and logs conflict files. The default `[syncthing].ignore` list in `config.toml` keeps them local (not re-synced to peers), and git's `.gitignore` will typically exclude them too. On top of that:
+**What dotkeeper does:** actively detects *and auto-resolves* the trivial cases, and surfaces the rest. The default `[syncthing].ignore` list in `config.toml` keeps conflict files local (not re-synced to peers), and git's `.gitignore` typically excludes them too. On top of that:
 
-- `dotkeeper start` runs a filesystem watcher that logs every conflict the moment Syncthing writes it, e.g.
-  `[dotkeeper] sync conflict detected: /home/user/.agent/notes.md (from device UUS6FSQ at 2026-04-19 14:30:15)`.
-- `dotkeeper conflict list` prints a table of every outstanding conflict across all managed folders — handy after a period offline.
+- `dotkeeper start` runs a filesystem watcher. When a `.sync-conflict-*` file appears, dotkeeper:
+  1. **Hash-identical dedup.** If the conflict file is byte-for-byte identical to the local file (two machines saved the same thing), it's deleted. Nothing to resolve.
+  2. **3-way text merge.** For text files, dotkeeper runs `git merge-file` against the HEAD version as the common ancestor. A clean merge overwrites the local file, deletes the conflict file, and creates an auto-commit scoped to that single path (`auto: resolve sync conflict in <path>`) — reversible via `git revert` or `git reset` if it ever picks wrong.
+  3. **Otherwise keep.** Binaries, files not yet committed to git, and merges that would produce conflict markers are left in place for the user to resolve by hand.
+- `dotkeeper conflict list` prints a table of every outstanding conflict across all managed folders.
+- `dotkeeper conflict resolve-all` runs the same resolver chain as a batch job — handy after an extended outage when many conflicts accumulate before the watcher was running.
+- **Disabling auto-resolve.** Set `auto_resolve_conflicts = false` under `[sync]` in `config.toml` to revert to detect-only behaviour. Defaults to `true`.
 
-**How to resolve (today):** diff the two versions, merge manually, delete the `.sync-conflict-*` file. Same workflow as any Syncthing user.
-
-**Auto-resolution is planned for v0.2** — text files via `git merge-file`, plus a `dotkeeper conflict resolve` interactive flow. This release ships the detection foundation.
+**How to resolve the remainder:** diff the two versions, merge manually, delete the `.sync-conflict-*` file. An interactive resolver (`dotkeeper conflict resolve <path>`, `keep-mine`, `keep-theirs`) is planned for a future release.
 
 ### Git push conflicts (GitHub)
 
@@ -154,6 +156,7 @@ That's it. All machines sync in real-time via Syncthing, with git backups runnin
 | `dotkeeper start` | Start embedded Syncthing in foreground (for systemd) |
 | `dotkeeper stop` | Stop the Syncthing service |
 | `dotkeeper conflict list` | List Syncthing sync-conflict files across all managed folders |
+| `dotkeeper conflict resolve-all` | Scan managed folders and auto-resolve trivial conflicts (dedup + text merge) |
 
 ## Configuration
 
