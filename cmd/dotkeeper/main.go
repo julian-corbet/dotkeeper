@@ -952,6 +952,7 @@ func conflictListCmd() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			cfg := requireConfig()
 			roots := managedFolderPaths(cfg)
+			shortToHost := deviceShortToHostname(cfg)
 
 			var all []conflict.Conflict
 			for _, root := range roots {
@@ -969,7 +970,7 @@ func conflictListCmd() *cobra.Command {
 			}
 
 			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			_, _ = fmt.Fprintln(tw, "FOLDER\tORIGINAL FILE\tTIMESTAMP\tOTHER MACHINE")
+			_, _ = fmt.Fprintln(tw, "FOLDER\tORIGINAL FILE\tTIMESTAMP\tFROM")
 			for _, c := range all {
 				folder := containingFolder(c.Path, roots)
 				rel, err := filepath.Rel(folder, filepath.Dir(c.Path))
@@ -980,16 +981,41 @@ func conflictListCmd() *cobra.Command {
 				if rel != "" {
 					original = filepath.Join(rel, c.OriginalName)
 				}
+				from := c.DeviceIDShort
+				if host, ok := shortToHost[c.DeviceIDShort]; ok {
+					from = host
+				}
 				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
 					config.ContractPath(folder),
 					original,
 					c.Timestamp.Format("2006-01-02 15:04:05"),
-					c.DeviceIDShort,
+					from,
 				)
 			}
 			_ = tw.Flush()
 		},
 	}
+}
+
+// deviceShortToHostname builds a lookup from the 7-character short-form
+// device ID (as embedded in a sync-conflict filename) to the friendly
+// hostname registered in the shared config's [machines] table.
+//
+// Syncthing's full device ID is a 63-char dash-separated base32 string
+// like "UUS6FSQ-...-..." where the leading 7-char segment is exactly the
+// short form the conflict filename uses. Entries without a SyncthingID
+// (possible on a freshly-joined peer before its cert has propagated) are
+// skipped; callers treat a missing entry as "fall back to the short ID".
+func deviceShortToHostname(cfg *config.SharedConfig) map[string]string {
+	out := make(map[string]string, len(cfg.Machines))
+	for _, m := range cfg.Machines {
+		if len(m.SyncthingID) < 7 {
+			continue
+		}
+		short := m.SyncthingID[:7]
+		out[short] = m.Hostname
+	}
+	return out
 }
 
 // conflictResolveAllCmd walks every managed folder, finds conflicts,
