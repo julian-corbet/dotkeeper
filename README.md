@@ -17,29 +17,37 @@ No existing tool combines P2P real-time sync with git history. dotkeeper does.
 
 ## How it works
 
-dotkeeper connects **any number of machines** through two complementary layers — live p2p file sync on top of a staggered git backup.
+dotkeeper connects **any number of machines** through two complementary layers — a live p2p sync layer and a staggered git backup layer.
 
-```
-       ┌──────── Syncthing P2P mesh (real-time) ──────────┐
-       │                                                  │
-   ┌───┴────┐   ┌────────┐   ┌────────┐   ┌────────┐      │
-   │ Laptop │   │Desktop │   │  NAS   │   │  ...   │  ◀───┘
-   │ .git   │   │ .git   │   │ .git   │   │        │
-   └───┬────┘   └───┬────┘   └───┬────┘   └───┬────┘
-       │            │            │            │
-    slot 0       slot 1       slot 2       slot N-1     ← staggered
-       │            │            │            │           git backup
-       └────────────┴────────────┴────────────┘
-                         │
-                         ▼
-                    ┌────────┐
-                    │ GitHub │    ← one pusher per interval,
-                    └────────┘      no collisions by construction
+```mermaid
+flowchart TB
+    subgraph mesh["Syncthing P2P mesh &nbsp;&middot;&nbsp; real-time file sync"]
+        direction LR
+        A["💻 Laptop"]
+        B["🖥️ Desktop"]
+        C["📦 NAS"]
+        A <--> B
+        B <--> C
+        A <--> C
+    end
+    A -. "slot 0" .-> G[("🐙 GitHub<br/>origin/main")]
+    B -. "slot 1" .-> G
+    C -. "slot 2" .-> G
+
+    classDef peer fill:#e8f0fe,stroke:#1a73e8,color:#000
+    classDef hub fill:#fff4e0,stroke:#f29900,color:#000
+    class A,B,C peer
+    class G hub
 ```
 
-- **Syncthing** (embedded, isolated) builds a p2p mesh between peers and syncs file changes in real time — within seconds on LAN, or through NAT over the public internet via Syncthing's discovery + relay infrastructure.
-- **Git backup** auto-commits and pushes on a staggered schedule. Each machine owns a slot (`slot 0` at :00, `slot 1` at `:0+offset`, and so on), so no two machines try to push at the same moment.
-- **`.git/` lives outside the Syncthing-synced tree.** Each machine keeps its own independent git history. This is why staggering works — the machines converge through GitHub, not through bit-for-bit git-directory sync.
+**Solid lines** are the Syncthing mesh: every peer syncs directly with every other peer; edits propagate in seconds.
+**Dashed lines** are the staggered git backups: each machine pushes on its own time slot, so no two machines ever race for the same push.
+
+The diagram shows three peers for clarity, but the topology scales — add a phone, a VPS, a second laptop, etc. Each one gets the next slot number.
+
+- **Syncthing** (embedded, isolated) builds the p2p mesh. Works on LAN, or through NAT over the public internet via Syncthing's discovery + relay infrastructure.
+- **Git backup** auto-commits and pushes on a staggered schedule. Each machine owns a slot (`slot 0` at `:00`, `slot 1` at `:0 + slot_offset_minutes`, and so on), so no two machines try to push at the same moment.
+- **`.git/` lives outside the Syncthing-synced tree.** Each machine keeps its own independent git history; machines converge through GitHub, not through bit-for-bit git-directory sync.
 - **Every managed repo gets a `dotkeeper.toml` breadcrumb** — tracked in git — so if Syncthing is unreachable you can still tell from the repo alone which machines dotkeeper thinks manage it.
 
 ## Scaling to N machines
