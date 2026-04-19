@@ -67,9 +67,15 @@ Two layers, two failure modes, two mitigations:
 
 If the same file is edited on two machines before Syncthing propagates the change, Syncthing keeps both versions — the loser becomes `<file>.sync-conflict-<timestamp>-<deviceID>.<ext>`. In practice this is rare because the latency is seconds and most humans only operate one machine at a time.
 
-**What dotkeeper does:** surfaces `.sync-conflict-*` files to you rather than hiding them. The default `[syncthing].ignore` list in `config.toml` excludes them from the sync itself (so they stay local), and git's `.gitignore` will typically exclude them too.
+**What dotkeeper does:** actively detects and logs conflict files. The default `[syncthing].ignore` list in `config.toml` keeps them local (not re-synced to peers), and git's `.gitignore` will typically exclude them too. On top of that:
 
-**How to resolve:** diff the two versions, merge manually, delete the `.sync-conflict-*` file. Same workflow as any Syncthing user.
+- `dotkeeper start` runs a filesystem watcher that logs every conflict the moment Syncthing writes it, e.g.
+  `[dotkeeper] sync conflict detected: /home/user/.agent/notes.md (from device UUS6FSQ at 2026-04-19 14:30:15)`.
+- `dotkeeper conflict list` prints a table of every outstanding conflict across all managed folders — handy after a period offline.
+
+**How to resolve (today):** diff the two versions, merge manually, delete the `.sync-conflict-*` file. Same workflow as any Syncthing user.
+
+**Auto-resolution is planned for v0.2** — text files via `git merge-file`, plus a `dotkeeper conflict resolve` interactive flow. This release ships the detection foundation.
 
 ### Git push conflicts (GitHub)
 
@@ -147,6 +153,7 @@ That's it. All machines sync in real-time via Syncthing, with git backups runnin
 | `dotkeeper version` | Print dotkeeper version |
 | `dotkeeper start` | Start embedded Syncthing in foreground (for systemd) |
 | `dotkeeper stop` | Stop the Syncthing service |
+| `dotkeeper conflict list` | List Syncthing sync-conflict files across all managed folders |
 
 ## Configuration
 

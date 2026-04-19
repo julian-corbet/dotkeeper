@@ -12,11 +12,13 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
+	"github.com/julian-corbet/dotkeeper/internal/conflict"
 	"github.com/julian-corbet/dotkeeper/internal/gitsync"
 	"github.com/julian-corbet/dotkeeper/internal/service"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
@@ -49,6 +51,7 @@ func main() {
 	root.AddCommand(installTimerCmd())
 	root.AddCommand(startCmd())
 	root.AddCommand(stopCmd())
+	root.AddCommand(conflictCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -776,12 +779,68 @@ func startCmd() *cobra.Command {
 			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer cancel()
 
+			// Spin up the conflict watcher alongside Syncthing so we
+			// log sync-conflict files as soon as they appear. This is a
+			// best-effort: if no config is present (first boot) or no
+			// managed folders exist yet, we just skip it.
+			stopWatcher := startConflictWatcher(ctx)
+			defer stopWatcher()
+
 			eng := engine()
 			if err := eng.Start(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "[dotkeeper] ERROR: %v\n", err)
 				os.Exit(1)
 			}
 		},
+	}
+}
+
+// startConflictWatcher starts a conflict.Watcher over every managed
+// folder in the shared config. Returns a cleanup function that closes
+// the watcher. Failures are logged, never fatal — Syncthing must keep
+// running even if the watcher can't start.
+func startConflictWatcher(ctx context.Context) func() {
+	cfg, err := config.LoadSharedConfig()
+	if err != nil || cfg == nil {
+		return func() {}
+	}
+
+	roots := managedFolderPaths(cfg)
+	if len(roots) == 0 {
+		return func() {}
+	}
+
+	w, err := conflict.New(roots)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: conflict watcher: %v\n", err)
+		return func() {}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case c, ok := <-w.Events():
+				if !ok {
+					return
+				}
+				fmt.Printf("[dotkeeper] sync conflict detected: %s (from device %s at %s)\n",
+					c.Path, c.DeviceIDShort, c.Timestamp.Format("2006-01-02 15:04:05"))
+			case err, ok := <-w.Errors():
+				if !ok {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: conflict watcher: %v\n", err)
+			}
+		}
+	}()
+
+	return func() {
+		_ = w.Close()
+		<-done
 	}
 }
 
@@ -798,4 +857,109 @@ func stopCmd() *cobra.Command {
 			fmt.Println("[dotkeeper] stopped")
 		},
 	}
+}
+
+// managedFolderPaths returns absolute, existing paths for every repo in
+// the shared config, plus the config directory itself. Missing paths
+// are skipped silently — add/remove churn on one machine shouldn't
+// prevent a conflict scan on another.
+func managedFolderPaths(cfg *config.SharedConfig) []string {
+	var out []string
+	seen := map[string]struct{}{}
+	add := func(p string) {
+		if p == "" {
+			return
+		}
+		abs, err := filepath.Abs(config.ExpandPath(p))
+		if err != nil {
+			return
+		}
+		if _, err := os.Stat(abs); err != nil {
+			return
+		}
+		if _, ok := seen[abs]; ok {
+			return
+		}
+		seen[abs] = struct{}{}
+		out = append(out, abs)
+	}
+	add(config.ConfigDir())
+	for _, r := range cfg.Repos {
+		add(r.Path)
+	}
+	return out
+}
+
+func conflictCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "conflict",
+		Short: "Inspect Syncthing sync-conflict files",
+	}
+	cmd.AddCommand(conflictListCmd())
+	return cmd
+}
+
+func conflictListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List sync-conflict files across all managed folders",
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg := requireConfig()
+			roots := managedFolderPaths(cfg)
+
+			var all []conflict.Conflict
+			for _, root := range roots {
+				found, err := conflict.Scan(root)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: scanning %s: %v\n", root, err)
+					continue
+				}
+				all = append(all, found...)
+			}
+
+			if len(all) == 0 {
+				fmt.Printf("No sync conflicts detected across %d managed folders.\n", len(roots))
+				return
+			}
+
+			tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintln(tw, "FOLDER\tORIGINAL FILE\tTIMESTAMP\tOTHER MACHINE")
+			for _, c := range all {
+				folder := containingFolder(c.Path, roots)
+				rel, err := filepath.Rel(folder, filepath.Dir(c.Path))
+				if err != nil || rel == "." {
+					rel = ""
+				}
+				original := c.OriginalName
+				if rel != "" {
+					original = filepath.Join(rel, c.OriginalName)
+				}
+				_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n",
+					config.ContractPath(folder),
+					original,
+					c.Timestamp.Format("2006-01-02 15:04:05"),
+					c.DeviceIDShort,
+				)
+			}
+			_ = tw.Flush()
+		},
+	}
+}
+
+// containingFolder returns the watched root that a conflict path lives
+// under. Used purely for table display — the conflict.Path is already
+// absolute, this just shortens the leading segment.
+func containingFolder(path string, roots []string) string {
+	best := ""
+	for _, r := range roots {
+		if strings.HasPrefix(path, r+string(filepath.Separator)) || path == r {
+			if len(r) > len(best) {
+				best = r
+			}
+		}
+	}
+	if best == "" {
+		return filepath.Dir(path)
+	}
+	return best
 }
