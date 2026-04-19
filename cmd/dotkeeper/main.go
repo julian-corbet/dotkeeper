@@ -816,6 +816,8 @@ func startConflictWatcher(ctx context.Context) func() {
 		return func() {}
 	}
 
+	autoResolve := cfg.Sync.AutoResolveEnabled()
+
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -827,8 +829,7 @@ func startConflictWatcher(ctx context.Context) func() {
 				if !ok {
 					return
 				}
-				fmt.Printf("[dotkeeper] sync conflict detected: %s (from device %s at %s)\n",
-					c.Path, c.DeviceIDShort, c.Timestamp.Format("2006-01-02 15:04:05"))
+				handleConflictEvent(ctx, c, roots, autoResolve)
 			case err, ok := <-w.Errors():
 				if !ok {
 					return
@@ -841,6 +842,50 @@ func startConflictWatcher(ctx context.Context) func() {
 	return func() {
 		_ = w.Close()
 		<-done
+	}
+}
+
+// handleConflictEvent runs the resolver chain on one detected conflict
+// and emits exactly one log line summarising the outcome. Errors from
+// individual resolvers become "kept (<reason>)" log lines — they never
+// escape to abort the watcher loop.
+func handleConflictEvent(ctx context.Context, c conflict.Conflict, roots []string, autoResolve bool) {
+	when := c.Timestamp.Format("2006-01-02 15:04:05")
+
+	// Phase 1 behaviour (detection-only) when the user opted out.
+	if !autoResolve {
+		fmt.Printf("[dotkeeper] kept: %s (from device %s at %s; auto-resolve disabled)\n",
+			c.Path, c.DeviceIDShort, when)
+		return
+	}
+
+	// Try dedup first — cheapest, safest, and covers the commonest
+	// "same save on two machines" case without touching git at all.
+	if action, err := conflict.ResolveIdentical(c); err == nil && action == conflict.ActionDeduped {
+		fmt.Printf("[dotkeeper] deduped: %s (from device %s at %s)\n",
+			c.Path, c.DeviceIDShort, when)
+		return
+	} else if err != nil {
+		fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: dedup check %s: %v\n", c.Path, err)
+		// Fall through — maybe the merge path still works.
+	}
+
+	// Then the 3-way merge. repoRoot is the managed-folder root the
+	// conflict lives under, which must also be a git repo for the
+	// merge to land; non-repo folders fail gracefully below.
+	repoRoot := containingFolder(c.Path, roots)
+	action, err := conflict.ResolveTextMerge(ctx, c, repoRoot)
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: merge %s: %v\n", c.Path, err)
+		fmt.Printf("[dotkeeper] kept: %s (from device %s at %s; merge error)\n",
+			c.Path, c.DeviceIDShort, when)
+	case action == conflict.ActionMerged:
+		fmt.Printf("[dotkeeper] merged: %s (from device %s at %s)\n",
+			c.Path, c.DeviceIDShort, when)
+	default:
+		fmt.Printf("[dotkeeper] kept: %s (from device %s at %s; manual resolution required)\n",
+			c.Path, c.DeviceIDShort, when)
 	}
 }
 
@@ -893,9 +938,10 @@ func managedFolderPaths(cfg *config.SharedConfig) []string {
 func conflictCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "conflict",
-		Short: "Inspect Syncthing sync-conflict files",
+		Short: "Inspect and resolve Syncthing sync-conflict files",
 	}
 	cmd.AddCommand(conflictListCmd())
+	cmd.AddCommand(conflictResolveAllCmd())
 	return cmd
 }
 
@@ -942,6 +988,75 @@ func conflictListCmd() *cobra.Command {
 				)
 			}
 			_ = tw.Flush()
+		},
+	}
+}
+
+// conflictResolveAllCmd walks every managed folder, finds conflicts,
+// and tries both resolvers in order. Useful as a one-off after an
+// extended outage when many conflicts accumulate before the watcher
+// goroutine sees them live.
+func conflictResolveAllCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "resolve-all",
+		Short: "Scan all managed folders and auto-resolve what can be resolved",
+		Long: "Walks every managed folder, runs the hash-identical dedup resolver\n" +
+			"and the git-merge-file 3-way text resolver on each sync-conflict\n" +
+			"file, and prints a per-file summary. Anything left as 'kept' needs\n" +
+			"human judgement — diff the pair and merge manually.",
+		Run: func(cmd *cobra.Command, args []string) {
+			cfg := requireConfig()
+			roots := managedFolderPaths(cfg)
+
+			ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+			defer cancel()
+
+			var all []conflict.Conflict
+			for _, root := range roots {
+				found, err := conflict.Scan(root)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: scanning %s: %v\n", root, err)
+					continue
+				}
+				all = append(all, found...)
+			}
+
+			if len(all) == 0 {
+				fmt.Printf("No sync conflicts detected across %d managed folders.\n", len(roots))
+				return
+			}
+
+			var deduped, merged, kept int
+			for _, c := range all {
+				// Dedup first — cheapest.
+				action, err := conflict.ResolveIdentical(c)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: dedup %s: %v\n", c.Path, err)
+				}
+				if action == conflict.ActionDeduped {
+					fmt.Printf("deduped: %s\n", c.Path)
+					deduped++
+					continue
+				}
+
+				// Then 3-way merge.
+				repoRoot := containingFolder(c.Path, roots)
+				action, err = conflict.ResolveTextMerge(ctx, c, repoRoot)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: merge %s: %v\n", c.Path, err)
+				}
+				switch action {
+				case conflict.ActionMerged:
+					fmt.Printf("merged:  %s\n", c.Path)
+					merged++
+				default:
+					fmt.Printf("kept:    %s\n", c.Path)
+					kept++
+				}
+			}
+
+			fmt.Printf("\nSummary: %d deduped, %d merged, %d kept (manual resolution).\n",
+				deduped, merged, kept)
 		},
 	}
 }
