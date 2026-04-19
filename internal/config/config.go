@@ -36,6 +36,25 @@ type SyncConfig struct {
 	// Or any systemd OnCalendar expression.
 	GitInterval       string `toml:"git_interval"`
 	SlotOffsetMinutes int    `toml:"slot_offset_minutes"`
+
+	// AutoResolveConflicts controls whether dotkeeper auto-resolves
+	// trivial sync-conflict files (hash-identical dedup + cleanly
+	// mergeable text files via git merge-file). When false, the
+	// watcher only logs conflicts — Phase 1 behaviour.
+	//
+	// Defaults to true. Uses a pointer so we can distinguish
+	// "not set" from "explicitly set to false" in the TOML; the
+	// loader resolves the nil case to the default.
+	AutoResolveConflicts *bool `toml:"auto_resolve_conflicts"`
+}
+
+// AutoResolveEnabled returns the effective value of AutoResolveConflicts,
+// defaulting to true when the TOML field was omitted.
+func (s SyncConfig) AutoResolveEnabled() bool {
+	if s.AutoResolveConflicts == nil {
+		return true
+	}
+	return *s.AutoResolveConflicts
 }
 
 type SyncthingConfig struct {
@@ -207,6 +226,10 @@ func WriteSharedConfig(cfg *SharedConfig) error {
 	b.WriteString("[sync]\n")
 	fmt.Fprintf(&b, "git_interval = %q\n", cfg.Sync.GitInterval)
 	fmt.Fprintf(&b, "slot_offset_minutes = %d\n", cfg.Sync.SlotOffsetMinutes)
+	// Always serialise the effective value so `dotkeeper status` and a
+	// hand-editing user see the same flag they can flip. Omitting when
+	// nil would hide the default from a generated config.toml.
+	fmt.Fprintf(&b, "auto_resolve_conflicts = %v\n", cfg.Sync.AutoResolveEnabled())
 
 	b.WriteString("\n[syncthing]\n")
 	b.WriteString("ignore = [\n")

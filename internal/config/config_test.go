@@ -158,6 +158,54 @@ func TestWriteAndLoadSharedConfig(t *testing.T) {
 	}
 }
 
+// TestAutoResolveDefault — unset field reads as enabled (the safer
+// default: users get auto-resolution out of the box).
+func TestAutoResolveDefault(t *testing.T) {
+	var s SyncConfig // no auto_resolve_conflicts set
+	if !s.AutoResolveEnabled() {
+		t.Error("AutoResolveEnabled() with nil pointer should default to true")
+	}
+
+	tr := true
+	s.AutoResolveConflicts = &tr
+	if !s.AutoResolveEnabled() {
+		t.Error("AutoResolveEnabled() with *true should be true")
+	}
+
+	f := false
+	s.AutoResolveConflicts = &f
+	if s.AutoResolveEnabled() {
+		t.Error("AutoResolveEnabled() with *false should be false")
+	}
+}
+
+// TestAutoResolveRoundtrip — explicit false survives write+load, and
+// omitting the field from the TOML still round-trips as true (default).
+func TestAutoResolveRoundtrip(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	f := false
+	cfg := &SharedConfig{
+		Sync: SyncConfig{
+			GitInterval:          "daily",
+			SlotOffsetMinutes:    5,
+			AutoResolveConflicts: &f,
+		},
+		Machines: map[string]MachineEntry{},
+	}
+	if err := WriteSharedConfig(cfg); err != nil {
+		t.Fatalf("WriteSharedConfig: %v", err)
+	}
+	loaded, err := LoadSharedConfig()
+	if err != nil {
+		t.Fatalf("LoadSharedConfig: %v", err)
+	}
+	if loaded.Sync.AutoResolveEnabled() {
+		t.Error("expected auto-resolve disabled after round-trip")
+	}
+}
+
 func TestLoadSharedConfigMissing(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmp)
