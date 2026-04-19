@@ -779,12 +779,68 @@ func startCmd() *cobra.Command {
 			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 			defer cancel()
 
+			// Spin up the conflict watcher alongside Syncthing so we
+			// log sync-conflict files as soon as they appear. This is a
+			// best-effort: if no config is present (first boot) or no
+			// managed folders exist yet, we just skip it.
+			stopWatcher := startConflictWatcher(ctx)
+			defer stopWatcher()
+
 			eng := engine()
 			if err := eng.Start(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "[dotkeeper] ERROR: %v\n", err)
 				os.Exit(1)
 			}
 		},
+	}
+}
+
+// startConflictWatcher starts a conflict.Watcher over every managed
+// folder in the shared config. Returns a cleanup function that closes
+// the watcher. Failures are logged, never fatal — Syncthing must keep
+// running even if the watcher can't start.
+func startConflictWatcher(ctx context.Context) func() {
+	cfg, err := config.LoadSharedConfig()
+	if err != nil || cfg == nil {
+		return func() {}
+	}
+
+	roots := managedFolderPaths(cfg)
+	if len(roots) == 0 {
+		return func() {}
+	}
+
+	w, err := conflict.New(roots)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: conflict watcher: %v\n", err)
+		return func() {}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case c, ok := <-w.Events():
+				if !ok {
+					return
+				}
+				fmt.Printf("[dotkeeper] sync conflict detected: %s (from device %s at %s)\n",
+					c.Path, c.DeviceIDShort, c.Timestamp.Format("2006-01-02 15:04:05"))
+			case err, ok := <-w.Errors():
+				if !ok {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "[dotkeeper] WARNING: conflict watcher: %v\n", err)
+			}
+		}
+	}()
+
+	return func() {
+		_ = w.Close()
+		<-done
 	}
 }
 
