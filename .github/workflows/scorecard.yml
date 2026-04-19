@@ -14,39 +14,29 @@ jobs:
     name: Scorecard analysis
     runs-on: ubuntu-latest
     permissions:
+      # SARIF upload to Code Scanning
       security-events: write
+      # OIDC for scorecard publish_results
       id-token: write
-      # codeql-action/upload-sarif queries the workflow-run API for
-      # context; without actions:read it fails "Resource not accessible".
+      # codeql-action/upload-sarif reads workflow-run metadata
       actions: read
+      # Checkout the repo
+      contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          # Default GITHUB_TOKEN lacks contents:read here because the job-
-          # level permissions block narrows the workflow's read-all down to
-          # security-events:write + id-token:write only. Use the PAT to
-          # clone the private repo.
-          token: ${{ secrets.SCORECARD_TOKEN }}
           persist-credentials: false
 
       - uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
         with:
           results_file: results.sarif
           results_format: sarif
-          # Private repos need a PAT with read access for checks that query
-          # org/admin APIs (branch protection, webhooks, etc.). SCORECARD_TOKEN
-          # is a fine-grained PAT scoped to this repo, read-only.
-          repo_token: ${{ secrets.SCORECARD_TOKEN }}
-          # publish_results uploads to the OpenSSF public results API, which
-          # rejects private repos. Disabled until the repo flips public.
-          publish_results: false
+          # Publish to the public OpenSSF results API so the
+          # api.securityscorecards.dev badge / dashboard light up.
+          publish_results: true
 
-      # Code Scanning (which consumes SARIF) requires GitHub Advanced Security,
-      # which isn't available for personal private repos. Archive results as a
-      # workflow artifact instead. When the repo goes public, swap this back
-      # to github/codeql-action/upload-sarif for the Security tab view.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      # Upload SARIF to GitHub Code Scanning (free on public repos).
+      # Results appear under the repo's Security tab.
+      - uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
         with:
-          name: scorecard-results
-          path: results.sarif
-          retention-days: 30
+          sarif_file: results.sarif
