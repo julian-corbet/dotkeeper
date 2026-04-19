@@ -11,26 +11,66 @@ dotkeeper combines **embedded Syncthing** for real-time P2P file sync with **git
 
 ## The problem
 
-You have two computers. You want the same code, configs, and dotfiles on both. Git requires manual commits and pushes. Syncthing alone has no history or rollback. Dotfile managers require manual commands and don't do real-time sync.
+You have more than one machine — a laptop, a desktop, maybe a NAS or a VPS — and you want the same code, configs, and dotfiles on all of them. Git requires manual commits and pushes. Syncthing alone has no history or rollback. Dotfile managers require manual commands and don't do real-time sync.
 
 No existing tool combines P2P real-time sync with git history. dotkeeper does.
 
 ## How it works
 
+dotkeeper connects **any number of machines** through two complementary layers — live p2p file sync on top of a staggered git backup.
+
 ```
-Machine A                          Machine B
-┌──────────────┐    Syncthing     ┌──────────────┐
-│ edit file     │ ──── P2P ─────▶ │ file appears  │
-│               │   (seconds)     │               │
-│ git backup    │ ── push ──▶ GitHub ◀── pull ── │ git backup    │
-│ (daily)       │                          (daily)│
-└──────────────┘                  └──────────────┘
+       ┌──────── Syncthing P2P mesh (real-time) ──────────┐
+       │                                                  │
+   ┌───┴────┐   ┌────────┐   ┌────────┐   ┌────────┐      │
+   │ Laptop │   │Desktop │   │  NAS   │   │  ...   │  ◀───┘
+   │ .git   │   │ .git   │   │ .git   │   │        │
+   └───┬────┘   └───┬────┘   └───┬────┘   └───┬────┘
+       │            │            │            │
+    slot 0       slot 1       slot 2       slot N-1     ← staggered
+       │            │            │            │           git backup
+       └────────────┴────────────┴────────────┘
+                         │
+                         ▼
+                    ┌────────┐
+                    │ GitHub │    ← one pusher per interval,
+                    └────────┘      no collisions by construction
 ```
 
-- **Syncthing** (embedded, isolated) syncs file changes in real-time over LAN or internet
-- **Git backup** auto-commits and pushes on a staggered schedule so machines never collide
-- `.git/` is excluded from Syncthing — each machine maintains its own git state
-- Every managed repo gets a `dotkeeper.toml` log file for resilience and discoverability
+- **Syncthing** (embedded, isolated) builds a p2p mesh between peers and syncs file changes in real time — within seconds on LAN, or through NAT over the public internet via Syncthing's discovery + relay infrastructure.
+- **Git backup** auto-commits and pushes on a staggered schedule. Each machine owns a slot (`slot 0` at :00, `slot 1` at `:0+offset`, and so on), so no two machines try to push at the same moment.
+- **`.git/` lives outside the Syncthing-synced tree.** Each machine keeps its own independent git history. This is why staggering works — the machines converge through GitHub, not through bit-for-bit git-directory sync.
+- **Every managed repo gets a `dotkeeper.toml` breadcrumb** — tracked in git — so if Syncthing is unreachable you can still tell from the repo alone which machines dotkeeper thinks manage it.
+
+## Scaling to N machines
+
+There's no "Machine A / Machine B" cap. Two, six, twenty — the model is the same:
+
+- **Syncthing** forms a mesh; every machine syncs with every other machine directly (no central hub). Adding a machine is `dotkeeper join <DEVICE-ID-FROM-AN-EXISTING-MACHINE>`.
+- **Slot assignment** is one per machine. With the default `git_interval = daily` and `slot_offset_minutes = 5`, you fit ~12 machines cleanly in a day. Tighter intervals (`hourly`, `2h`) are possible at the cost of more machines competing for the window.
+- **Offline peers** catch up automatically: Syncthing replays missed changes when they come back online, then the next git-backup slot fires for that machine.
+
+## What about conflicts?
+
+Two layers, two failure modes, two mitigations:
+
+### Live file conflicts (Syncthing)
+
+If the same file is edited on two machines before Syncthing propagates the change, Syncthing keeps both versions — the loser becomes `<file>.sync-conflict-<timestamp>-<deviceID>.<ext>`. In practice this is rare because the latency is seconds and most humans only operate one machine at a time.
+
+**What dotkeeper does:** surfaces `.sync-conflict-*` files to you rather than hiding them. The default `[syncthing].ignore` list in `config.toml` excludes them from the sync itself (so they stay local), and git's `.gitignore` will typically exclude them too.
+
+**How to resolve:** diff the two versions, merge manually, delete the `.sync-conflict-*` file. Same workflow as any Syncthing user.
+
+### Git push conflicts (GitHub)
+
+Two machines pushing to the same branch at the same instant would race. The staggered-slot timer avoids this **by construction**: each machine's git backup fires at a different offset within the configured interval. No push races, no merge commits to clean up, no retries.
+
+If a race does happen anyway (e.g. two machines start a manual `dotkeeper sync` at the same second): the losing push fails the fast-forward check, dotkeeper logs the failure, and the next timer tick on the losing machine pulls + retries. The content is already synced via Syncthing, so there's no data loss.
+
+### State consistency
+
+Because each machine keeps its own `.git/` outside the Syncthing tree, git history is **not** shared bit-for-bit — it converges via GitHub. A machine offline for a week comes back, Syncthing catches up its files within minutes, then its next slot commits and pushes whatever local changes remain. No manual reconciliation needed.
 
 ## Quick start
 
@@ -63,23 +103,25 @@ Or download a binary from [Releases](https://github.com/julian-corbet/dotkeeper/
 
 ```bash
 dotkeeper init
-# prints your device ID and a join command for the second machine
+# prints your device ID and a join command for peers to use
 
 dotkeeper add ~/Documents/GitHub/my-project
 dotkeeper add ~/.config/nvim
 dotkeeper install-timer
 ```
 
-### Second machine
+### Each additional machine
+
+Run this on every other machine you want to sync — laptop, desktop, NAS, VPS, etc. The same `join` command works for the 2nd, 20th, and every machine in between. Use the device ID from any already-joined machine.
 
 ```bash
-dotkeeper join <DEVICE-ID-FROM-FIRST-MACHINE>
-# connects, syncs config, configures repos automatically
+dotkeeper join <DEVICE-ID-FROM-AN-EXISTING-MACHINE>
+# connects to the mesh, syncs config, configures repos automatically
 
 dotkeeper install-timer
 ```
 
-That's it. Both machines sync in real-time via Syncthing, with git backups on schedule.
+That's it. All machines sync in real-time via Syncthing, with git backups running on each machine's staggered slot.
 
 ## Commands
 
