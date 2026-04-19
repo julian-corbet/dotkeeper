@@ -77,7 +77,7 @@ If the same file is edited on two machines before Syncthing propagates the chang
 - `dotkeeper conflict resolve-all` runs the same resolver chain as a batch job — handy after an extended outage when many conflicts accumulate before the watcher was running.
 - **Disabling auto-resolve.** Set `auto_resolve_conflicts = false` under `[sync]` in `config.toml` to revert to detect-only behaviour. Defaults to `true`.
 
-**How to resolve the remainder:** diff the two versions, merge manually, delete the `.sync-conflict-*` file. An interactive resolver (`dotkeeper conflict resolve <path>`, `keep-mine`, `keep-theirs`) is planned for a future release.
+**For the rare cases auto-resolve can't handle** — binaries, files not yet committed to git, or genuinely-conflicting text edits — `dotkeeper conflict list` shows the pending items and two manual commands resolve them: `dotkeeper conflict keep <path>` deletes the `.sync-conflict-*` variant and leaves the current file as-is (no git activity), while `dotkeeper conflict accept <path>` replaces the current file with the variant's contents, deletes the variant, and creates a single scoped commit (`auto: accept sync conflict for <relpath> (from <deviceShort>)`). Both accept either the canonical path or the explicit variant filename, both take `--all` to process every pending conflict in one invocation, and both are idempotent.
 
 ### Git push conflicts (GitHub)
 
@@ -157,6 +157,8 @@ That's it. All machines sync in real-time via Syncthing, with git backups runnin
 | `dotkeeper stop` | Stop the Syncthing service |
 | `dotkeeper conflict list` | List Syncthing sync-conflict files across all managed folders |
 | `dotkeeper conflict resolve-all` | Scan managed folders and auto-resolve trivial conflicts (dedup + text merge) |
+| `dotkeeper conflict keep <path>` | Delete the sync-conflict variant, keep the current file (`--all` for every pending conflict) |
+| `dotkeeper conflict accept <path>` | Replace the current file with the variant and commit (`--all` for every pending conflict) |
 
 ## Configuration
 
