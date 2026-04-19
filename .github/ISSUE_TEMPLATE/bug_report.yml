@@ -1,0 +1,83 @@
+name: Bug report
+description: Something's broken or behaving unexpectedly
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. Security issues — please do **not** file them here; see [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you try, and what did dotkeeper do?
+      placeholder: I ran `dotkeeper ...` and it ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Steps to reproduce. Include exact commands where possible.
+      placeholder: |
+        1. `dotkeeper init`
+        2. `dotkeeper add ~/test-repo`
+        3. Observe that ...
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: dotkeeper version
+      description: Output of `dotkeeper version`
+      placeholder: dotkeeper 0.1.2 (abc1234)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Ubuntu 24.04 / macOS 15.2 / Windows 11 / ...
+    validations:
+      required: true
+
+  - type: input
+    id: go-version
+    attributes:
+      label: Go version (if built from source)
+      description: Output of `go version`
+      placeholder: go1.26.2 linux/amd64
+
+  - type: textarea
+    id: status-output
+    attributes:
+      label: Output of `dotkeeper status`
+      render: shell
+
+  - type: textarea
+    id: syncthing-log
+    attributes:
+      label: Relevant lines from ~/.local/state/dotkeeper/syncthing.log
+      description: Only include the portion around the failure; scrub hostnames or paths you don't want public.
+      render: shell
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission checks
+      options:
+        - label: I've searched [existing issues](https://github.com/julian-corbet/dotkeeper/issues?q=is%3Aissue) for duplicates
+          required: true
+        - label: This is not a security vulnerability (I would have used the process in SECURITY.md)
+          required: true
