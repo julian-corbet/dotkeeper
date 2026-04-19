@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/julian-corbet/dotkeeper/blob/main/SECURITY.md
+    about: "Do NOT file security issues here — see SECURITY.md for the private disclosure channel."
+  - name: Questions / open-ended discussion
+    url: https://github.com/julian-corbet/dotkeeper/discussions
+    about: "Use Discussions for 'how do I...' or 'is this a good idea at all?' threads."

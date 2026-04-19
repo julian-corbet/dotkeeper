@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest something new or a change in behaviour
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. For open-ended discussion (is this a good idea at all?), use [Discussions](https://github.com/julian-corbet/dotkeeper/discussions) instead.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case or pain point, not the solution.
+      placeholder: "When I ... I expected ... but instead ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: How would this look from a user's perspective? Sketch a CLI command, config snippet, or behaviour.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you thought about, and why this one is better.
+
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Rough scope
+      options:
+        - Small (config flag, minor CLI tweak)
+        - Medium (new subcommand, new config section)
+        - Large (architectural change)
+    validations:
+      required: true
