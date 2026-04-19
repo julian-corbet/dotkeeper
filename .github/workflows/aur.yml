@@ -70,7 +70,9 @@ jobs:
             exit 1
           fi
           mkdir -p ~/.ssh
-          printf '%s' "$AUR_SSH_KEY" > ~/.ssh/aur_key
+          # Must end with a newline — SSH rejects keys without trailing LF
+          # with a misleading "error in libcrypto" message.
+          printf '%s\n' "$AUR_SSH_KEY" > ~/.ssh/aur_key
           chmod 600 ~/.ssh/aur_key
           cat > ~/.ssh/config <<EOF
           Host aur.archlinux.org
