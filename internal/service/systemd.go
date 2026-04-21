@@ -134,10 +134,15 @@ func (s *Systemd) SyncthingStatus() SyncthingUnitStatus {
 // dotkeeper-sync.timer user unit. Zero-valued if the timer is inactive
 // or systemd doesn't populate the property yet (can happen in the few
 // seconds after `enable --now`).
+//
+// We pass --timestamp=unix so recent systemd versions (≥ v245) return
+// a stable "@<seconds>" form. Older systemds return a pretty string
+// like "Wed 2026-04-22 02:05:20 CEST" which the parser also handles.
 func (s *Systemd) TimerNext() TimerNextRun {
 	out, err := exec.Command("systemctl", "--user", "show",
 		"dotkeeper-sync.timer",
 		"--property=NextElapseUSecRealtime",
+		"--timestamp=unix",
 	).Output()
 	if err != nil {
 		return TimerNextRun{}
@@ -179,7 +184,13 @@ func parseSystemctlShow(raw string) SyncthingUnitStatus {
 }
 
 // parseTimerNext extracts NextElapseUSecRealtime from a `systemctl show`
-// block. The value is microseconds-since-epoch or "0" when inactive.
+// block. Supported value forms:
+//
+//   - "@<seconds>"        — produced with --timestamp=unix (newer systemd).
+//   - "<microseconds>"    — legacy bare integer form.
+//   - "Wed 2026-04-22 02:05:20 CEST" — pretty form on older systemd without
+//     the --timestamp flag.
+//   - "" or "0"           — timer inactive.
 func parseTimerNext(raw string) TimerNextRun {
 	for _, line := range strings.Split(raw, "\n") {
 		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
@@ -189,15 +200,26 @@ func parseTimerNext(raw string) TimerNextRun {
 		if v == "" || v == "0" {
 			return TimerNextRun{}
 		}
-		us, err := strconv.ParseInt(v, 10, 64)
-		if err != nil || us <= 0 {
-			return TimerNextRun{}
+		// Unix seconds form: "@1776816320".
+		if strings.HasPrefix(v, "@") {
+			secs, err := strconv.ParseInt(v[1:], 10, 64)
+			if err != nil || secs <= 0 {
+				return TimerNextRun{}
+			}
+			t := time.Unix(secs, 0)
+			return TimerNextRun{Next: t, Raw: t.Local().Format("Mon 2006-01-02 15:04 MST")}
 		}
-		t := time.Unix(0, us*1000)
-		return TimerNextRun{
-			Next: t,
-			Raw:  t.Local().Format("Mon 2006-01-02 15:04 MST"),
+		// Bare integer: treat as microseconds since epoch.
+		if us, err := strconv.ParseInt(v, 10, 64); err == nil && us > 0 {
+			t := time.Unix(0, us*1000)
+			return TimerNextRun{Next: t, Raw: t.Local().Format("Mon 2006-01-02 15:04 MST")}
 		}
+		// Pretty form: use it verbatim as Raw and try to parse Next.
+		trimmed := trimWeekdayAndZone(v)
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", trimmed, time.Local); err == nil {
+			return TimerNextRun{Next: t, Raw: v}
+		}
+		return TimerNextRun{Raw: v}
 	}
 	return TimerNextRun{}
 }
