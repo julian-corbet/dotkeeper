@@ -159,6 +159,7 @@ That's it. All machines sync in real-time via Syncthing, with git backups runnin
 | `dotkeeper conflict resolve-all` | Scan managed folders and auto-resolve trivial conflicts (dedup + text merge) |
 | `dotkeeper conflict keep <path>` | Delete the sync-conflict variant, keep the current file (`--all` for every pending conflict) |
 | `dotkeeper conflict accept <path>` | Replace the current file with the variant and commit (`--all` for every pending conflict) |
+| `dotkeeper doctor` | Run self-diagnostic checks; `--json` for machine-readable output |
 
 ## Configuration
 
