@@ -75,12 +75,17 @@ func TestSetupGeneratesConfig(t *testing.T) {
 	}{
 		{"127.0.0.1:18384", "GUI address"},
 		{"tcp://:12000", "TCP listen address"},
-		{"quic://:12000", "QUIC listen address"},
 	}
 	for _, c := range checks {
 		if !strings.Contains(content, c.needle) {
 			t.Errorf("config.xml missing %s (%q)", c.desc, c.needle)
 		}
+	}
+
+	// QUIC must NOT be configured — see engine.go for the rationale
+	// (quic-go v0.52.0 panics + two open CVEs).
+	if strings.Contains(content, "quic://") {
+		t.Errorf("config.xml should not contain QUIC listen address — QUIC is intentionally disabled")
 	}
 }
 
