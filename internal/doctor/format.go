@@ -106,9 +106,12 @@ func WriteTextWithOptions(w io.Writer, results []Result, opts FormatOptions) {
 }
 
 func writeText(w io.Writer, results []Result, opts FormatOptions) {
-	fmt.Fprintln(w, "dotkeeper doctor")
+	// We intentionally discard Fprint errors — the writer is either
+	// stdout (no error realistically recoverable) or a bytes.Buffer
+	// in tests (never errors). Explicit discards keep lint happy.
+	_, _ = fmt.Fprintln(w, "dotkeeper doctor")
 	for _, r := range results {
-		fmt.Fprintf(w, "  %s %s %s\n",
+		_, _ = fmt.Fprintf(w, "  %s %s %s\n",
 			opts.symbol(r.Outcome),
 			padRight(r.Name, nameWidth),
 			r.Detail,
@@ -117,22 +120,22 @@ func writeText(w io.Writer, results []Result, opts FormatOptions) {
 			// The arrow marker here is purely cosmetic — it tells the
 			// eye "this line belongs to the one above" without needing
 			// a blank line between entries.
-			fmt.Fprintf(w, "    %s %s\n",
+			_, _ = fmt.Fprintf(w, "    %s %s\n",
 				strings.Repeat(" ", nameWidth-1),
 				hintPrefix(opts)+r.Hint,
 			)
 		}
 	}
-	fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w)
 	fails := countFailures(results)
 	warns := countWarnings(results)
 	switch {
 	case fails == 0 && warns == 0:
-		fmt.Fprintln(w, "Everything looks healthy.")
+		_, _ = fmt.Fprintln(w, "Everything looks healthy.")
 	case fails == 0:
-		fmt.Fprintf(w, "Found 0 issues, %d %s.\n", warns, plural(warns, "warning", "warnings"))
+		_, _ = fmt.Fprintf(w, "Found 0 issues, %d %s.\n", warns, plural(warns, "warning", "warnings"))
 	default:
-		fmt.Fprintf(w, "Found %d %s, %d %s. See above.\n",
+		_, _ = fmt.Fprintf(w, "Found %d %s, %d %s. See above.\n",
 			fails, plural(fails, "issue", "issues"),
 			warns, plural(warns, "warning", "warnings"),
 		)

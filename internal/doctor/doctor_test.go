@@ -17,8 +17,8 @@ type fakeCheck struct {
 	result Result
 }
 
-func (f *fakeCheck) Name() string                      { return f.name }
-func (f *fakeCheck) Run(_ context.Context) Result      { return f.result }
+func (f *fakeCheck) Name() string                 { return f.name }
+func (f *fakeCheck) Run(_ context.Context) Result { return f.result }
 
 func TestOutcomeString(t *testing.T) {
 	cases := []struct {
