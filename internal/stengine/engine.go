@@ -30,7 +30,6 @@ import (
 const (
 	GUIAddress   = stclient.APIAddress // 127.0.0.1:18384
 	ListenTCP    = "tcp://:12000"
-	ListenQUIC   = "quic://:12000"
 	LocalAnnPort = 11027
 )
 
@@ -227,7 +226,15 @@ func (e *Engine) generateConfig(configFile, certFile, keyFile string) error {
 	cfg.GUI.Enabled = true
 
 	// Listen addresses
-	cfg.Options.RawListenAddresses = []string{ListenTCP, ListenQUIC}
+	// TCP-only. QUIC is deliberately disabled:
+	//   1. quic-go v0.52.0 (which Syncthing v1.30.0 pins) panics with
+	//      "crypto/tls bug: where's my session ticket?" at startup under
+	//      certain peer-state conditions, producing a restart loop.
+	//   2. Both outstanding CVEs tracked in SECURITY.md (GO-2025-4017,
+	//      GO-2025-4233) are in quic-go. Not listening on QUIC makes
+	//      them unreachable code.
+	// When Syncthing upstream bumps past quic-go v0.54.1 we can revisit.
+	cfg.Options.RawListenAddresses = []string{ListenTCP}
 
 	// Discovery + connectivity — use Syncthing's full network stack
 	cfg.Options.LocalAnnEnabled = true
