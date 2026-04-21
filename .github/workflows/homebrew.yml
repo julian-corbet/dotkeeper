@@ -1,0 +1,150 @@
+name: Publish to Homebrew tap
+
+# Mirrors aur.yml: fires on 'v*' tag push, waits for release.yml to finish
+# uploading assets, then regenerates the formula in the tap repo with the
+# new version + SHA256s and pushes it.
+#
+# Needs: PACKAGES_TOKEN secret — classic PAT with 'public_repo' scope on an
+# account that can write to julian-corbet/homebrew-dotkeeper.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version without v-prefix (e.g. 0.4.1)'
+        required: true
+        type: string
+
+permissions: read-all
+
+jobs:
+  homebrew:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "version=${{ inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check PACKAGES_TOKEN exists
+        env:
+          TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::PACKAGES_TOKEN secret is not configured."
+            echo "Create a classic PAT at https://github.com/settings/tokens with 'public_repo' scope,"
+            echo "then add it as a repository secret named PACKAGES_TOKEN."
+            exit 1
+          fi
+
+      - name: Wait for release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          for i in $(seq 1 60); do
+            if gh release view "v${VERSION}" --repo julian-corbet/dotkeeper \
+                --json assets -q '.assets[].name' 2>/dev/null | grep -q '^checksums_sha256.txt$'; then
+              echo "release assets ready"
+              exit 0
+            fi
+            echo "waiting for release v${VERSION} assets ($i/60)..."
+            sleep 15
+          done
+          echo "::error::Release v${VERSION} assets never appeared"
+          exit 1
+
+      - name: Download checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          gh release download "v${VERSION}" --repo julian-corbet/dotkeeper \
+            --pattern 'checksums_sha256.txt' --dir /tmp
+
+      - name: Check out tap repo
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: julian-corbet/homebrew-dotkeeper
+          token: ${{ secrets.PACKAGES_TOKEN }}
+          path: tap
+
+      - name: Regenerate formula
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          SHA_DARWIN_AMD64=$(awk '/darwin_amd64.tar.gz$/{print $1}' /tmp/checksums_sha256.txt)
+          SHA_DARWIN_ARM64=$(awk '/darwin_arm64.tar.gz$/{print $1}' /tmp/checksums_sha256.txt)
+          SHA_LINUX_AMD64=$(awk '/linux_amd64.tar.gz$/{print $1}' /tmp/checksums_sha256.txt)
+          SHA_LINUX_ARM64=$(awk '/linux_arm64.tar.gz$/{print $1}' /tmp/checksums_sha256.txt)
+          for s in "$SHA_DARWIN_AMD64" "$SHA_DARWIN_ARM64" "$SHA_LINUX_AMD64" "$SHA_LINUX_ARM64"; do
+            if [ -z "$s" ]; then
+              echo "::error::Missing checksum for one of the darwin/linux amd64/arm64 builds"
+              cat /tmp/checksums_sha256.txt
+              exit 1
+            fi
+          done
+
+          mkdir -p tap/Formula
+          cat > tap/Formula/dotkeeper.rb <<RUBY
+          class Dotkeeper < Formula
+            desc "P2P file sync with git history — embedded Syncthing + staggered git auto-backup"
+            homepage "https://dotkeeper.corbet.ch"
+            license "AGPL-3.0-only"
+            version "${VERSION}"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/julian-corbet/dotkeeper/releases/download/v${VERSION}/dotkeeper_${VERSION}_darwin_arm64.tar.gz"
+                sha256 "${SHA_DARWIN_ARM64}"
+              else
+                url "https://github.com/julian-corbet/dotkeeper/releases/download/v${VERSION}/dotkeeper_${VERSION}_darwin_amd64.tar.gz"
+                sha256 "${SHA_DARWIN_AMD64}"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/julian-corbet/dotkeeper/releases/download/v${VERSION}/dotkeeper_${VERSION}_linux_arm64.tar.gz"
+                sha256 "${SHA_LINUX_ARM64}"
+              else
+                url "https://github.com/julian-corbet/dotkeeper/releases/download/v${VERSION}/dotkeeper_${VERSION}_linux_amd64.tar.gz"
+                sha256 "${SHA_LINUX_AMD64}"
+              end
+            end
+
+            depends_on "git"
+
+            def install
+              bin.install "dotkeeper"
+              doc.install "README.md"
+              doc.install "dotkeeper.toml.example"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/dotkeeper version")
+            end
+          end
+          RUBY
+
+      - name: Commit and push
+        working-directory: tap
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          git config user.name 'Julian Corbet'
+          git config user.email 'julian.corbet@gmail.com'
+          if git diff --quiet; then
+            echo "No changes — formula already at ${VERSION}"
+          else
+            git add Formula/dotkeeper.rb
+            git commit -m "formula: bump dotkeeper to ${VERSION}"
+            git push origin main
+          fi
