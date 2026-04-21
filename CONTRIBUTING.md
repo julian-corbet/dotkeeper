@@ -99,6 +99,7 @@ Open a GitHub issue at <https://github.com/julian-corbet/dotkeeper/issues>. Incl
 - Your OS and Go version (`go version`)
 - dotkeeper version (`dotkeeper version`)
 - Relevant output from `dotkeeper status`
+- Output from `dotkeeper doctor` (or `dotkeeper doctor --json`) — a single command that captures version, config, service, Syncthing API, peers, folders, git remotes, timer, and conflict state in one paste-friendly block
 - A minimal reproduction if possible
 
 ### Security issues

@@ -20,6 +20,7 @@ import (
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/conflict"
+	"github.com/julian-corbet/dotkeeper/internal/doctor"
 	"github.com/julian-corbet/dotkeeper/internal/gitsync"
 	"github.com/julian-corbet/dotkeeper/internal/service"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
@@ -53,6 +54,7 @@ func main() {
 	root.AddCommand(startCmd())
 	root.AddCommand(stopCmd())
 	root.AddCommand(conflictCmd())
+	root.AddCommand(doctorCmd())
 
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
@@ -1345,4 +1347,64 @@ func runAcceptAll(ctx context.Context, cfg *config.SharedConfig) int {
 		accepted++
 	}
 	return accepted
+}
+
+// doctorCmd wires `dotkeeper doctor` to the internal/doctor orchestrator.
+// Supports --json for machine-readable output. Exit codes:
+//   0 — no failures (warnings don't count)
+//   1 — at least one failed check
+//   2 — catastrophic (can't construct the check set at all)
+func doctorCmd() *cobra.Command {
+	var asJSON bool
+	cmd := &cobra.Command{
+		Use:   "doctor",
+		Short: "Run self-diagnostic checks and report health",
+		Long: "Runs a sequence of small checks (version, config, service, Syncthing API,\n" +
+			"peers, folders, git remotes, backup timer, sync conflicts) and prints a\n" +
+			"one-line verdict per check. Output is useful to paste into an issue report.\n\n" +
+			"Pass --json for machine-readable output.",
+		Run: func(cmd *cobra.Command, args []string) {
+			ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGINT, syscall.SIGTERM)
+			defer cancel()
+
+			checks := buildDoctorChecks()
+			var fails int
+			if asJSON {
+				fails = doctor.RunJSON(ctx, checks, os.Stdout)
+			} else {
+				fails = doctor.Run(ctx, checks, os.Stdout)
+			}
+			if fails > 0 {
+				os.Exit(1)
+			}
+		},
+	}
+	cmd.Flags().BoolVar(&asJSON, "json", false, "emit machine-readable JSON output")
+	return cmd
+}
+
+// buildDoctorChecks constructs the ordered list of checks the doctor
+// subcommand runs. Dependencies (service manager, Syncthing client) are
+// resolved best-effort — if any can't be built, the relevant checks
+// will still report cleanly (Warn/Fail with a hint) rather than aborting.
+func buildDoctorChecks() []doctor.Check {
+	mgr, _ := service.Detect()
+	// Build an stclient best-effort: the API key is only readable once
+	// Syncthing has been initialised. On a fresh box we simply pass a
+	// nil client and let SyncthingAPICheck report a clear Fail.
+	var client doctor.STClient
+	if key, err := engine().APIKey(); err == nil {
+		client = stclient.New(key)
+	}
+	return []doctor.Check{
+		doctor.VersionCheck{Version: version, Commit: commit},
+		doctor.ConfigCheck{},
+		doctor.ServiceCheck{Manager: mgr},
+		doctor.SyncthingAPICheck{Client: client},
+		doctor.PeersCheck{Client: client},
+		doctor.FoldersCheck{Client: client},
+		doctor.GitRemotesCheck{},
+		doctor.BackupTimerCheck{Manager: mgr},
+		doctor.ConflictsCheck{},
+	}
 }

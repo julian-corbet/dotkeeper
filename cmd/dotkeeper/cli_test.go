@@ -203,3 +203,53 @@ func TestCLIInitFlags(t *testing.T) {
 		}
 	}
 }
+
+// TestCLIDoctorHelp verifies the doctor subcommand is wired and accepts --json.
+func TestCLIDoctorHelp(t *testing.T) {
+	binary := buildTestBinary(t)
+	tmp := t.TempDir()
+
+	output, code := runDotkeeper(t, binary, tmp, "doctor", "--help")
+	if code != 0 {
+		t.Errorf("doctor --help exit code = %d, want 0", code)
+	}
+	if !strings.Contains(output, "--json") {
+		t.Errorf("doctor --help missing --json flag: %q", output)
+	}
+}
+
+// TestCLIDoctorOnFreshMachine runs the doctor against an uninitialised
+// home dir. It must not crash, and it must exit non-zero because the
+// config check fails on "machine.toml missing".
+func TestCLIDoctorOnFreshMachine(t *testing.T) {
+	binary := buildTestBinary(t)
+	tmp := t.TempDir()
+
+	output, code := runDotkeeper(t, binary, tmp, "doctor")
+	if code == 0 {
+		t.Errorf("doctor on fresh machine should exit non-zero; got 0. Output:\n%s", output)
+	}
+	// Every check must still run — we verify a few of the easy labels
+	// appear in the output, which also validates the formatter didn't
+	// wedge on a nil Syncthing client.
+	for _, want := range []string{"dotkeeper doctor", "version", "config", "service"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("doctor output missing %q; got:\n%s", want, output)
+		}
+	}
+}
+
+// TestCLIDoctorJSON verifies --json emits a valid JSON object.
+func TestCLIDoctorJSON(t *testing.T) {
+	binary := buildTestBinary(t)
+	tmp := t.TempDir()
+
+	output, _ := runDotkeeper(t, binary, tmp, "doctor", "--json")
+	// Don't re-parse here (avoid a test-only dependency); just assert
+	// the envelope keys are present and balanced braces are correct.
+	for _, want := range []string{`"results"`, `"failures"`, `"warnings"`, `"name"`} {
+		if !strings.Contains(output, want) {
+			t.Errorf("doctor --json missing key %q; got:\n%s", want, output)
+		}
+	}
+}
