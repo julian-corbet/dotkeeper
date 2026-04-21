@@ -93,13 +93,29 @@ Because each machine keeps its own `.git/` outside the Syncthing tree, git histo
 
 ### Build and install
 
+**Arch Linux (AUR):**
+
+```bash
+paru -S dotkeeper-bin          # pre-built binary
+paru -S dotkeeper-git          # builds from main HEAD
+```
+
+**macOS / Linux (Homebrew):**
+
+```bash
+brew tap julian-corbet/dotkeeper
+brew install dotkeeper
+```
+
+**From source:**
+
 ```bash
 git clone https://github.com/julian-corbet/dotkeeper.git
 cd dotkeeper
 make build && make install
 ```
 
-Or download a binary from [Releases](https://github.com/julian-corbet/dotkeeper/releases).
+Or download a pre-built binary from [Releases](https://github.com/julian-corbet/dotkeeper/releases).
 
 > **Note — building with `go install`**
 >
