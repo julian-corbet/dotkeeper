@@ -109,6 +109,58 @@ func (c *Client) AddDevice(deviceID, name string) error {
 	return c.SetConfig(cfg)
 }
 
+// Connection represents one entry of /rest/system/connections.
+// Only the fields dotkeeper actually needs are decoded; the Syncthing
+// REST payload contains many more that we deliberately ignore.
+type Connection struct {
+	Connected     bool   `json:"connected"`
+	Address       string `json:"address"`
+	ClientVersion string `json:"clientVersion"`
+}
+
+// Connections is the shape of /rest/system/connections — a map of
+// deviceID → Connection, plus a "total" entry Syncthing also returns.
+// The total entry is irrelevant for per-peer reachability, so callers
+// are expected to filter by their known device IDs.
+type Connections struct {
+	Connections map[string]Connection `json:"connections"`
+}
+
+// GetConnections queries /rest/system/connections.
+func (c *Client) GetConnections() (*Connections, error) {
+	data, err := c.get("rest/system/connections")
+	if err != nil {
+		return nil, err
+	}
+	var conns Connections
+	if err := json.Unmarshal(data, &conns); err != nil {
+		return nil, err
+	}
+	return &conns, nil
+}
+
+// FolderStatus represents one /rest/db/status response. Syncthing
+// reports the current lifecycle state (idle, syncing, scanning, error,
+// stopped, …) plus detailed counts we don't currently use.
+type FolderStatus struct {
+	State     string `json:"state"`
+	Errors    int    `json:"errors"`
+	NeedFiles int    `json:"needFiles"`
+}
+
+// GetFolderStatus queries /rest/db/status?folder=<id> for one folder.
+func (c *Client) GetFolderStatus(folderID string) (*FolderStatus, error) {
+	data, err := c.get("rest/db/status?folder=" + folderID)
+	if err != nil {
+		return nil, err
+	}
+	var s FolderStatus
+	if err := json.Unmarshal(data, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
 // AddOrUpdateFolder adds or updates a shared folder.
 func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) error {
 	cfg, err := c.GetConfig()

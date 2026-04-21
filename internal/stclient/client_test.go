@@ -177,6 +177,50 @@ func TestAddOrUpdateFolder(t *testing.T) {
 	}
 }
 
+func TestGetConnections(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/system/connections" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"connections":{"PEER-A":{"connected":true,"address":"tcp://1.2.3.4","clientVersion":"v1.30.0"},"PEER-B":{"connected":false,"address":"","clientVersion":""}}}`))
+	}))
+	defer server.Close()
+
+	client := &Client{baseURL: server.URL, apiKey: "key", http: server.Client()}
+	conns, err := client.GetConnections()
+	if err != nil {
+		t.Fatalf("GetConnections: %v", err)
+	}
+	if len(conns.Connections) != 2 {
+		t.Errorf("got %d connections, want 2", len(conns.Connections))
+	}
+	if !conns.Connections["PEER-A"].Connected {
+		t.Errorf("PEER-A should be connected")
+	}
+	if conns.Connections["PEER-B"].Connected {
+		t.Errorf("PEER-B should not be connected")
+	}
+}
+
+func TestGetFolderStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.RawQuery, "folder=my-folder") {
+			t.Errorf("missing folder query param in %q", r.URL.RawQuery)
+		}
+		_, _ = w.Write([]byte(`{"state":"idle","errors":0,"needFiles":0}`))
+	}))
+	defer server.Close()
+
+	client := &Client{baseURL: server.URL, apiKey: "key", http: server.Client()}
+	status, err := client.GetFolderStatus("my-folder")
+	if err != nil {
+		t.Fatalf("GetFolderStatus: %v", err)
+	}
+	if status.State != "idle" {
+		t.Errorf("state = %q, want idle", status.State)
+	}
+}
+
 func TestPingFailure(t *testing.T) {
 	// Connect to a port that's not listening
 	client := &Client{baseURL: "http://127.0.0.1:19999", apiKey: "key", http: http.DefaultClient}
