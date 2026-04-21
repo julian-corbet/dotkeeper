@@ -6,6 +6,8 @@
 // and cron (BSD/fallback).
 package service
 
+import "time"
+
 // Manager handles installing and managing background services and timers.
 type Manager interface {
 	// Name returns the platform backend name (e.g. "systemd", "launchd").
@@ -32,6 +34,32 @@ type Manager interface {
 
 	// DaemonReload reloads the service manager config (no-op on some platforms).
 	DaemonReload() error
+}
+
+// SyncthingUnitStatus is a richer view of the Syncthing service than
+// the boolean IsSyncthingRunning — used by `dotkeeper doctor` to
+// distinguish "inactive" (user never started it) from "failed"
+// (systemd saw it crash).
+type SyncthingUnitStatus struct {
+	// Active is the unit ActiveState — typically one of:
+	//   active, inactive, failed, activating, deactivating, unknown.
+	// Platforms without a service manager return "unknown".
+	Active string
+	// Sub is the SubState (e.g. "running", "dead", "failed"). Empty when
+	// the backend cannot provide it.
+	Sub string
+	// Since is the timestamp of the last state transition, if known.
+	// Zero value means the timestamp was not available.
+	Since time.Time
+}
+
+// TimerNextRun is the scheduled next-fire time for the git backup timer.
+// Zero-valued when the timer is inactive or the backend doesn't expose it.
+type TimerNextRun struct {
+	Next time.Time
+	// Raw is the backend-specific human-readable form (e.g. systemd's
+	// "Tue 2026-04-21 02:05:00 CEST"). Empty when unavailable.
+	Raw string
 }
 
 // PlatformName returns the backend name from any Manager.
