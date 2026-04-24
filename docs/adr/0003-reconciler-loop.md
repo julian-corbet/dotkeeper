@@ -111,7 +111,7 @@ watchers per tracked repo, local HTTP server for webhooks. Not dramatic —
 dotkeeper is Go, memory footprint stays small — but worth naming.
 
 **Mutation CLI's removal is a breaking change.** Users with scripts that
-call `dotkeeper add` have to migrate. Version this as v0.2 with a
+call `dotkeeper add` have to migrate. Version this as v0.5 with a
 migration note in the changelog; document the file-based replacement for
 every removed command.
 
