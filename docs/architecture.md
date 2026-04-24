@@ -404,7 +404,7 @@ For contributors navigating the codebase:
 | Package | Role |
 |---------|------|
 | `internal/config/` | Reading and validating `machine.toml`, `state.toml`, and per-repo `dotkeeper.toml`. The types that feed `read_config()`. |
-| `internal/reconcile/` | (v0.5, to be added) `diff()` pure function and the action types it returns. The unit-testable core. |
+| `internal/reconcile/` | `diff()` pure function, action types, `Apply` stub, and the `Reconciler` that glues them. The unit-testable core. |
 | `internal/gitsync/` | Git backup logic — commit, push, staggered slot scheduling. Becomes an apply primitive in v0.5. |
 | `internal/stengine/` | Embedded Syncthing lifecycle — start, stop, health. |
 | `internal/stclient/` | HTTP client for the Syncthing REST API. Used by `query_state()` to build observed state. |
@@ -416,10 +416,11 @@ To add a new reconcilable property: add it to the appropriate config struct in
 `internal/config/`, add an action type in `internal/reconcile/`, implement
 the action in the relevant apply package, and wire the diff logic.
 
-Note: `internal/reconcile/` does not yet exist in the codebase — it is the
-primary v0.5 implementation target. The current code (`internal/gitsync/`,
-`internal/stengine/`, `internal/service/`) implements v0.4's imperative model
-and will be refactored into apply primitives as v0.5 lands.
+The `internal/reconcile/` package has skeleton types, `Diff`, a `StubApplier`,
+and a `Reconciler`, but is not yet wired into `cmd/dotkeeper/main.go`. That
+wiring — plus refactoring `internal/gitsync/`, `internal/stengine/`, and
+`internal/service/` from v0.4's imperative model into apply primitives the
+reconciler calls — is the remaining v0.5 work.
 
 ---
 
