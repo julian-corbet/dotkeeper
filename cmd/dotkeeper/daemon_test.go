@@ -24,7 +24,6 @@ import (
 // timer + serialisation logic in cmds_v5.go without spinning up the full
 // dotkeeper binary or Syncthing.
 type stubReconciler struct {
-	mu          sync.Mutex
 	calls       int32
 	delay       time.Duration // optional pause inside Reconcile to provoke overlap
 	started     chan struct{} // closed on first call (non-blocking signal)

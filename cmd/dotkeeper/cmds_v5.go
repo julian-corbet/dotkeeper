@@ -127,7 +127,7 @@ func identityCmd() *cobra.Command {
 			eng := engine()
 			deviceID, err := eng.DeviceID()
 			if err != nil || deviceID == "" {
-				return fmt.Errorf("Syncthing device ID not available — run 'dotkeeper init' first")
+				return fmt.Errorf("no Syncthing device ID — run 'dotkeeper init' first")
 			}
 
 			if deviceIDOnly {
