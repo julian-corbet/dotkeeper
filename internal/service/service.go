@@ -70,11 +70,11 @@ func PlatformName(m Manager) string {
 // NoopManager is a fallback that does nothing. Used when platform detection fails.
 type NoopManager struct{}
 
-func (n *NoopManager) Name() string                                        { return "none" }
-func (n *NoopManager) InstallSyncthing(binaryPath string) error            { return nil }
+func (n *NoopManager) Name() string                                                 { return "none" }
+func (n *NoopManager) InstallSyncthing(binaryPath string) error                     { return nil }
 func (n *NoopManager) InstallTimer(binaryPath, configPath, onCalendar string) error { return nil }
-func (n *NoopManager) StartSyncthing() error                               { return nil }
-func (n *NoopManager) StopSyncthing() error                                { return nil }
-func (n *NoopManager) IsSyncthingRunning() bool                            { return false }
-func (n *NoopManager) IsTimerActive() bool                                 { return false }
-func (n *NoopManager) DaemonReload() error                                 { return nil }
+func (n *NoopManager) StartSyncthing() error                                        { return nil }
+func (n *NoopManager) StopSyncthing() error                                         { return nil }
+func (n *NoopManager) IsSyncthingRunning() bool                                     { return false }
+func (n *NoopManager) IsTimerActive() bool                                          { return false }
+func (n *NoopManager) DaemonReload() error                                          { return nil }

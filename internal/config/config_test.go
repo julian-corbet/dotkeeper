@@ -367,4 +367,3 @@ func TestDefaultIgnorePatterns(t *testing.T) {
 		}
 	}
 }
-

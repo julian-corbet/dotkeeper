@@ -99,7 +99,10 @@ func (c *Cron) IsSyncthingRunning() bool {
 
 func (c *Cron) IsTimerActive() bool {
 	out, _ := exec.Command("crontab", "-l").Output()
-	return containsStr(string(out), "dotkeeper sync")
+	// Check for both v0.4 ("dotkeeper sync") and v0.5 ("dotkeeper reconcile")
+	// cron entries so detection works across the migration boundary.
+	s := string(out)
+	return containsStr(s, "dotkeeper sync") || containsStr(s, "dotkeeper reconcile")
 }
 
 func (c *Cron) DaemonReload() error {
