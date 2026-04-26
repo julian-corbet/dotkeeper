@@ -8,90 +8,39 @@
 
 Sync your repos and dotfiles across machines. Close the laptop, open the desktop, keep working.
 
-dotkeeper combines **embedded Syncthing** for real-time P2P file sync with **git auto-backup** for history and rollback. Single binary, no external dependencies beyond git.
+## What it does
 
-## The problem
+dotkeeper keeps your code, configs, and dotfiles in sync across however many machines you use. It combines **embedded Syncthing** for real-time P2P file sync with **staggered git backup** for history and rollback. You declare what you want synced in plain TOML files; a reconciler loop continuously converges the live system to match. Single binary, no external dependencies beyond git.
 
-You have more than one machine — a laptop, a desktop, maybe a NAS or a VPS — and you want the same code, configs, and dotfiles on all of them. Git requires manual commits and pushes. Syncthing alone has no history or rollback. Dotfile managers require manual commands and don't do real-time sync.
+Each repo you want managed gets a `dotkeeper.toml` committed at its root. That file is the opt-in signal: it says which machines should receive the repo, how the git backup should run, and which Syncthing folder backs it. Per-machine settings — your machine's name, slot number, and which directories to scan for repos — live in `~/.config/dotkeeper/machine.toml`. You edit files; dotkeeper handles the rest.
 
-No existing tool combines P2P real-time sync with git history. dotkeeper does.
+## Why I built it
+
+I run four machines: a desktop, a laptop, a NAS, and a VPS. I want the same repos, dotfiles, and editor configs on all of them without manual `git push`/`git pull` ceremony and without Dropbox-style centralisation that would compromise the git history. Syncthing gives me real-time P2P sync; git gives me rollback and auditability. No existing tool combined both. I built dotkeeper to wire them together with as little ongoing maintenance as possible.
+
+The v0.5 design — per-repo config that travels with the repo, a reconciler loop instead of imperative commands — came from v0.4 hitting write races and silent drift. The architecture document explains the reasoning in full.
 
 ## How it works
 
-dotkeeper connects **any number of machines** through two complementary layers — a live p2p sync layer and a staggered git backup layer.
+dotkeeper runs as a daemon. At its core is a reconcile loop:
 
-```mermaid
-flowchart TB
-    subgraph mesh["Syncthing P2P mesh &nbsp;&middot;&nbsp; real-time file sync"]
-        direction LR
-        A["💻 Laptop"]
-        B["🖥️ Desktop"]
-        C["📦 NAS"]
-        A <--> B
-        B <--> C
-        A <--> C
-    end
-    A -. "slot 0" .-> G[("🐙 GitHub<br/>origin/main")]
-    B -. "slot 1" .-> G
-    C -. "slot 2" .-> G
-
-    classDef peer fill:#e8f0fe,stroke:#1a73e8,color:#000
-    classDef hub fill:#fff4e0,stroke:#f29900,color:#000
-    class A,B,C peer
-    class G hub
+```
+desired  = read_config()      # machine.toml + every tracked dotkeeper.toml
+observed = query_state()      # Syncthing REST API + git + filesystem
+actions  = diff(desired, observed)
+for action in actions:
+    apply(action)
 ```
 
-**Solid lines** are the Syncthing mesh: every peer syncs directly with every other peer; edits propagate in seconds.
-**Dashed lines** are the staggered git backups: each machine pushes on its own time slot, so no two machines ever race for the same push.
+`diff()` is a pure function. Given the same inputs it always returns the same list of actions. `apply()` is where side effects happen — adding a Syncthing folder, auto-committing a dirty repo, pushing a backup — and every action is idempotent. The daemon triggers reconcile on inotify events (file changes land in milliseconds), on a periodic timer (default five minutes, safety net), and on explicit `dotkeeper reconcile` invocations.
 
-The diagram shows three peers for clarity, but the topology scales — add a phone, a VPS, a second laptop, etc. Each one gets the next slot number.
+The mesh itself is a Syncthing P2P topology — no central hub. Every peer syncs directly with every other peer. Each machine also runs staggered git backup: machines are assigned slot numbers (0, 1, 2, ...) and back up at different offsets within the configured interval, so no two machines ever race to push the same branch.
 
-- **Syncthing** (embedded, isolated) builds the p2p mesh. Works on LAN, or through NAT over the public internet via Syncthing's discovery + relay infrastructure.
-- **Git backup** auto-commits and pushes on a staggered schedule. Each machine owns a slot (`slot 0` at `:00`, `slot 1` at `:0 + slot_offset_minutes`, and so on), so no two machines try to push at the same moment.
-- **`.git/` lives outside the Syncthing-synced tree.** Each machine keeps its own independent git history; machines converge through GitHub, not through bit-for-bit git-directory sync.
-- **Every managed repo gets a `dotkeeper.toml` breadcrumb** — tracked in git — so if Syncthing is unreachable you can still tell from the repo alone which machines dotkeeper thinks manage it.
-
-## Scaling to N machines
-
-There's no "Machine A / Machine B" cap. Two, six, twenty — the model is the same:
-
-- **Syncthing** forms a mesh; every machine syncs with every other machine directly (no central hub). Adding a machine is `dotkeeper join <DEVICE-ID-FROM-AN-EXISTING-MACHINE>`.
-- **Slot assignment** is one per machine. With the default `git_interval = daily` and `slot_offset_minutes = 5`, you fit ~12 machines cleanly in a day. Tighter intervals (`hourly`, `2h`) are possible at the cost of more machines competing for the window.
-- **Offline peers** catch up automatically: Syncthing replays missed changes when they come back online, then the next git-backup slot fires for that machine.
-
-## What about conflicts?
-
-Two layers, two failure modes, two mitigations:
-
-### Live file conflicts (Syncthing)
-
-If the same file is edited on two machines before Syncthing propagates the change, Syncthing keeps both versions — the loser becomes `<file>.sync-conflict-<timestamp>-<deviceID>.<ext>`. In practice this is rare because the latency is seconds and most humans only operate one machine at a time.
-
-**What dotkeeper does:** actively detects *and auto-resolves* the trivial cases, and surfaces the rest. The default `[syncthing].ignore` list in `config.toml` keeps conflict files local (not re-synced to peers), and git's `.gitignore` typically excludes them too. On top of that:
-
-- `dotkeeper start` runs a filesystem watcher. When a `.sync-conflict-*` file appears, dotkeeper:
-  1. **Hash-identical dedup.** If the conflict file is byte-for-byte identical to the local file (two machines saved the same thing), it's deleted. Nothing to resolve.
-  2. **3-way text merge.** For text files, dotkeeper runs `git merge-file` against the HEAD version as the common ancestor. A clean merge overwrites the local file, deletes the conflict file, and creates an auto-commit scoped to that single path (`auto: resolve sync conflict in <path>`) — reversible via `git revert` or `git reset` if it ever picks wrong.
-  3. **Otherwise keep.** Binaries, files not yet committed to git, and merges that would produce conflict markers are left in place for the user to resolve by hand.
-- `dotkeeper conflict list` prints a table of every outstanding conflict across all managed folders.
-- `dotkeeper conflict resolve-all` runs the same resolver chain as a batch job — handy after an extended outage when many conflicts accumulate before the watcher was running.
-- **Disabling auto-resolve.** Set `auto_resolve_conflicts = false` under `[sync]` in `config.toml` to revert to detect-only behaviour. Defaults to `true`.
-
-**For the rare cases auto-resolve can't handle** — binaries, files not yet committed to git, or genuinely-conflicting text edits — `dotkeeper conflict list` shows the pending items and two manual commands resolve them: `dotkeeper conflict keep <path>` deletes the `.sync-conflict-*` variant and leaves the current file as-is (no git activity), while `dotkeeper conflict accept <path>` replaces the current file with the variant's contents, deletes the variant, and creates a single scoped commit (`auto: accept sync conflict for <relpath> (from <deviceShort>)`). Both accept either the canonical path or the explicit variant filename, both take `--all` to process every pending conflict in one invocation, and both are idempotent.
-
-### Git push conflicts (GitHub)
-
-Two machines pushing to the same branch at the same instant would race. The staggered-slot timer avoids this **by construction**: each machine's git backup fires at a different offset within the configured interval. No push races, no merge commits to clean up, no retries.
-
-If a race does happen anyway (e.g. two machines start a manual `dotkeeper sync` at the same second): the losing push fails the fast-forward check, dotkeeper logs the failure, and the next timer tick on the losing machine pulls + retries. The content is already synced via Syncthing, so there's no data loss.
-
-### State consistency
-
-Because each machine keeps its own `.git/` outside the Syncthing tree, git history is **not** shared bit-for-bit — it converges via GitHub. A machine offline for a week comes back, Syncthing catches up its files within minutes, then its next slot commits and pushes whatever local changes remain. No manual reconciliation needed.
+`.git/` directories are excluded from Syncthing sync. Each machine keeps its own independent git history and converges through GitHub, not through syncing raw git objects. This keeps the Syncthing mesh fast and avoids the class of problems that come from syncing `.git/` directly.
 
 ## Quick start
 
-### Build and install
+### Install
 
 **Arch Linux (AUR):**
 
@@ -117,115 +66,137 @@ make build && make install
 
 Or download a pre-built binary from [Releases](https://github.com/julian-corbet/dotkeeper/releases).
 
-> **Note — building with `go install`**
+> **Note — `go install`**
 >
-> dotkeeper embeds Syncthing as a library, which transitively pulls in
-> `lib/api`. That package expects a generator-produced `auto.Assets`
-> symbol (Syncthing's web GUI). Since dotkeeper only uses the REST
-> API, always build with the `noassets` tag:
+> dotkeeper embeds Syncthing as a library, which requires a build tag to suppress
+> the Syncthing web GUI assets. Always build with `-tags noassets`:
 >
 > ```bash
 > go install -tags noassets github.com/julian-corbet/dotkeeper/cmd/dotkeeper@latest
 > ```
 >
-> The `Makefile`, `Dockerfile`, and release workflow all set this tag
-> automatically. A naked `go build ./cmd/dotkeeper` will fail with
-> `undefined: auto.Assets` — this is expected.
+> A naked `go build ./cmd/dotkeeper` will fail with `undefined: auto.Assets`.
+> The `Makefile`, `Dockerfile`, and release workflow all set this tag automatically.
 
 ### First machine
 
 ```bash
+# Generate Syncthing identity, write initial state.toml, scaffold machine.toml.
 dotkeeper init
-# prints your device ID and a join command for peers to use
 
-dotkeeper add ~/Documents/GitHub/my-project
-dotkeeper add ~/.config/nvim
-dotkeeper install-timer
+# Print this machine's Syncthing device ID — you'll need it when adding peers.
+dotkeeper identity
+
+# Edit machine.toml to set your name, slot, and scan roots.
+$EDITOR ~/.config/dotkeeper/machine.toml
 ```
+
+A minimal `machine.toml` looks like:
+
+```toml
+schema_version = 2
+name = "desktop"
+slot = 0
+
+[discovery]
+scan_roots = [
+  "~/Documents/GitHub",
+  "~/.config/nvim",
+]
+```
+
+For each repo you want to manage, drop a `dotkeeper.toml` at its root, commit it, and push:
+
+```toml
+# ~/Documents/GitHub/my-project/dotkeeper.toml
+schema_version = 2
+
+[repo]
+name = "my-project"
+added = "2026-01-01T00:00:00Z"
+added_by = "desktop"
+
+[sync]
+syncthing_folder_id = "my-project-a1b2c3"
+share_with = ["desktop", "laptop"]
+```
+
+Then run the daemon:
+
+```bash
+dotkeeper start    # or: systemctl --user start dotkeeper
+```
+
+dotkeeper walks your scan roots, finds every committed `dotkeeper.toml`, and starts managing those repos. No `dotkeeper add` per repo.
 
 ### Each additional machine
 
-Run this on every other machine you want to sync — laptop, desktop, NAS, VPS, etc. The same `join` command works for the 2nd, 20th, and every machine in between. Use the device ID from any already-joined machine.
-
 ```bash
-dotkeeper join <DEVICE-ID-FROM-AN-EXISTING-MACHINE>
-# connects to the mesh, syncs config, configures repos automatically
+# On the new machine:
+dotkeeper init
+dotkeeper identity    # copy this device ID
 
-dotkeeper install-timer
+# On an existing machine — add the new peer's device ID to state.toml:
+# [[peers]]
+# name = "laptop"
+# device_id = "<DEVICE-ID>"
+# learned_at = 2026-01-01T00:00:00Z
+# Then:
+dotkeeper reconcile
+
+# Back on the new machine — once state.toml syncs via Syncthing:
+dotkeeper reconcile
 ```
 
-That's it. All machines sync in real-time via Syncthing, with git backups running on each machine's staggered slot.
+The new machine picks up all managed repos via Syncthing delivery and scan-root discovery. No per-repo ceremony on the new machine.
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `dotkeeper init` | Initialize this machine (identity, Syncthing, config) |
-| `dotkeeper join <ID>` | Join an existing setup by pairing with another machine |
-| `dotkeeper add <path>` | Add a repo or directory to sync |
-| `dotkeeper remove <name>` | Stop syncing a repo |
-| `dotkeeper pair` | Re-apply config (add devices and folders to Syncthing) |
-| `dotkeeper sync` | Run git backup now |
-| `dotkeeper status` | Show full status |
-| `dotkeeper install-timer` | Install scheduled git backup (systemd/launchd/cron/schtasks) |
-| `dotkeeper version` | Print dotkeeper version |
-| `dotkeeper start` | Start embedded Syncthing in foreground (for systemd) |
-| `dotkeeper stop` | Stop the Syncthing service |
+| Command | Purpose |
+|---------|---------|
+| `dotkeeper init` | First-run setup: generate Syncthing identity, write `state.toml`, scaffold `machine.toml` |
+| `dotkeeper start` | Run the daemon (invoked by systemd) |
+| `dotkeeper reconcile [<path>]` | Force a reconcile pass now; optional path limits scope |
+| `dotkeeper status` | Snapshot: last reconcile time, tracked repos, mesh peers, pending work |
+| `dotkeeper identity` | Print this machine's Syncthing device ID and name |
+| `dotkeeper track <path>` | Register a repo outside any scan root |
+| `dotkeeper untrack <path>` | Deregister a tracked override |
+| `dotkeeper doctor` | Run self-diagnostic health checks; `--json` for machine-readable output |
+| `dotkeeper logs` | Tail the journal for the dotkeeper systemd unit |
 | `dotkeeper conflict list` | List Syncthing sync-conflict files across all managed folders |
-| `dotkeeper conflict resolve-all` | Scan managed folders and auto-resolve trivial conflicts (dedup + text merge) |
-| `dotkeeper conflict keep <path>` | Delete the sync-conflict variant, keep the current file (`--all` for every pending conflict) |
-| `dotkeeper conflict accept <path>` | Replace the current file with the variant and commit (`--all` for every pending conflict) |
-| `dotkeeper doctor` | Run self-diagnostic checks; `--json` for machine-readable output |
+| `dotkeeper conflict resolve-all` | Batch auto-resolve trivial conflicts (dedup + text merge) |
+| `dotkeeper conflict keep <path>` | Delete the conflict variant, keep the current file |
+| `dotkeeper conflict accept <path>` | Replace current file with the conflict variant and commit |
+| `dotkeeper version` | Print dotkeeper version |
 
-## Configuration
+## Architecture
 
-### Three config files
+- [docs/architecture.md](docs/architecture.md) — full walkthrough: reconciler model, config file roles, discovery, command reference
+- [ADR 0001](docs/adr/0001-per-repo-config.md) — why per-repo `dotkeeper.toml` is authoritative
+- [ADR 0002](docs/adr/0002-machine-state-split.md) — `machine.toml` vs `state.toml`: declarative vs tool-owned
+- [ADR 0003](docs/adr/0003-reconciler-loop.md) — pure `Diff(desired, observed) → Plan` reconciler
+- [ADR 0004](docs/adr/0004-scan-root-discovery.md) — how repos are discovered without `dotkeeper add`
 
-| File | Location | Synced? | Purpose |
-|------|----------|---------|---------|
-| `machine.toml` | `~/.config/dotkeeper/` | No | Local machine identity (name, slot) |
-| `config.toml` | `~/.config/dotkeeper/` | Yes (Syncthing) | Shared settings: machines, repos, ignore patterns |
-| `dotkeeper.toml` | In each managed repo | Yes (git) | Per-repo log: which machines, when last synced |
+## Status
 
-### Backup schedule (`git_interval`)
-
-| Value | Schedule |
-|-------|----------|
-| `hourly` | Every hour |
-| `2h`, `6h`, `12h` | Every N hours |
-| `daily` | Once per day (default) |
-| `weekly` | Once per week |
-| `monthly` | Once per month |
-
-Each machine is offset by `slot * slot_offset_minutes` to avoid push conflicts.
-
-### Ignore patterns
-
-dotkeeper ships with smart defaults that sync lockfiles and editor configs while excluding build artifacts, caches, and conflict-prone state files. See `dotkeeper.toml.example` for the full list.
-
-## Features
-
-- **Single binary** — Syncthing embedded as a Go library, no separate install
-- **Fully isolated** — own ports (18384, 12000, 11027), own config, won't interfere with system Syncthing
-- **Works anywhere** — local discovery on LAN, global discovery + relay + NAT traversal when remote
-- **Smart defaults** — syncs lockfiles and editor configs, excludes build artifacts and volatile state
-- **Per-repo breadcrumbs** — `dotkeeper.toml` in each repo tracks sync state for resilience
-- **Staggered git backup** — each machine gets a time slot, no push conflicts
+The reconciler, config schema, and ADRs are done. `internal/reconcile/` has live `Diff()`, action types, and a `Reconciler` struct. What remains for the full v0.5 cut is wiring the reconciler into `cmd/dotkeeper/main.go` and refactoring `internal/gitsync/`, `internal/stengine/`, and `internal/service/` from v0.4's imperative model into apply primitives the reconciler calls. The Syncthing engine, conflict resolution, and git backup all work — the direction of control is changing, not the underlying primitives.
 
 ## Port isolation
+
+dotkeeper runs its embedded Syncthing on separate ports so it does not conflict with a system-installed Syncthing instance.
 
 | Resource | System Syncthing | dotkeeper |
 |----------|-----------------|-----------|
 | API | 127.0.0.1:8384 | 127.0.0.1:18384 |
 | Sync | :22000 | :12000 |
 | Discovery | :21027 | :11027 |
-| Config | ~/.config/syncthing | ~/.local/share/dotkeeper/syncthing |
+| Config | `~/.config/syncthing` | `~/.local/share/dotkeeper/syncthing` |
 
 ## Requirements
 
 - **Go 1.23+** (build only)
 - **git**
-- **Service manager** — systemd (Linux), launchd (macOS), Task Scheduler (Windows), cron (BSD/fallback)
+- **Service manager** — systemd (Linux), launchd (macOS), or cron (BSD/fallback)
 - Internet access for cross-network sync (LAN-only also works)
 
 ## License
