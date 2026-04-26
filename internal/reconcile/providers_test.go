@@ -116,7 +116,7 @@ func TestDesiredProvider_MissingMachineToml(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	provider := NewDesiredProvider(filepath.Join(dir, "machine.toml"))
+	provider := NewDesiredProvider(filepath.Join(dir, "machine.toml"), filepath.Join(dir, "state.toml"))
 
 	_, err := provider(context.Background())
 	if err == nil {
@@ -136,7 +136,7 @@ func TestDesiredProvider_EmptyScanRoots(t *testing.T) {
 	nonExistentRoot := filepath.Join(dir, "repos")
 	machineFile := writeMachineToml(t, dir, []string{nonExistentRoot}, nil, 3)
 
-	provider := NewDesiredProvider(machineFile)
+	provider := NewDesiredProvider(machineFile, filepath.Join(dir, "state.toml"))
 	desired, err := provider(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -163,7 +163,7 @@ func TestDesiredProvider_DiscoversSingleRepo(t *testing.T) {
 	writeDotkeeperToml(t, repoDir, "dk-myrepo")
 
 	machineFile := writeMachineToml(t, dir, []string{scanRoot}, nil, 3)
-	provider := NewDesiredProvider(machineFile)
+	provider := NewDesiredProvider(machineFile, filepath.Join(dir, "state.toml"))
 
 	desired, err := provider(context.Background())
 	if err != nil {
@@ -201,7 +201,7 @@ func TestDesiredProvider_DiscoversMultipleRepos(t *testing.T) {
 	}
 
 	machineFile := writeMachineToml(t, dir, []string{scanRoot}, nil, 3)
-	provider := NewDesiredProvider(machineFile)
+	provider := NewDesiredProvider(machineFile, filepath.Join(dir, "state.toml"))
 
 	desired, err := provider(context.Background())
 	if err != nil {
@@ -232,7 +232,7 @@ func TestDesiredProvider_ExcludedDirSkipped(t *testing.T) {
 	}
 
 	machineFile := writeMachineToml(t, dir, []string{scanRoot}, []string{excluded}, 3)
-	provider := NewDesiredProvider(machineFile)
+	provider := NewDesiredProvider(machineFile, filepath.Join(dir, "state.toml"))
 
 	desired, err := provider(context.Background())
 	if err != nil {
@@ -274,7 +274,7 @@ func TestDesiredProvider_ScanDepthRespected(t *testing.T) {
 	writeDotkeeperToml(t, deep, "dk-deep")
 
 	machineFile := writeMachineToml(t, dir, []string{scanRoot}, nil, 2)
-	provider := NewDesiredProvider(machineFile)
+	provider := NewDesiredProvider(machineFile, filepath.Join(dir, "state.toml"))
 
 	desired, err := provider(context.Background())
 	if err != nil {
@@ -302,7 +302,7 @@ func TestDesiredProvider_RepoAtScanRootItself(t *testing.T) {
 	writeDotkeeperToml(t, scanRoot, "dk-root")
 
 	machineFile := writeMachineToml(t, dir, []string{scanRoot}, nil, 3)
-	provider := NewDesiredProvider(machineFile)
+	provider := NewDesiredProvider(machineFile, filepath.Join(dir, "state.toml"))
 
 	desired, err := provider(context.Background())
 	if err != nil {
@@ -338,7 +338,7 @@ func TestDesiredProvider_NestedRepoBeyondDepthNotFound(t *testing.T) {
 
 	// With scan_depth=1 only depth-1 dirs are visited.
 	machineFile := writeMachineToml(t, dir, []string{scanRoot}, nil, 1)
-	provider := NewDesiredProvider(machineFile)
+	provider := NewDesiredProvider(machineFile, filepath.Join(dir, "state.toml"))
 
 	desired, err := provider(context.Background())
 	if err != nil {
@@ -356,13 +356,107 @@ func TestDesiredProvider_MachineName(t *testing.T) {
 	dir := t.TempDir()
 	machineFile := writeMachineToml(t, dir, []string{}, nil, 3)
 
-	provider := NewDesiredProvider(machineFile)
+	provider := NewDesiredProvider(machineFile, filepath.Join(dir, "state.toml"))
 	desired, err := provider(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if desired.MachineName != "testmachine" {
 		t.Errorf("expected MachineName=testmachine, got %q", desired.MachineName)
+	}
+}
+
+// TestDesiredProvider_PeersLoadedFromState verifies that peers declared in
+// state.toml flow through into Desired.Peers with both Name and DeviceID.
+func TestDesiredProvider_PeersLoadedFromState(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	machineFile := writeMachineToml(t, dir, []string{}, nil, 3)
+	statePath := filepath.Join(dir, "state.toml")
+
+	stateContent := `schema_version = 2
+syncthing_device_id = "AAAAAAA-BBBBBBB-CCCCCCC-DDDDDDD-EEEEEEE-FFFFFFF-GGGGGGG-HHHHHHH"
+tracked_overrides = []
+
+[[peers]]
+name = "elitebook"
+device_id = "ABC123-XYZ"
+learned_at = 2026-01-01T00:00:00Z
+
+[[peers]]
+name = "server"
+device_id = "DEF456-XYZ"
+learned_at = 2026-01-01T00:00:00Z
+`
+	if err := os.WriteFile(statePath, []byte(stateContent), 0o600); err != nil {
+		t.Fatalf("writing state.toml: %v", err)
+	}
+
+	provider := NewDesiredProvider(machineFile, statePath)
+	desired, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(desired.Peers) != 2 {
+		t.Fatalf("expected 2 peers from state, got %d: %v", len(desired.Peers), desired.Peers)
+	}
+	if desired.Peers[0].Name != "elitebook" || desired.Peers[0].DeviceID != "ABC123-XYZ" {
+		t.Errorf("peer[0]: expected {elitebook, ABC123-XYZ}, got %+v", desired.Peers[0])
+	}
+	if desired.Peers[1].Name != "server" || desired.Peers[1].DeviceID != "DEF456-XYZ" {
+		t.Errorf("peer[1]: expected {server, DEF456-XYZ}, got %+v", desired.Peers[1])
+	}
+}
+
+// TestDesiredProvider_MissingStateNoPeers verifies that a missing state.toml
+// is non-fatal: the provider returns successfully with an empty peer list.
+func TestDesiredProvider_MissingStateNoPeers(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	machineFile := writeMachineToml(t, dir, []string{}, nil, 3)
+
+	provider := NewDesiredProvider(machineFile, filepath.Join(dir, "does-not-exist.toml"))
+	desired, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(desired.Peers) != 0 {
+		t.Errorf("expected 0 peers when state.toml is absent, got %d: %v", len(desired.Peers), desired.Peers)
+	}
+}
+
+// TestDesiredProvider_MalformedStateErrors verifies that a malformed state.toml
+// (parse error, not "missing") produces a hard error rather than silently
+// degrading to an empty peer roster — which would cause the reconciler to plan
+// removal of every Syncthing peer. Distinguishing "absent" from "broken" is
+// load-bearing: the first is correct first-run behaviour, the second is
+// catastrophic config corruption that must surface to the operator.
+func TestDesiredProvider_MalformedStateErrors(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	machineFile := writeMachineToml(t, dir, []string{}, nil, 3)
+	statePath := filepath.Join(dir, "state.toml")
+
+	// Broken TOML: unbalanced quote on a string value.
+	brokenContent := `schema_version = 2
+syncthing_device_id = "AAAAAAA-BBBBBBB-CCCCCCC
+tracked_overrides = []
+`
+	if err := os.WriteFile(statePath, []byte(brokenContent), 0o600); err != nil {
+		t.Fatalf("writing broken state.toml: %v", err)
+	}
+
+	provider := NewDesiredProvider(machineFile, statePath)
+	_, err := provider(context.Background())
+	if err == nil {
+		t.Fatal("expected error for malformed state.toml, got nil")
+	}
+	msg := err.Error()
+	if !containsSubstr(msg, "loading state") && !containsSubstr(msg, statePath) {
+		t.Errorf("error should mention 'loading state' or the path %q, got: %v", statePath, err)
 	}
 }
 
@@ -739,4 +833,3 @@ func containsSubstr(s, sub string) bool {
 			return false
 		}())
 }
-

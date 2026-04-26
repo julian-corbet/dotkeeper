@@ -27,11 +27,14 @@ import (
 
 // NewDesiredProvider returns a DesiredProvider that reads machine.toml from
 // machineConfigPath, walks each declared scan root for dotkeeper.toml files,
-// and assembles a Desired via BuildDesired.
+// loads state.toml from stateConfigPath for the peer roster, and assembles a
+// Desired via BuildDesired.
 //
 // If machineConfigPath does not exist the returned provider yields an error
-// that points the user at "dotkeeper init".
-func NewDesiredProvider(machineConfigPath string) DesiredProvider {
+// that points the user at "dotkeeper init". A missing state file is not an
+// error — peers will simply be empty until the user pairs with a peer
+// (correct first-run behaviour).
+func NewDesiredProvider(machineConfigPath, stateConfigPath string) DesiredProvider {
 	return func(_ context.Context) (Desired, error) {
 		machine, err := loadMachineConfigFromPath(machineConfigPath)
 		if err != nil {
@@ -43,7 +46,18 @@ func NewDesiredProvider(machineConfigPath string) DesiredProvider {
 			return Desired{}, fmt.Errorf("repo discovery failed: %w", err)
 		}
 
-		return BuildDesired(machine, repos), nil
+		// State is optional only in the missing-file case (first-run, before
+		// any peers have been paired). A malformed or unreadable state file
+		// must be a hard error: silently ignoring it would yield an empty
+		// peer roster and the reconciler would then plan to *remove* every
+		// known Syncthing peer. Distinguish "absent" (safe) from "broken"
+		// (catastrophic) here.
+		state, _, err := loadStateFromPath(stateConfigPath)
+		if err != nil {
+			return Desired{}, fmt.Errorf("loading state from %s: %w", stateConfigPath, err)
+		}
+
+		return BuildDesired(machine, repos, state), nil
 	}
 }
 
