@@ -179,7 +179,7 @@ The new machine picks up all managed repos via Syncthing delivery and scan-root 
 
 ## Status
 
-The reconciler, config schema, and ADRs are done. `internal/reconcile/` has live `Diff()`, action types, and a `Reconciler` struct. What remains for the full v0.5 cut is wiring the reconciler into `cmd/dotkeeper/main.go` and refactoring `internal/gitsync/`, `internal/stengine/`, and `internal/service/` from v0.4's imperative model into apply primitives the reconciler calls. The Syncthing engine, conflict resolution, and git backup all work — the direction of control is changing, not the underlying primitives.
+v0.5.0 is the current release. The reconciler is wired into `dotkeeper start` (daemon mode with `fsnotify` triggers and a periodic timer), the v0.4 imperative commands are gone, and the per-repo `dotkeeper.toml` model is the single source of truth. See [CHANGELOG.md](CHANGELOG.md) for the full release notes.
 
 ## Port isolation
 
