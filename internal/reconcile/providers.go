@@ -239,6 +239,13 @@ type SyncthingQuerier interface {
 // If stClient is nil or Syncthing is unreachable the returned Observed has
 // empty ManagedFolders/LivePeers slices; the error is wrapped with context.
 func NewObservedProvider(stClient *stclient.Client, stateConfigPath string) ObservedProvider {
+	// Guard against a typed nil: converting a nil *stclient.Client to
+	// SyncthingQuerier produces a non-nil interface value, which would
+	// bypass the nil check inside newObservedProvider and panic. Explicitly
+	// pass a nil interface when the pointer is nil.
+	if stClient == nil {
+		return newObservedProvider(nil, stateConfigPath)
+	}
 	return newObservedProvider(stClient, stateConfigPath)
 }
 

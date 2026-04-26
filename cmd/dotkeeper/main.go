@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -36,6 +37,13 @@ var (
 )
 
 func main() {
+	// Wire SIGINT/SIGTERM into the root context so cmd.Context() inside
+	// every subcommand carries cancellation. Without ExecuteContext, a
+	// long-running reconcile (or any blocking subcommand work) would not
+	// observe Ctrl-C until it returned naturally.
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	root := &cobra.Command{
 		Use:   "dotkeeper",
 		Short: "P2P repo sync with git history",
@@ -55,8 +63,13 @@ func main() {
 	root.AddCommand(stopCmd())
 	root.AddCommand(conflictCmd())
 	root.AddCommand(doctorCmd())
+	// v0.5 declarative commands
+	root.AddCommand(reconcileCmd())
+	root.AddCommand(identityCmd())
+	root.AddCommand(trackCmd())
+	root.AddCommand(untrackCmd())
 
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }
@@ -775,12 +788,29 @@ func installTimerCmd() *cobra.Command {
 }
 
 func startCmd() *cobra.Command {
-	return &cobra.Command{
+	var debug bool
+
+	cmd := &cobra.Command{
 		Use:   "start",
-		Short: "Start embedded Syncthing (foreground, for systemd)",
+		Short: "Start embedded Syncthing + reconcile daemon (foreground, for systemd)",
+		Long: "Starts the embedded Syncthing engine, the conflict watcher, and the\n" +
+			"reconcile daemon. The reconciler runs on a periodic timer and reacts to\n" +
+			"filesystem changes in scan roots, state.toml, and machine.toml.\n\n" +
+			"Use --debug to raise the log level to DEBUG.",
 		Run: func(cmd *cobra.Command, args []string) {
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-			defer cancel()
+			// SIGINT/SIGTERM is wired into the root context in main(), so
+			// cmd.Context() already cancels on signal. No need to redo it.
+			ctx := cmd.Context()
+
+			// Configure slog handler.
+			logLevel := slog.LevelInfo
+			if debug {
+				logLevel = slog.LevelDebug
+			}
+			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+				Level: logLevel,
+			}))
+			slog.SetDefault(logger)
 
 			// Spin up the conflict watcher alongside Syncthing so we
 			// log sync-conflict files as soon as they appear. This is a
@@ -789,6 +819,9 @@ func startCmd() *cobra.Command {
 			stopWatcher := startConflictWatcher(ctx)
 			defer stopWatcher()
 
+			// Start the reconcile daemon alongside Syncthing.
+			startReconcileDaemon(ctx, logger)
+
 			eng := engine()
 			if err := eng.Start(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "[dotkeeper] ERROR: %v\n", err)
@@ -796,6 +829,8 @@ func startCmd() *cobra.Command {
 			}
 		},
 	}
+	cmd.Flags().BoolVar(&debug, "debug", false, "enable debug-level logging")
+	return cmd
 }
 
 // startConflictWatcher starts a conflict.Watcher over every managed
@@ -1351,9 +1386,10 @@ func runAcceptAll(ctx context.Context, cfg *config.SharedConfig) int {
 
 // doctorCmd wires `dotkeeper doctor` to the internal/doctor orchestrator.
 // Supports --json for machine-readable output. Exit codes:
-//   0 — no failures (warnings don't count)
-//   1 — at least one failed check
-//   2 — catastrophic (can't construct the check set at all)
+//
+//	0 — no failures (warnings don't count)
+//	1 — at least one failed check
+//	2 — catastrophic (can't construct the check set at all)
 func doctorCmd() *cobra.Command {
 	var asJSON bool
 	cmd := &cobra.Command{
