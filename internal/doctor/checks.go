@@ -74,65 +74,90 @@ func (c VersionCheck) Run(_ context.Context) Result {
 
 // --- 2. config --------------------------------------------------------
 
-// ConfigCheck loads machine.toml and config.toml. Fails if either is
-// missing or unparseable (dotkeeper can't function without them). Warns
-// when machine.toml's name is not registered in the shared config's
-// machines table — usually a sign that `dotkeeper pair` hasn't run yet
-// or the config sync hasn't caught up.
+// ConfigCheck validates the v0.5 configuration:
+//   - machine.toml (v2) exists and parses cleanly
+//   - state.toml exists and parses cleanly
+//   - Syncthing device ID is present in state.toml
+//   - at least one scan root is configured (advisory warning only)
+//
+// The injectable loaders allow unit tests to supply fake configs.
 type ConfigCheck struct {
-	// Loader overrides let tests inject fake configs; when nil, the
-	// real on-disk loaders are used.
-	LoadMachine func() (*config.MachineConfig, error)
-	LoadShared  func() (*config.SharedConfig, error)
+	// Loader overrides; when nil, the real on-disk loaders are used.
+	LoadMachineV2 func() (*config.MachineConfigV2, error)
+	LoadStateV2   func() (*config.StateV2, error)
 }
 
 func (ConfigCheck) Name() string { return "config" }
 func (c ConfigCheck) Run(_ context.Context) Result {
-	loadM := c.LoadMachine
+	loadM := c.LoadMachineV2
 	if loadM == nil {
-		loadM = config.LoadMachineConfig
+		loadM = config.LoadMachineConfigV2
 	}
-	loadS := c.LoadShared
+	loadS := c.LoadStateV2
 	if loadS == nil {
-		loadS = config.LoadSharedConfig
+		loadS = config.LoadStateV2
 	}
 
 	m, err := loadM()
 	if err != nil {
-		return Result{Name: "config", Outcome: Fail, Detail: "machine.toml: " + err.Error(), Hint: "check file contents at " + config.MachineConfigPath()}
-	}
-	if m == nil {
-		return Result{Name: "config", Outcome: Fail, Detail: "machine.toml missing", Hint: "run 'dotkeeper init'"}
-	}
-
-	cfg, err := loadS()
-	if err != nil {
-		return Result{Name: "config", Outcome: Fail, Detail: "config.toml: " + err.Error(), Hint: "check file contents at " + config.SharedConfigPath()}
-	}
-	if cfg == nil {
-		return Result{Name: "config", Outcome: Fail, Detail: "config.toml missing", Hint: "run 'dotkeeper init' or join an existing setup"}
-	}
-
-	// Warn-path: machine identity not in shared config yet.
-	found := false
-	for _, entry := range cfg.Machines {
-		if entry.Hostname == m.Name {
-			found = true
-			break
+		return Result{
+			Name:    "config",
+			Outcome: Fail,
+			Detail:  "machine.toml: " + err.Error(),
+			Hint:    "check file contents at " + config.MachineConfigPath(),
 		}
 	}
-	if !found {
+	if m == nil {
+		return Result{
+			Name:    "config",
+			Outcome: Fail,
+			Detail:  "machine.toml missing",
+			Hint:    "run 'dotkeeper init'",
+		}
+	}
+
+	s, err := loadS()
+	if err != nil {
+		return Result{
+			Name:    "config",
+			Outcome: Fail,
+			Detail:  "state.toml: " + err.Error(),
+			Hint:    "check file contents at " + config.StateV2Path(),
+		}
+	}
+	if s == nil {
+		return Result{
+			Name:    "config",
+			Outcome: Fail,
+			Detail:  "state.toml missing",
+			Hint:    "run 'dotkeeper init' to generate Syncthing identity",
+		}
+	}
+
+	if s.SyncthingDeviceID == "" {
+		return Result{
+			Name:    "config",
+			Outcome: Fail,
+			Detail:  "state.toml present but Syncthing device ID is empty",
+			Hint:    "run 'dotkeeper init' to generate Syncthing identity",
+		}
+	}
+
+	// Advisory: at least one scan root helps discovery work.
+	if len(m.Discovery.ScanRoots) == 0 {
 		return Result{
 			Name:    "config",
 			Outcome: Warn,
-			Detail:  fmt.Sprintf("machine %q not in config registry (%d repos tracked)", m.Name, len(cfg.Repos)),
-			Hint:    "run 'dotkeeper pair' — shared config may not be synced yet",
+			Detail:  fmt.Sprintf("machine %q (slot %d) has no scan roots configured", m.Name, m.Slot),
+			Hint:    "add scan roots to machine.toml's [discovery] section, or use 'dotkeeper track <path>'",
 		}
 	}
+
 	return Result{
 		Name:    "config",
 		Outcome: OK,
-		Detail:  fmt.Sprintf("machine %q (slot %d), %d managed folders", m.Name, m.Slot, len(cfg.Repos)),
+		Detail: fmt.Sprintf("machine %q (slot %d), %d scan root(s), %d peer(s)",
+			m.Name, m.Slot, len(m.Discovery.ScanRoots), len(s.Peers)),
 	}
 }
 
@@ -252,14 +277,13 @@ func (c SyncthingAPICheck) Run(_ context.Context) Result {
 
 // --- 5. peers ---------------------------------------------------------
 
-// PeersCheck compares the peer list from the shared config against
-// the Syncthing /rest/system/connections payload. OK when every
-// configured peer (not counting this machine) is connected; Warn when
-// any are offline — peers can legitimately be offline; Fail only when
-// the API call itself fails.
+// PeersCheck compares the peer list from state.toml against the
+// Syncthing /rest/system/connections payload. OK when every
+// configured peer is connected; Warn when any are offline — peers
+// can legitimately be offline; Fail only when the API call itself fails.
 type PeersCheck struct {
-	Client     STClient
-	LoadShared func() (*config.SharedConfig, error)
+	Client    STClient
+	LoadState func() (*config.StateV2, error)
 }
 
 func (PeersCheck) Name() string { return "peers" }
@@ -267,13 +291,13 @@ func (c PeersCheck) Run(_ context.Context) Result {
 	if c.Client == nil {
 		return Result{Name: "peers", Outcome: Fail, Detail: "client not available"}
 	}
-	loadS := c.LoadShared
+	loadS := c.LoadState
 	if loadS == nil {
-		loadS = config.LoadSharedConfig
+		loadS = config.LoadStateV2
 	}
-	cfg, err := loadS()
-	if err != nil || cfg == nil {
-		return Result{Name: "peers", Outcome: Warn, Detail: "config unavailable; cannot list expected peers"}
+	state, err := loadS()
+	if err != nil || state == nil {
+		return Result{Name: "peers", Outcome: Warn, Detail: "state.toml unavailable; cannot list expected peers"}
 	}
 
 	status, err := c.Client.GetStatus()
@@ -287,16 +311,16 @@ func (c PeersCheck) Run(_ context.Context) Result {
 		return Result{Name: "peers", Outcome: Fail, Detail: "cannot read connections: " + err.Error()}
 	}
 
-	// Expected peers = every registered machine except this one.
+	// Expected peers = every registered peer except this machine.
 	type peer struct {
-		key, host, id string
+		name, id string
 	}
 	var expected []peer
-	for k, m := range cfg.Machines {
-		if m.SyncthingID == "" || m.SyncthingID == myID {
+	for _, p := range state.Peers {
+		if p.DeviceID == "" || p.DeviceID == myID {
 			continue
 		}
-		expected = append(expected, peer{key: k, host: m.Hostname, id: m.SyncthingID})
+		expected = append(expected, peer{name: p.Name, id: p.DeviceID})
 	}
 	if len(expected) == 0 {
 		return Result{Name: "peers", Outcome: OK, Detail: "no peers configured (single-machine setup)"}
@@ -307,9 +331,9 @@ func (c PeersCheck) Run(_ context.Context) Result {
 	for _, p := range expected {
 		conn, ok := conns.Connections[p.id]
 		if ok && conn.Connected {
-			connectedNames = append(connectedNames, p.host)
+			connectedNames = append(connectedNames, p.name)
 		} else {
-			offlineNames = append(offlineNames, p.host)
+			offlineNames = append(offlineNames, p.name)
 		}
 	}
 
@@ -402,23 +426,23 @@ func (c FoldersCheck) Run(_ context.Context) Result {
 // --- 7. git remotes ---------------------------------------------------
 
 // GitRemotesCheck runs `git ls-remote --heads origin HEAD` on every
-// configured repo with git=true. OK when all reachable, Warn on
-// timeouts (network flake isn't dotkeeper's fault), Fail on auth or
-// unknown-host errors.
+// observed repo path recorded in state.toml. OK when all reachable,
+// Warn on timeouts (network flake isn't dotkeeper's fault), Fail on
+// auth or unknown-host errors.
 //
 // Remotes are checked in parallel with a shared short deadline so the
 // whole check is bounded even if every repo goes unreachable.
 type GitRemotesCheck struct {
-	Runner     GitRunner
-	LoadShared func() (*config.SharedConfig, error)
-	Timeout    time.Duration
+	Runner    GitRunner
+	LoadState func() (*config.StateV2, error)
+	Timeout   time.Duration
 }
 
 func (GitRemotesCheck) Name() string { return "git remotes" }
 func (c GitRemotesCheck) Run(ctx context.Context) Result {
-	loadS := c.LoadShared
+	loadS := c.LoadState
 	if loadS == nil {
-		loadS = config.LoadSharedConfig
+		loadS = config.LoadStateV2
 	}
 	runner := c.Runner
 	if runner == nil {
@@ -429,19 +453,25 @@ func (c GitRemotesCheck) Run(ctx context.Context) Result {
 		timeout = 5 * time.Second
 	}
 
-	cfg, err := loadS()
-	if err != nil || cfg == nil {
-		return Result{Name: "git remotes", Outcome: Warn, Detail: "config unavailable"}
+	state, err := loadS()
+	if err != nil || state == nil {
+		return Result{Name: "git remotes", Outcome: Warn, Detail: "state.toml unavailable"}
 	}
 
-	var gitRepos []config.RepoEntry
-	for _, r := range cfg.Repos {
-		if r.Git {
-			gitRepos = append(gitRepos, r)
+	// Collect observed repo paths.
+	var repoPaths []string
+	for p := range state.ObservedRepos {
+		repoPaths = append(repoPaths, p)
+	}
+	// Also include tracked overrides.
+	for _, p := range state.TrackedOverrides {
+		if _, exists := state.ObservedRepos[p]; !exists {
+			repoPaths = append(repoPaths, p)
 		}
 	}
-	if len(gitRepos) == 0 {
-		return Result{Name: "git remotes", Outcome: OK, Detail: "no git-tracked repos"}
+
+	if len(repoPaths) == 0 {
+		return Result{Name: "git remotes", Outcome: OK, Detail: "no observed repos"}
 	}
 
 	var reachable, timeouts, failed int
@@ -453,48 +483,44 @@ func (c GitRemotesCheck) Run(ctx context.Context) Result {
 		err       error
 		timedOut  bool
 	}
-	results := make(chan result, len(gitRepos))
-	for _, repo := range gitRepos {
-		go func(repo config.RepoEntry) {
-			path := config.ExpandPath(repo.Path)
-			if _, err := os.Stat(path); err != nil {
-				results <- result{name: repo.Name, err: fmt.Errorf("path missing: %s", path)}
+	results := make(chan result, len(repoPaths))
+	for _, path := range repoPaths {
+		go func(p string) {
+			if _, err := os.Stat(p); err != nil {
+				results <- result{name: p, err: fmt.Errorf("path missing: %s", p)}
 				return
 			}
 			cctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
-			out, err := runner.LsRemote(cctx, path)
+			out, err := runner.LsRemote(cctx, p)
 			timedOut := cctx.Err() == context.DeadlineExceeded
-			results <- result{name: repo.Name, out: out, err: err, timedOut: timedOut}
-		}(repo)
+			results <- result{name: p, out: out, err: err, timedOut: timedOut}
+		}(path)
 	}
 
-	for i := 0; i < len(gitRepos); i++ {
+	for i := 0; i < len(repoPaths); i++ {
 		r := <-results
 		switch {
 		case r.err == nil:
 			reachable++
 		case r.timedOut:
 			timeouts++
-			failedDetails = append(failedDetails, r.name+" (timeout)")
+			failedDetails = append(failedDetails, filepath.Base(r.name)+" (timeout)")
 		default:
-			// Heuristically identify auth / unknown-host cases so the
-			// hint is targeted. The output of git is stable enough for
-			// this to be robust in practice.
 			lc := strings.ToLower(r.out + " " + r.err.Error())
 			switch {
 			case strings.Contains(lc, "permission denied"),
 				strings.Contains(lc, "authentication failed"),
 				strings.Contains(lc, "could not read username"):
 				failed++
-				failedDetails = append(failedDetails, r.name+" (auth)")
+				failedDetails = append(failedDetails, filepath.Base(r.name)+" (auth)")
 			case strings.Contains(lc, "could not resolve host"),
 				strings.Contains(lc, "name or service not known"):
 				failed++
-				failedDetails = append(failedDetails, r.name+" (dns)")
+				failedDetails = append(failedDetails, filepath.Base(r.name)+" (dns)")
 			default:
 				failed++
-				failedDetails = append(failedDetails, r.name)
+				failedDetails = append(failedDetails, filepath.Base(r.name))
 			}
 		}
 	}
@@ -530,6 +556,11 @@ func (c GitRemotesCheck) Run(ctx context.Context) Result {
 // BackupTimerCheck queries the platform service manager for the git
 // backup timer. OK when active (with next-run time when available),
 // Warn when inactive.
+//
+// In v0.5, git backup is driven by the reconcile daemon's timer rather
+// than a separate systemd timer. This check now reports whether the
+// dotkeeper-syncthing service is running (which implies the daemon is
+// active). The hint points users to the service unit, not install-timer.
 type BackupTimerCheck struct {
 	Manager service.Manager
 }
@@ -544,7 +575,7 @@ func (c BackupTimerCheck) Run(_ context.Context) Result {
 			Name:    "backup timer",
 			Outcome: Warn,
 			Detail:  "inactive",
-			Hint:    "run 'dotkeeper install-timer'",
+			Hint:    "enable the dotkeeper-syncthing service: systemctl --user enable --now dotkeeper-syncthing.service",
 		}
 	}
 	// Rich next-run info when the backend provides it (systemd today).
@@ -564,28 +595,25 @@ func (c BackupTimerCheck) Run(_ context.Context) Result {
 //
 // The check takes the Scanner as an injectable function so tests can
 // exercise it without preparing a real folder tree on disk.
+// FolderProvider returns the list of folders to scan; when nil,
+// managedFolderPaths is used.
 type ConflictsCheck struct {
-	LoadShared func() (*config.SharedConfig, error)
-	Scanner    func(root string) ([]conflict.Conflict, error)
+	FolderProvider func() []string
+	Scanner        func(root string) ([]conflict.Conflict, error)
 }
 
 func (ConflictsCheck) Name() string { return "conflicts" }
 func (c ConflictsCheck) Run(_ context.Context) Result {
-	loadS := c.LoadShared
-	if loadS == nil {
-		loadS = config.LoadSharedConfig
+	folders := c.FolderProvider
+	if folders == nil {
+		folders = managedFolderPaths
 	}
 	scan := c.Scanner
 	if scan == nil {
 		scan = conflict.Scan
 	}
 
-	cfg, err := loadS()
-	if err != nil || cfg == nil {
-		return Result{Name: "conflicts", Outcome: Warn, Detail: "config unavailable"}
-	}
-
-	roots := managedFolderPaths(cfg)
+	roots := folders()
 	var total int
 	for _, root := range roots {
 		found, err := scan(root)
@@ -609,11 +637,11 @@ func (c ConflictsCheck) Run(_ context.Context) Result {
 	}
 }
 
-// managedFolderPaths mirrors the helper in cmd/dotkeeper/main.go — it
-// returns every managed folder root (the config dir + every repo path)
-// for scanning purposes. Duplicating it here keeps the doctor package
-// free of dependencies on the CLI's internals.
-func managedFolderPaths(cfg *config.SharedConfig) []string {
+// managedFolderPaths returns absolute, existing paths for every managed
+// folder discovered from v0.5 state: TrackedOverrides + repos found by
+// walking scan roots for dotkeeper.toml files. The config directory
+// itself is always included.
+func managedFolderPaths() []string {
 	var out []string
 	seen := map[string]struct{}{}
 	add := func(p string) {
@@ -633,9 +661,54 @@ func managedFolderPaths(cfg *config.SharedConfig) []string {
 		seen[abs] = struct{}{}
 		out = append(out, abs)
 	}
+
 	add(config.ConfigDir())
-	for _, r := range cfg.Repos {
-		add(r.Path)
+
+	if state, err := config.LoadStateV2(); err == nil && state != nil {
+		for _, p := range state.TrackedOverrides {
+			add(p)
+		}
 	}
+
+	if machine, err := config.LoadMachineConfigV2(); err == nil && machine != nil {
+		for _, root := range machine.Discovery.ScanRoots {
+			expanded := config.ExpandPath(root)
+			if info, err := os.Stat(expanded); err != nil || !info.IsDir() {
+				continue
+			}
+			depth := machine.Discovery.ScanDepth
+			if depth <= 0 {
+				depth = 3
+			}
+			_ = walkScanRoot(expanded, 0, depth, func(p string) { add(p) })
+		}
+	}
+
 	return out
+}
+
+// walkScanRoot recursively walks root up to maxDepth looking for directories
+// containing dotkeeper.toml. When found, fn is called with the directory.
+// Does not descend into repos that already have a dotkeeper.toml.
+func walkScanRoot(root string, depth, maxDepth int, fn func(string)) error {
+	if depth > maxDepth {
+		return nil
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	for _, e := range entries {
+		if !e.IsDir() && e.Name() == "dotkeeper.toml" {
+			fn(root)
+			return nil
+		}
+	}
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		_ = walkScanRoot(filepath.Join(root, e.Name()), depth+1, maxDepth, fn)
+	}
+	return nil
 }

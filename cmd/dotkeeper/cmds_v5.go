@@ -218,15 +218,10 @@ func buildObservedProvider(statePath string) reconcile.ObservedProvider {
 	return reconcile.NewObservedProvider(nil, statePath)
 }
 
-// loadMachineName returns the machine name from machine.toml (v2 schema) or
-// the legacy v1 machine.toml. Returns an error if neither is initialised.
+// loadMachineName returns the machine name from machine.toml (v2 schema).
+// Returns an error if not initialised.
 func loadMachineName() (string, error) {
-	// Try v2 schema first.
 	if m, err := config.LoadMachineConfigV2(); err == nil && m != nil {
-		return m.Name, nil
-	}
-	// Fall back to v1.
-	if m, err := config.LoadMachineConfig(); err == nil && m != nil {
 		return m.Name, nil
 	}
 	return "", fmt.Errorf("not initialized — run 'dotkeeper init' first")

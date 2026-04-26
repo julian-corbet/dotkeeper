@@ -60,7 +60,7 @@ func TestCLIVersion(t *testing.T) {
 	}
 }
 
-// TestCLIHelp verifies 'dotkeeper --help' exits 0 and lists commands.
+// TestCLIHelp verifies 'dotkeeper --help' exits 0 and lists the kept commands.
 func TestCLIHelp(t *testing.T) {
 	binary := buildTestBinary(t)
 	tmp := t.TempDir()
@@ -70,8 +70,8 @@ func TestCLIHelp(t *testing.T) {
 		t.Errorf("--help exit code = %d, want 0", code)
 	}
 
-	// All subcommands should appear in help
-	for _, cmd := range []string{"init", "join", "add", "remove", "pair", "sync", "status", "install-timer", "start", "stop", "version"} {
+	// Kept v0.5 subcommands should appear in help.
+	for _, cmd := range []string{"init", "status", "start", "version", "reconcile", "identity", "track", "untrack", "conflict", "doctor"} {
 		if !strings.Contains(output, cmd) {
 			t.Errorf("help output missing command %q", cmd)
 		}
@@ -92,69 +92,21 @@ func TestCLIStatusUninitialized(t *testing.T) {
 	}
 }
 
-// TestCLIAddNoArgs verifies 'dotkeeper add' with no args fails with usage hint.
-func TestCLIAddNoArgs(t *testing.T) {
+// TestCLIRemovedCommandsReturnUnknown asserts that each v0.4 imperative
+// command that was deleted now returns "unknown command" from cobra.
+func TestCLIRemovedCommandsReturnUnknown(t *testing.T) {
 	binary := buildTestBinary(t)
 	tmp := t.TempDir()
 
-	_, code := runDotkeeper(t, binary, tmp, "add")
-	if code == 0 {
-		t.Error("'add' with no args should fail")
-	}
-}
-
-// TestCLIJoinNoArgs verifies 'dotkeeper join' with no args fails.
-func TestCLIJoinNoArgs(t *testing.T) {
-	binary := buildTestBinary(t)
-	tmp := t.TempDir()
-
-	_, code := runDotkeeper(t, binary, tmp, "join")
-	if code == 0 {
-		t.Error("'join' with no args should fail")
-	}
-}
-
-// TestCLIJoinInvalidDeviceID verifies 'dotkeeper join' rejects short device IDs.
-func TestCLIJoinInvalidDeviceID(t *testing.T) {
-	binary := buildTestBinary(t)
-	tmp := t.TempDir()
-
-	output, code := runDotkeeper(t, binary, tmp, "join", "too-short")
-	if code == 0 {
-		t.Error("'join' with invalid device ID should fail")
-	}
-	if !strings.Contains(output, "invalid device ID") {
-		t.Errorf("expected 'invalid device ID' error, got: %q", output)
-	}
-}
-
-// TestCLIRemoveNotInitialized verifies 'dotkeeper remove' before init
-// produces a useful error.
-func TestCLIRemoveNotInitialized(t *testing.T) {
-	binary := buildTestBinary(t)
-	tmp := t.TempDir()
-
-	output, code := runDotkeeper(t, binary, tmp, "remove", "nonexistent")
-	if code == 0 {
-		t.Error("'remove' before init should fail")
-	}
-	if !strings.Contains(output, "not found") && !strings.Contains(output, "init") {
-		t.Errorf("unhelpful error message: %q", output)
-	}
-}
-
-// TestCLISyncNotInitialized verifies 'dotkeeper sync' before init
-// produces a useful error.
-func TestCLISyncNotInitialized(t *testing.T) {
-	binary := buildTestBinary(t)
-	tmp := t.TempDir()
-
-	output, code := runDotkeeper(t, binary, tmp, "sync")
-	if code == 0 {
-		t.Error("'sync' before init should fail")
-	}
-	if !strings.Contains(output, "init") {
-		t.Errorf("error should mention 'init': %q", output)
+	removed := []string{"join", "add", "remove", "pair", "sync", "install-timer", "stop"}
+	for _, name := range removed {
+		output, code := runDotkeeper(t, binary, tmp, name)
+		if code == 0 {
+			t.Errorf("removed command %q should exit non-zero, got 0", name)
+		}
+		if !strings.Contains(strings.ToLower(output), "unknown") && !strings.Contains(strings.ToLower(output), "unrecognized") {
+			t.Errorf("removed command %q output should mention 'unknown command'; got: %q", name, output)
+		}
 	}
 }
 
@@ -251,5 +203,24 @@ func TestCLIDoctorJSON(t *testing.T) {
 		if !strings.Contains(output, want) {
 			t.Errorf("doctor --json missing key %q; got:\n%s", want, output)
 		}
+	}
+}
+
+// TestStatusCmdShowsV5State initializes a v0.5 setup and verifies that
+// 'dotkeeper status' shows the machine name and scan roots from machine.toml.
+func TestStatusCmdShowsV5State(t *testing.T) {
+	binary := buildTestBinary(t)
+	tmp := t.TempDir()
+
+	// Write a v2 machine.toml with custom scan roots.
+	writeMinimalMachineV2(t, tmp, "my-test-machine")
+
+	output, _ := runDotkeeper(t, binary, tmp, "status")
+
+	if !strings.Contains(output, "my-test-machine") {
+		t.Errorf("status output missing machine name 'my-test-machine': %q", output)
+	}
+	if !strings.Contains(output, "Scan roots") {
+		t.Errorf("status output missing 'Scan roots' section: %q", output)
 	}
 }

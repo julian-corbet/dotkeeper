@@ -54,9 +54,9 @@ func setupConflictHarness(t *testing.T) (binary, tmp, repo string) {
 	runGit("config", "commit.gpgsign", "false")
 
 	// Register it with dotkeeper so it's a "managed folder".
-	addCmd := exec.Command(binary, "add", repo)
-	addCmd.Env = envWith(tmp)
-	_, _ = addCmd.CombinedOutput()
+	trackCmd := exec.Command(binary, "track", repo)
+	trackCmd.Env = envWith(tmp)
+	_, _ = trackCmd.CombinedOutput()
 
 	return binary, tmp, repo
 }
