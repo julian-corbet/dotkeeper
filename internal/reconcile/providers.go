@@ -27,11 +27,14 @@ import (
 
 // NewDesiredProvider returns a DesiredProvider that reads machine.toml from
 // machineConfigPath, walks each declared scan root for dotkeeper.toml files,
-// and assembles a Desired via BuildDesired.
+// loads state.toml from stateConfigPath for the peer roster, and assembles a
+// Desired via BuildDesired.
 //
 // If machineConfigPath does not exist the returned provider yields an error
-// that points the user at "dotkeeper init".
-func NewDesiredProvider(machineConfigPath string) DesiredProvider {
+// that points the user at "dotkeeper init". A missing state file is not an
+// error — peers will simply be empty until the user pairs with a peer
+// (correct first-run behaviour).
+func NewDesiredProvider(machineConfigPath, stateConfigPath string) DesiredProvider {
 	return func(_ context.Context) (Desired, error) {
 		machine, err := loadMachineConfigFromPath(machineConfigPath)
 		if err != nil {
@@ -43,7 +46,11 @@ func NewDesiredProvider(machineConfigPath string) DesiredProvider {
 			return Desired{}, fmt.Errorf("repo discovery failed: %w", err)
 		}
 
-		return BuildDesired(machine, repos), nil
+		// State is optional: a missing or unreadable state file means we have
+		// not paired with any peers yet. That is the correct first-run state.
+		state, _, _ := loadStateFromPath(stateConfigPath)
+
+		return BuildDesired(machine, repos, state), nil
 	}
 }
 
