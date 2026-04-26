@@ -75,6 +75,9 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 // Uses AddOrUpdateFolder which is idempotent — safe to call when the folder
 // already exists with the same settings.
 func (a *RealApplier) applyAddSyncthingFolder(act AddSyncthingFolder) error {
+	if a.ST == nil {
+		return fmt.Errorf("AddSyncthingFolder %q: Syncthing client not available (is Syncthing running?)", act.FolderID)
+	}
 	// Use folder ID as label so the Syncthing UI shows something meaningful.
 	if err := a.ST.AddOrUpdateFolder(act.FolderID, act.FolderID, act.Path, act.Devices); err != nil {
 		return fmt.Errorf("AddSyncthingFolder %q: %w", act.FolderID, err)
@@ -85,6 +88,9 @@ func (a *RealApplier) applyAddSyncthingFolder(act AddSyncthingFolder) error {
 // applyRemoveSyncthingFolder removes a folder from the Syncthing configuration.
 // If the folder is not present the function is a no-op (idempotent).
 func (a *RealApplier) applyRemoveSyncthingFolder(act RemoveSyncthingFolder) error {
+	if a.ST == nil {
+		return fmt.Errorf("RemoveSyncthingFolder %q: Syncthing client not available (is Syncthing running?)", act.FolderID)
+	}
 	cfg, err := a.ST.GetConfig()
 	if err != nil {
 		return fmt.Errorf("RemoveSyncthingFolder %q: get config: %w", act.FolderID, err)
@@ -113,6 +119,9 @@ func (a *RealApplier) applyRemoveSyncthingFolder(act RemoveSyncthingFolder) erro
 // Syncthing folder. If the folder is not found the error is surfaced so the
 // caller can decide how to handle the inconsistency.
 func (a *RealApplier) applyUpdateSyncthingFolderDevices(act UpdateSyncthingFolderDevices) error {
+	if a.ST == nil {
+		return fmt.Errorf("UpdateSyncthingFolderDevices %q: Syncthing client not available (is Syncthing running?)", act.FolderID)
+	}
 	cfg, err := a.ST.GetConfig()
 	if err != nil {
 		return fmt.Errorf("UpdateSyncthingFolderDevices %q: get config: %w", act.FolderID, err)
