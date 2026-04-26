@@ -988,12 +988,5 @@ func buildDoctorChecks() []doctor.Check {
 	}
 }
 
-// managedFolderPaths is kept as a package-level alias for the doctor
-// package's ConflictsCheck and any other caller that hasn't migrated yet.
-// It mirrors managedFolderPathsV5.
-func managedFolderPaths() []string {
-	return managedFolderPathsV5()
-}
-
 // unused keeps the time import live for the statusCmd's time.Time formatting.
 var _ = time.Time{}
