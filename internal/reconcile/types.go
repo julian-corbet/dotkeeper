@@ -71,33 +71,44 @@ type Observed struct {
 	CachedState *config.StateV2
 }
 
-// BuildDesired constructs a Desired from a parsed MachineConfigV2 and the
-// per-repo configs keyed by absolute repo path. It is the canonical way to
-// translate the on-disk configuration into the form expected by Diff.
+// BuildDesired constructs a Desired from a parsed MachineConfigV2, the
+// per-repo configs keyed by absolute repo path, and the current StateV2.
+// It is the canonical way to translate the on-disk configuration into the
+// form expected by Diff.
 //
 // repos may be nil or empty (e.g. on first run before discovery has run).
-func BuildDesired(machine *config.MachineConfigV2, repos map[string]*config.RepoConfigV2) Desired {
+// state may be nil; when nil, no peers are populated.
+func BuildDesired(machine *config.MachineConfigV2, repos map[string]*config.RepoConfigV2, state *config.StateV2) Desired {
 	d := Desired{
 		Repos: make(map[string]RepoDesired, len(repos)),
 	}
 	if machine != nil {
 		d.MachineName = machine.Name
-		for _, p := range machine.DefaultShareWith {
-			d.Peers = append(d.Peers, PeerDesired{Name: p})
+	}
+	// Peers are sourced exclusively from state.Peers (which carries DeviceIDs
+	// learned during pairing). DefaultShareWith is a per-repo fallback share
+	// list only — it must not inflate the peer roster.
+	if state != nil {
+		for _, p := range state.Peers {
+			d.Peers = append(d.Peers, PeerDesired{Name: p.Name, DeviceID: p.DeviceID})
 		}
 	}
 	for path, r := range repos {
 		if r == nil {
 			continue
 		}
-		shareWith := r.Sync.ShareWith
+		// Defensive copy: avoid slice aliasing with the source config. Sort or
+		// append on a RepoDesired must never mutate another RepoDesired or the
+		// original MachineConfigV2 / RepoConfigV2.
+		shareWith := append([]string(nil), r.Sync.ShareWith...)
 		if len(shareWith) == 0 && machine != nil {
-			shareWith = machine.DefaultShareWith
+			shareWith = append([]string(nil), machine.DefaultShareWith...)
 		}
+		ignore := append([]string(nil), r.Sync.Ignore...)
 		d.Repos[path] = RepoDesired{
 			Path:              path,
 			SyncthingFolderID: r.Sync.SyncthingFolderID,
-			Ignore:            r.Sync.Ignore,
+			Ignore:            ignore,
 			ShareWith:         shareWith,
 		}
 	}
