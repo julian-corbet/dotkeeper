@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-// TestE2EInitStatus tests that init creates config and status reads it.
+// TestE2EInitStatus tests that init creates machine.toml and status reads it.
 func TestE2EInitStatus(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
@@ -47,12 +47,6 @@ func TestE2EInitStatus(t *testing.T) {
 		t.Error("machine.toml not created")
 	}
 
-	// Verify config.toml was created
-	configToml := filepath.Join(tmp, "config", "dotkeeper", "config.toml")
-	if _, err := os.Stat(configToml); os.IsNotExist(err) {
-		t.Error("config.toml not created")
-	}
-
 	// Status (without Syncthing running — should still show machine info)
 	cmd = exec.Command(binary, "status")
 	cmd.Env = envWith(tmp)
@@ -67,11 +61,10 @@ func TestE2EInitStatus(t *testing.T) {
 	}
 }
 
-// TestE2EAddRepo tests that add creates the per-repo dotkeeper.toml and updates config.
-func TestE2EAddRepo(t *testing.T) {
+// TestE2EReconcileWithTrackedRepo tests that 'dotkeeper reconcile' succeeds
+// on a machine initialized with a tracked repo override in state.toml.
+func TestE2EReconcileWithTrackedRepo(t *testing.T) {
 	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
-	t.Setenv("XDG_DATA_HOME", filepath.Join(tmp, "data"))
 
 	binary := filepath.Join(tmp, "dotkeeper")
 	build := exec.Command("go", "build", "-tags", "noassets", "-o", binary, "./cmd/dotkeeper")
@@ -80,124 +73,27 @@ func TestE2EAddRepo(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, out)
 	}
 
-	// Init first
-	cmd := exec.Command(binary, "init", "--name", "test-machine", "--slot", "0")
+	// Write a v2 machine.toml with empty scan roots.
+	writeMinimalMachineV2(t, tmp, "test-machine")
+
+	// Create a git repo to track.
+	repoDir := filepath.Join(tmp, "my-repo")
+	mustMkdir(t, repoDir)
+	mustGitInit(t, repoDir)
+
+	// Track it via dotkeeper track.
+	cmd := exec.Command(binary, "track", repoDir)
 	cmd.Env = envWith(tmp)
-	_, _ = cmd.CombinedOutput()
-
-	// Create a fake repo to add
-	repoDir := filepath.Join(tmp, "my-project")
-	_ = os.MkdirAll(repoDir, 0o755)
-
-	// Init it as a git repo
-	gitInit := exec.Command("git", "init", repoDir)
-	gitInit.Env = gitEnv()
-	_, _ = gitInit.CombinedOutput()
-
-	// Add it — may fail due to Syncthing not running for folder config; that's OK.
-	// The config update and repo log should still happen.
-	cmd = exec.Command(binary, "add", repoDir)
-	cmd.Env = envWith(tmp)
-	out, _ := cmd.CombinedOutput()
-	output := string(out)
-
-	if !strings.Contains(output, "added: my-project") {
-		t.Errorf("add output unexpected:\n%s", output)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("track failed: %v\n%s", err, out)
 	}
 
-	// Verify dotkeeper.toml was created in the repo
-	repoLog := filepath.Join(repoDir, "dotkeeper.toml")
-	if _, err := os.Stat(repoLog); os.IsNotExist(err) {
-		t.Error("dotkeeper.toml not created in repo")
-	}
-
-	// Verify .stignore was created
-	stignore := filepath.Join(repoDir, ".stignore")
-	if _, err := os.Stat(stignore); os.IsNotExist(err) {
-		t.Error(".stignore not created in repo")
-	}
-
-	// Verify config.toml was updated
-	configData, _ := os.ReadFile(filepath.Join(tmp, "config", "dotkeeper", "config.toml"))
-	if !strings.Contains(string(configData), "my-project") {
-		t.Error("config.toml not updated with new repo")
-	}
-}
-
-// TestE2ESyncGitRepo tests the full git sync cycle.
-func TestE2ESyncGitRepo(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", filepath.Join(tmp, "config"))
-	t.Setenv("XDG_DATA_HOME", filepath.Join(tmp, "data"))
-
-	binary := filepath.Join(tmp, "dotkeeper")
-	build := exec.Command("go", "build", "-tags", "noassets", "-o", binary, "./cmd/dotkeeper")
-	build.Dir = findRepoRoot(t)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build failed: %v\n%s", err, out)
-	}
-
-	// Create a git repo with remote
-	bare := filepath.Join(tmp, "remote.git")
-	work := filepath.Join(tmp, "work")
-
-	runGit := func(dir string, args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = dir
-		cmd.Env = gitEnv()
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	runGit(tmp, "init", "--bare", bare)
-	runGit(tmp, "clone", bare, work)
-	runGit(work, "checkout", "-b", "main")
-	_ = os.WriteFile(filepath.Join(work, "README.md"), []byte("# test\n"), 0o644)
-	runGit(work, "add", ".")
-	runGit(work, "commit", "-m", "initial")
-	runGit(work, "push", "-u", "origin", "main")
-
-	// Init dotkeeper
-	cmd := exec.Command(binary, "init", "--name", "test-machine", "--slot", "0")
-	cmd.Env = envWith(tmp)
-	_, _ = cmd.CombinedOutput()
-
-	// Add the repo
-	cmd = exec.Command(binary, "add", work)
-	cmd.Env = envWith(tmp)
-	_, _ = cmd.CombinedOutput()
-
-	// Create a change
-	_ = os.WriteFile(filepath.Join(work, "new-file.txt"), []byte("synced\n"), 0o644)
-
-	// Run sync
-	cmd = exec.Command(binary, "sync")
+	// Reconcile should succeed (empty plan since no dotkeeper.toml in repo yet).
+	cmd = exec.Command(binary, "reconcile")
 	cmd.Env = envWith(tmp)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("sync failed: %v\n%s", err, out)
-	}
-	output := string(out)
-
-	if !strings.Contains(output, "committed changes") {
-		t.Errorf("sync didn't commit:\n%s", output)
-	}
-	if !strings.Contains(output, "pushed") {
-		t.Errorf("sync didn't push:\n%s", output)
-	}
-
-	// Verify the file was pushed to remote
-	clone2 := filepath.Join(tmp, "clone2")
-	runGit(tmp, "clone", "-b", "main", bare, clone2)
-	if _, err := os.Stat(filepath.Join(clone2, "new-file.txt")); os.IsNotExist(err) {
-		// Check what's in the clone
-		ls, _ := exec.Command("ls", "-la", clone2).Output()
-		gitLog := exec.Command("git", "log", "--oneline", "--all")
-		gitLog.Dir = clone2
-		logOut, _ := gitLog.Output()
-		t.Errorf("new-file.txt not found in fresh clone — push didn't work\nls: %s\ngit log: %s", ls, logOut)
+		t.Fatalf("reconcile failed: %v\n%s", err, out)
 	}
 }
 
