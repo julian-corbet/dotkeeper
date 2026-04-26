@@ -181,8 +181,6 @@ The new machine picks up all managed repos via Syncthing delivery and scan-root 
 
 The reconciler, config schema, and ADRs are done. `internal/reconcile/` has live `Diff()`, action types, and a `Reconciler` struct. What remains for the full v0.5 cut is wiring the reconciler into `cmd/dotkeeper/main.go` and refactoring `internal/gitsync/`, `internal/stengine/`, and `internal/service/` from v0.4's imperative model into apply primitives the reconciler calls. The Syncthing engine, conflict resolution, and git backup all work — the direction of control is changing, not the underlying primitives.
 
-Upgrading from v0.4? See [docs/migration-v0.4-to-v0.5.md](docs/migration-v0.4-to-v0.5.md).
-
 ## Port isolation
 
 dotkeeper runs its embedded Syncthing on separate ports so it does not conflict with a system-installed Syncthing instance.
