@@ -58,11 +58,6 @@ func (c *Cron) InstallSyncthing(binaryPath string) error {
 	return c.addCrontab(fmt.Sprintf("@reboot %s start", binaryPath))
 }
 
-func (c *Cron) InstallTimer(binaryPath, configPath, onCalendar string) error {
-	cronExpr := calendarToCron(onCalendar)
-	return c.addCrontab(fmt.Sprintf("%s %s sync", cronExpr, binaryPath))
-}
-
 func (c *Cron) StartSyncthing() error {
 	// Already handled by InstallSyncthing or cron @reboot
 	return nil
@@ -97,14 +92,6 @@ func (c *Cron) IsSyncthingRunning() bool {
 	return exec.Command("kill", "-0", pid).Run() == nil
 }
 
-func (c *Cron) IsTimerActive() bool {
-	out, _ := exec.Command("crontab", "-l").Output()
-	// Check for both v0.4 ("dotkeeper sync") and v0.5 ("dotkeeper reconcile")
-	// cron entries so detection works across the migration boundary.
-	s := string(out)
-	return containsStr(s, "dotkeeper sync") || containsStr(s, "dotkeeper reconcile")
-}
-
 func (c *Cron) DaemonReload() error {
 	return nil
 }
@@ -122,47 +109,4 @@ func (c *Cron) addCrontab(line string) error {
 	cmd := exec.Command("crontab", "-")
 	cmd.Stdin = strings.NewReader(newCrontab)
 	return cmd.Run()
-}
-
-func calendarToCron(onCalendar string) string {
-	// Extract hour and minute from systemd OnCalendar expressions.
-	// Patterns: "*:05", "*-*-* 02:05:00", "Mon 02:05:00", "0/6:05"
-	hour, minute := 2, 0
-	for i := 0; i < len(onCalendar)-1; i++ {
-		if onCalendar[i] == ':' && i > 0 {
-			// Parse failures leave the zero-valued default in place, which is fine.
-			_, _ = fmt.Sscanf(onCalendar[i+1:], "%d", &minute)
-			before := onCalendar[:i]
-			lastSpace := strings.LastIndex(before, " ")
-			hourStr := before
-			if lastSpace >= 0 {
-				hourStr = before[lastSpace+1:]
-			}
-			_, _ = fmt.Sscanf(hourStr, "%d", &hour)
-			break
-		}
-	}
-
-	switch {
-	case containsStr(onCalendar, "Mon"):
-		return fmt.Sprintf("%d %d * * 1", minute, hour) // weekly
-	case containsStr(onCalendar, "*-*-01"):
-		return fmt.Sprintf("%d %d 1 * *", minute, hour) // monthly
-	case containsStr(onCalendar, "0/2:"):
-		return fmt.Sprintf("%d */%d * * *", minute, 2) // every 2h
-	case containsStr(onCalendar, "0/3:"):
-		return fmt.Sprintf("%d */%d * * *", minute, 3)
-	case containsStr(onCalendar, "0/4:"):
-		return fmt.Sprintf("%d */%d * * *", minute, 4)
-	case containsStr(onCalendar, "0/6:"):
-		return fmt.Sprintf("%d */%d * * *", minute, 6)
-	case containsStr(onCalendar, "0/8:"):
-		return fmt.Sprintf("%d */%d * * *", minute, 8)
-	case containsStr(onCalendar, "0/12:"):
-		return fmt.Sprintf("%d */%d * * *", minute, 12)
-	case containsStr(onCalendar, "*-*-*"):
-		return fmt.Sprintf("%d %d * * *", minute, hour) // daily
-	default:
-		return fmt.Sprintf("%d * * * *", minute) // hourly
-	}
 }
