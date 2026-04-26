@@ -15,6 +15,7 @@ import (
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/conflict"
+	"github.com/julian-corbet/dotkeeper/internal/discovery"
 	"github.com/julian-corbet/dotkeeper/internal/service"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 )
@@ -601,77 +602,9 @@ func (c ConflictsCheck) Run(_ context.Context) Result {
 }
 
 // managedFolderPaths returns absolute, existing paths for every managed
-// folder discovered from v0.5 state: TrackedOverrides + repos found by
-// walking scan roots for dotkeeper.toml files. The config directory
-// itself is always included.
+// folder discoverable from v0.5 state. Delegates to the shared
+// discovery.ManagedFolderPaths helper so the logic is not duplicated
+// between the doctor package and cmd/dotkeeper.
 func managedFolderPaths() []string {
-	var out []string
-	seen := map[string]struct{}{}
-	add := func(p string) {
-		if p == "" {
-			return
-		}
-		abs, err := filepath.Abs(config.ExpandPath(p))
-		if err != nil {
-			return
-		}
-		if _, err := os.Stat(abs); err != nil {
-			return
-		}
-		if _, ok := seen[abs]; ok {
-			return
-		}
-		seen[abs] = struct{}{}
-		out = append(out, abs)
-	}
-
-	add(config.ConfigDir())
-
-	if state, err := config.LoadStateV2(); err == nil && state != nil {
-		for _, p := range state.TrackedOverrides {
-			add(p)
-		}
-	}
-
-	if machine, err := config.LoadMachineConfigV2(); err == nil && machine != nil {
-		for _, root := range machine.Discovery.ScanRoots {
-			expanded := config.ExpandPath(root)
-			if info, err := os.Stat(expanded); err != nil || !info.IsDir() {
-				continue
-			}
-			depth := machine.Discovery.ScanDepth
-			if depth <= 0 {
-				depth = 3
-			}
-			_ = walkScanRoot(expanded, 0, depth, func(p string) { add(p) })
-		}
-	}
-
-	return out
-}
-
-// walkScanRoot recursively walks root up to maxDepth looking for directories
-// containing dotkeeper.toml. When found, fn is called with the directory.
-// Does not descend into repos that already have a dotkeeper.toml.
-func walkScanRoot(root string, depth, maxDepth int, fn func(string)) error {
-	if depth > maxDepth {
-		return nil
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
-	for _, e := range entries {
-		if !e.IsDir() && e.Name() == "dotkeeper.toml" {
-			fn(root)
-			return nil
-		}
-	}
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		_ = walkScanRoot(filepath.Join(root, e.Name()), depth+1, maxDepth, fn)
-	}
-	return nil
+	return discovery.ManagedFolderPaths()
 }
