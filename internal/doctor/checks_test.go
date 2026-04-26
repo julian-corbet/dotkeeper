@@ -80,30 +80,25 @@ func (f *fakeGit) LsRemote(ctx context.Context, dir string) (string, error) {
 }
 
 // fakeManager implements the boolean service.Manager surface.
-// For the optional SyncthingStatus/TimerNext interfaces, see richManager.
+// For the optional SyncthingStatus interface, see richManager.
 type fakeManager struct {
-	name        string
-	running     bool
-	timerActive bool
+	name    string
+	running bool
 }
 
-func (f *fakeManager) Name() string                              { return f.name }
-func (f *fakeManager) InstallSyncthing(string) error             { return nil }
-func (f *fakeManager) InstallTimer(string, string, string) error { return nil }
-func (f *fakeManager) StartSyncthing() error                     { return nil }
-func (f *fakeManager) StopSyncthing() error                      { return nil }
-func (f *fakeManager) IsSyncthingRunning() bool                  { return f.running }
-func (f *fakeManager) IsTimerActive() bool                       { return f.timerActive }
-func (f *fakeManager) DaemonReload() error                       { return nil }
+func (f *fakeManager) Name() string                  { return f.name }
+func (f *fakeManager) InstallSyncthing(string) error { return nil }
+func (f *fakeManager) StartSyncthing() error         { return nil }
+func (f *fakeManager) StopSyncthing() error          { return nil }
+func (f *fakeManager) IsSyncthingRunning() bool      { return f.running }
+func (f *fakeManager) DaemonReload() error           { return nil }
 
 type richManager struct {
 	*fakeManager
-	st    service.SyncthingUnitStatus
-	timer service.TimerNextRun
+	st service.SyncthingUnitStatus
 }
 
 func (r *richManager) SyncthingStatus() service.SyncthingUnitStatus { return r.st }
-func (r *richManager) TimerNext() service.TimerNextRun              { return r.timer }
 
 // --- Version ----------------------------------------------------------
 
@@ -562,44 +557,6 @@ func TestGitRemotesCheckNoGitRepos(t *testing.T) {
 	}
 	if !strings.Contains(r.Detail, "no observed") {
 		t.Errorf("expected 'no observed' in detail: %q", r.Detail)
-	}
-}
-
-// --- Backup timer ------------------------------------------------------
-
-func TestBackupTimerCheckActiveBoolean(t *testing.T) {
-	r := BackupTimerCheck{Manager: &fakeManager{timerActive: true}}.Run(context.Background())
-	if r.Outcome != OK {
-		t.Errorf("Outcome = %v, want OK", r.Outcome)
-	}
-}
-
-func TestBackupTimerCheckActiveRich(t *testing.T) {
-	next := time.Date(2026, 4, 21, 2, 5, 0, 0, time.Local)
-	m := &richManager{
-		fakeManager: &fakeManager{timerActive: true},
-		timer:       service.TimerNextRun{Next: next, Raw: "Tue 2026-04-21 02:05 CEST"},
-	}
-	r := BackupTimerCheck{Manager: m}.Run(context.Background())
-	if r.Outcome != OK {
-		t.Errorf("Outcome = %v, want OK", r.Outcome)
-	}
-	if !strings.Contains(r.Detail, "Tue 2026-04-21") {
-		t.Errorf("expected raw timer in detail: %q", r.Detail)
-	}
-}
-
-func TestBackupTimerCheckInactive(t *testing.T) {
-	r := BackupTimerCheck{Manager: &fakeManager{timerActive: false}}.Run(context.Background())
-	if r.Outcome != Warn {
-		t.Errorf("Outcome = %v, want Warn", r.Outcome)
-	}
-}
-
-func TestBackupTimerCheckNilManager(t *testing.T) {
-	r := BackupTimerCheck{}.Run(context.Background())
-	if r.Outcome != Warn {
-		t.Errorf("Outcome = %v, want Warn", r.Outcome)
 	}
 }
 
