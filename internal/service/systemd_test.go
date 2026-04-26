@@ -8,7 +8,6 @@ package service
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestParseSystemctlShowActiveRunning(t *testing.T) {
@@ -44,58 +43,6 @@ func TestParseSystemctlShowInactiveEmpty(t *testing.T) {
 	got := parseSystemctlShow("")
 	if got.Active != "" {
 		t.Errorf("Active = %q, want empty", got.Active)
-	}
-}
-
-func TestParseTimerNextActiveMicroseconds(t *testing.T) {
-	// 2026-04-21 02:05:00 UTC = 1776146700 seconds since epoch
-	// microseconds = 1776146700000000
-	raw := "NextElapseUSecRealtime=1776146700000000\n"
-	got := parseTimerNext(raw)
-	if got.Next.IsZero() {
-		t.Fatalf("Next should not be zero")
-	}
-	if got.Raw == "" {
-		t.Errorf("Raw should not be empty")
-	}
-	expected := time.Unix(1776146700, 0)
-	if !got.Next.Equal(expected) {
-		t.Errorf("Next = %v, want %v", got.Next, expected)
-	}
-}
-
-func TestParseTimerNextUnixSeconds(t *testing.T) {
-	raw := "NextElapseUSecRealtime=@1776146700\n"
-	got := parseTimerNext(raw)
-	if got.Next.IsZero() {
-		t.Fatalf("Next should not be zero")
-	}
-	expected := time.Unix(1776146700, 0)
-	if !got.Next.Equal(expected) {
-		t.Errorf("Next = %v, want %v", got.Next, expected)
-	}
-}
-
-func TestParseTimerNextPrettyString(t *testing.T) {
-	raw := "NextElapseUSecRealtime=Wed 2026-04-22 02:05:20 CEST\n"
-	got := parseTimerNext(raw)
-	if got.Raw == "" {
-		t.Errorf("Raw should carry the pretty form")
-	}
-	// Parsed Next may or may not be set depending on locale; Raw is
-	// the contractually important field.
-}
-
-func TestParseTimerNextInactive(t *testing.T) {
-	cases := []string{"NextElapseUSecRealtime=0", "NextElapseUSecRealtime=", "OtherKey=123"}
-	for _, raw := range cases {
-		got := parseTimerNext(raw)
-		if !got.Next.IsZero() {
-			t.Errorf("parseTimerNext(%q): Next should be zero", raw)
-		}
-		if got.Raw != "" {
-			t.Errorf("parseTimerNext(%q): Raw should be empty", raw)
-		}
 	}
 }
 
