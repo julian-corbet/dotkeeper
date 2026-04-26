@@ -1,152 +1,74 @@
-# dotkeeper — shared config
-# This file is created by `dotkeeper init` at ~/.config/dotkeeper/config.toml
-# and synced between machines via Syncthing.
-# You can also copy this template and edit manually.
+# dotkeeper — per-repo configuration example
+#
+# In v0.5, every repo dotkeeper manages has a `dotkeeper.toml` at its root,
+# committed to git. The presence of this file is the opt-in signal: dotkeeper
+# only manages repos that carry one. See ADR 0001 for the rationale.
+#
+# This file is one of three v0.5 config locations:
+#
+#   <repo>/dotkeeper.toml                        — this file (per-repo, in git)
+#   $XDG_CONFIG_HOME/dotkeeper/machine.toml      — per-machine (run `dotkeeper init`)
+#   $XDG_STATE_HOME/dotkeeper/state.toml         — per-machine, tool-owned
+#
+# `dotkeeper init` scaffolds machine.toml and state.toml. You typically don't
+# author dotkeeper.toml by hand either — once a repo lands in a configured
+# scan_root and you run `dotkeeper reconcile`, the daemon writes one for you.
+# This example documents the schema for the curious and for anyone authoring
+# by hand for a repo outside the scan_roots (registered via `dotkeeper track`).
+
+schema_version = 2
+
+[repo]
+# Human-readable name for this repo. Doesn't have to match the directory name.
+name = "my-project"
+
+# RFC3339 timestamp marking when dotkeeper first started managing this repo.
+added = "2026-04-26T00:00:00Z"
+
+# Name (from machine.toml) of the machine that first added this repo.
+added_by = "desktop"
 
 [sync]
-# How often git backs up your repos. Syncthing handles real-time sync.
-# Options: "hourly", "2h", "6h", "12h", "daily" (default), "weekly", "monthly"
-# Or any systemd OnCalendar expression for custom schedules.
-git_interval = "daily"
+# Syncthing folder ID. Conventionally `dk-<short-name>`. Generated automatically
+# by the reconciler if empty on first reconcile.
+syncthing_folder_id = "dk-my-project"
 
-# Stagger window: each machine slot offsets by this many minutes
-slot_offset_minutes = 5
-
-# Auto-resolve trivial Syncthing sync-conflict files.
-#   true  (default) — dotkeeper deletes hash-identical duplicates and
-#                     auto-merges cleanly-mergeable text files via
-#                     `git merge-file`, producing a scoped auto-commit.
-#   false           — dotkeeper only logs conflicts; resolution is manual.
-# Binaries, files not yet committed, and overlapping edits are always
-# left in place for human judgement.
-auto_resolve_conflicts = true
-
-[syncthing]
-# Patterns excluded from Syncthing sync (written to .stignore in each folder).
-# These are defaults — edit to match your workflow.
-# NOTE: lockfiles (package-lock.json, yarn.lock, etc.) are NOT excluded
-# because they are source files that should sync between machines.
+# Per-repo Syncthing ignore patterns, MERGED with machine-level defaults.
+# Patterns follow Syncthing's .stignore syntax.
 ignore = [
-    # Version control — git state is managed separately by dotkeeper
-    ".git",
-
-    # Syncthing internals — conflict files must not propagate
-    "*.sync-conflict-*",
-    ".dkfolder",
-    ".stignore",
-
-    # OS metadata
+    # `(?d)` makes the pattern delete-only — Syncthing won't propagate the
+    # file but will allow other peers to delete their copies.
     "(?d).DS_Store",
-    "(?d)Thumbs.db",
-    "(?d)desktop.ini",
 
-    # Build artifacts — reproducible from source
-    "*-bin",
-    "*.exe",
-    "*.dll",
-    "*.so",
-    "*.dylib",
-    "*.o",
-    "*.a",
-    "__debug_bin*",
-    "/target",      # Rust (root only to avoid false positives)
-    "/dist",
-    "/build",
-    "/out",
-
-    # Dependency directories — reproducible via package manager
-    "node_modules",
-    ".venv",
-    "venv",
-    "__pycache__",
-    "*.pyc",
-    "*.pyo",
-    ".eggs",
-    "*.egg-info",
-
-    # Databases and journals — cause constant conflicts when open
-    "*.sqlite3",
-    "*.sqlite3-journal",
-    "*.sqlite3-wal",
-    "*.sqlite3-shm",
-    "*.sqlite",
-    "*.sqlite-journal",
-    "*.sqlite-wal",
-    "*.sqlite-shm",
-
-    # Process runtime state — machine-local
-    "*.pid",
-    "*.sock",
-
-    # Log files
-    "*.log",
-    "*.log.*",
-
-    # Editor swap/backup — syncing these makes the other editor think it crashed
-    "*.swp",
-    "*.swo",
-    ".*.swp",
-    ".*.swo",
-    "*~",
-    "#*#",
-
-    # JetBrains .idea/ — sync project config, exclude volatile state
-    ".idea/workspace.xml",
-    ".idea/tasks.xml",
-    ".idea/usage.statistics.xml",
-    ".idea/shelf",
-    ".idea/caches",
-    ".idea/*.iws",
-
-    # VS Code — sync settings/launch/tasks, exclude logs
-    ".vscode/*.log",
-
-    # Caches and framework temp dirs
-    ".cache",
-    ".parcel-cache",
-    ".next",
-    ".nuxt",
-    ".turbo",
-    ".angular",
-    ".sass-cache",
-    ".pytest_cache",
-    ".mypy_cache",
-    ".ruff_cache",
-    ".tox",
-    ".gradle",
-    "coverage",
-    "htmlcov",
-
-    # Temporary files
-    "*.tmp",
-    "*.temp",
-    "*.bak",
-    "*.orig",
+    # Local-only large artifacts you don't want crossing the mesh.
+    "node_modules/.cache",
+    ".next/",
 ]
 
-# Machines participating in sync.
-# Each machine registers itself via `dotkeeper init`, then you add it here.
-[machines]
+# Peer device names that should receive this repo. Names refer to entries in
+# state.toml's [[peers]] table. Empty means inherit `default_share_with` from
+# machine.toml.
+share_with = ["laptop", "vps"]
 
-# [machines.desktop]
-# hostname = "my-desktop"
-# slot = 0
-# syncthing_id = "XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX-XXXXXXX"
+[commit]
+# Auto-commit policy for dirty trees in this repo.
+#   "manual"  — never auto-commit (default)
+#   "on-idle" — auto-commit after `idle_seconds` of no further changes
+#   "timer"   — auto-commit on the same schedule as the git backup
+policy = "manual"
 
-# [machines.laptop]
-# hostname = "my-laptop"
-# slot = 1
-# syncthing_id = "YYYYYYY-YYYYYYY-YYYYYYY-YYYYYYY-YYYYYYY-YYYYYYY-YYYYYYY-YYYYYYY"
+# Inactivity threshold for the "on-idle" policy. Ignored otherwise.
+idle_seconds = 300
 
-# Repos to keep in sync.
-# path supports ~ expansion.
-# git = true means dotkeeper will auto-commit/push on the git timer.
-[[repos]]
-name = "dotkeeper"
-path = "~/Documents/GitHub/dotkeeper"
-git = true
+[git_backup]
+# How often this repo gets pushed to its git remote. Inherits from
+# machine.toml's `default_git_interval` if empty.
+#
+# Accepted values: "hourly", "2h", "6h", "12h", "daily", "weekly", "monthly",
+# or any systemd OnCalendar expression.
+interval = "hourly"
 
-# [[repos]]
-# name = "my-project"
-# path = "~/Documents/GitHub/my-project"
-# git = true
+# Slot numbers (from machine.toml `slot`) that should NOT run a backup for this
+# repo. Use this to avoid redundant pushes when several machines all see the
+# same repo. Empty list means every slot backs up.
+skip_slots = []
