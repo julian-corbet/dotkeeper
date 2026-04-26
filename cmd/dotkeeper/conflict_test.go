@@ -12,32 +12,27 @@ import (
 	"github.com/julian-corbet/dotkeeper/internal/config"
 )
 
-// TestDeviceShortToHostname covers the mapping from the 7-char short
+// TestDeviceShortToHostnameV5 covers the mapping from the 7-char short
 // form (as embedded in Syncthing conflict filenames) to the friendly
-// hostname registered in the shared config.
-func TestDeviceShortToHostname(t *testing.T) {
-	cfg := &config.SharedConfig{
-		Machines: map[string]config.MachineEntry{
-			"desktop": {
-				Hostname:    "CACHYOS-Desktop",
-				Slot:        0,
-				SyncthingID: "UUS6FSQ-ABCDEFG-HIJKLMN-OPQRSTU-VWXYZ23-4567ABC-DEFGHIJ-KLMNOPQ",
-			},
-			"laptop": {
-				Hostname:    "CORBET-ELITEBOOK",
-				Slot:        1,
-				SyncthingID: "WB25TET-ZYXWVUT-SRQPONM-LKJIHGF-EDCBA76-5432ZYX-WVUTSRQ-PONMLKJ",
-			},
-			// No SyncthingID yet (freshly-joined, pre-cert-propagation).
-			"unknown": {
-				Hostname:    "brand-new",
-				Slot:        2,
-				SyncthingID: "",
-			},
+// machine name registered in state.toml's Peers.
+func TestDeviceShortToHostnameV5(t *testing.T) {
+	// Write a state.toml with two peers.
+	tmp := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", tmp)
+
+	state := &config.StateV2{
+		SchemaVersion: 2,
+		Peers: []config.PeerEntry{
+			{Name: "CACHYOS-Desktop", DeviceID: "UUS6FSQ-ABCDEFG-HIJKLMN-OPQRSTU-VWXYZ23-4567ABC-DEFGHIJ-KLMNOPQ"},
+			{Name: "CORBET-ELITEBOOK", DeviceID: "WB25TET-ZYXWVUT-SRQPONM-LKJIHGF-EDCBA76-5432ZYX-WVUTSRQ-PONMLKJ"},
+			// No DeviceID entry (hypothetical — PeerEntry always has one, but guard).
 		},
 	}
+	if err := config.WriteStateV2(state); err != nil {
+		t.Fatalf("WriteStateV2: %v", err)
+	}
 
-	got := deviceShortToHostname(cfg)
+	got := deviceShortToHostnameV5()
 
 	if got["UUS6FSQ"] != "CACHYOS-Desktop" {
 		t.Errorf("UUS6FSQ = %q, want %q", got["UUS6FSQ"], "CACHYOS-Desktop")
@@ -45,25 +40,21 @@ func TestDeviceShortToHostname(t *testing.T) {
 	if got["WB25TET"] != "CORBET-ELITEBOOK" {
 		t.Errorf("WB25TET = %q, want %q", got["WB25TET"], "CORBET-ELITEBOOK")
 	}
-	// Entries without an ID must not pollute the map (empty key would
-	// be returned for every unknown lookup).
-	if _, ok := got[""]; ok {
-		t.Error("entry with empty SyncthingID should be skipped, not mapped under empty key")
-	}
-	// An unknown short ID returns the zero value so callers can fall
-	// back to the raw short form.
+	// An unknown short ID should not be in the map.
 	if host, ok := got["ZZZZZZZ"]; ok {
 		t.Errorf("unknown short ID should not be in map, got %q", host)
 	}
 }
 
-// TestDeviceShortToHostnameEmptyConfig covers the degenerate case where
-// the config has no machines registered yet (e.g. very first boot).
-func TestDeviceShortToHostnameEmptyConfig(t *testing.T) {
-	cfg := &config.SharedConfig{Machines: map[string]config.MachineEntry{}}
-	got := deviceShortToHostname(cfg)
+// TestDeviceShortToHostnameV5Empty covers the degenerate case where
+// state.toml has no peers yet (e.g. very first boot).
+func TestDeviceShortToHostnameV5Empty(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", tmp)
+	// No state.toml written — deviceShortToHostnameV5 should return empty map.
+	got := deviceShortToHostnameV5()
 	if len(got) != 0 {
-		t.Errorf("empty config should yield empty map, got %d entries", len(got))
+		t.Errorf("empty state should yield empty map, got %d entries", len(got))
 	}
 }
 

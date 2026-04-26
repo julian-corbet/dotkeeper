@@ -119,15 +119,25 @@ func TestVersionCheck(t *testing.T) {
 
 // --- Config -----------------------------------------------------------
 
-func TestConfigCheckOK(t *testing.T) {
+// TestConfigCheckPassesWithValidV5Files verifies that ConfigCheck reports OK
+// when machine.toml v2 and state.toml are both present and valid with a
+// device ID and at least one scan root.
+func TestConfigCheckPassesWithValidV5Files(t *testing.T) {
 	c := ConfigCheck{
-		LoadMachine: func() (*config.MachineConfig, error) {
-			return &config.MachineConfig{Name: "host-a", Slot: 0}, nil
+		LoadMachineV2: func() (*config.MachineConfigV2, error) {
+			return &config.MachineConfigV2{
+				SchemaVersion: 2,
+				Name:          "test-machine",
+				Slot:          0,
+				Discovery: config.DiscoveryConfig{
+					ScanRoots: []string{"~/Documents"},
+				},
+			}, nil
 		},
-		LoadShared: func() (*config.SharedConfig, error) {
-			return &config.SharedConfig{
-				Machines: map[string]config.MachineEntry{"host_a": {Hostname: "host-a", Slot: 0, SyncthingID: "X"}},
-				Repos:    []config.RepoEntry{{Name: "r1", Path: "/tmp/r1"}},
+		LoadStateV2: func() (*config.StateV2, error) {
+			return &config.StateV2{
+				SchemaVersion:     2,
+				SyncthingDeviceID: "AAAAAAA-BBBBBBB-CCCCCCC-DDDDDDD-EEEEEEE-FFFFFFF-GGGGGGG-HHHHHHH",
 			}, nil
 		},
 	}
@@ -137,23 +147,19 @@ func TestConfigCheckOK(t *testing.T) {
 	}
 }
 
+// TestConfigCheckOK is an alias for TestConfigCheckPassesWithValidV5Files
+// for backward compatibility in test naming.
+func TestConfigCheckOK(t *testing.T) {
+	TestConfigCheckPassesWithValidV5Files(t)
+}
+
+// TestConfigCheckMissingMachine verifies that a missing machine.toml yields Fail.
 func TestConfigCheckMissingMachine(t *testing.T) {
 	c := ConfigCheck{
-		LoadMachine: func() (*config.MachineConfig, error) { return nil, nil },
-		LoadShared:  func() (*config.SharedConfig, error) { return &config.SharedConfig{}, nil },
-	}
-	r := c.Run(context.Background())
-	if r.Outcome != Fail {
-		t.Errorf("Outcome = %v, want Fail", r.Outcome)
-	}
-}
-
-func TestConfigCheckMissingShared(t *testing.T) {
-	c := ConfigCheck{
-		LoadMachine: func() (*config.MachineConfig, error) {
-			return &config.MachineConfig{Name: "h"}, nil
+		LoadMachineV2: func() (*config.MachineConfigV2, error) { return nil, nil },
+		LoadStateV2: func() (*config.StateV2, error) {
+			return &config.StateV2{SyncthingDeviceID: "AAAAAAA-X"}, nil
 		},
-		LoadShared: func() (*config.SharedConfig, error) { return nil, nil },
 	}
 	r := c.Run(context.Background())
 	if r.Outcome != Fail {
@@ -161,15 +167,43 @@ func TestConfigCheckMissingShared(t *testing.T) {
 	}
 }
 
+// TestConfigCheckFailsOnMissingState verifies that a missing state.toml yields Fail.
+func TestConfigCheckFailsOnMissingState(t *testing.T) {
+	c := ConfigCheck{
+		LoadMachineV2: func() (*config.MachineConfigV2, error) {
+			return &config.MachineConfigV2{
+				SchemaVersion: 2,
+				Name:          "h",
+				Discovery:     config.DiscoveryConfig{ScanRoots: []string{"~/Documents"}},
+			}, nil
+		},
+		LoadStateV2: func() (*config.StateV2, error) { return nil, nil },
+	}
+	r := c.Run(context.Background())
+	if r.Outcome != Fail {
+		t.Errorf("Outcome = %v, want Fail", r.Outcome)
+	}
+}
+
+// TestConfigCheckMissingShared is an alias for TestConfigCheckFailsOnMissingState.
+func TestConfigCheckMissingShared(t *testing.T) {
+	TestConfigCheckFailsOnMissingState(t)
+}
+
+// TestConfigCheckWarnOnUnregisteredMachine verifies that a machine with no
+// scan roots configured yields Warn (advisory, not Fail).
 func TestConfigCheckWarnOnUnregisteredMachine(t *testing.T) {
 	c := ConfigCheck{
-		LoadMachine: func() (*config.MachineConfig, error) {
-			return &config.MachineConfig{Name: "stranger", Slot: 3}, nil
-		},
-		LoadShared: func() (*config.SharedConfig, error) {
-			return &config.SharedConfig{
-				Machines: map[string]config.MachineEntry{"other": {Hostname: "other", SyncthingID: "Z"}},
+		LoadMachineV2: func() (*config.MachineConfigV2, error) {
+			return &config.MachineConfigV2{
+				SchemaVersion: 2,
+				Name:          "stranger",
+				Slot:          3,
+				Discovery:     config.DiscoveryConfig{}, // no scan roots
 			}, nil
+		},
+		LoadStateV2: func() (*config.StateV2, error) {
+			return &config.StateV2{SyncthingDeviceID: "AAAAAAA-X"}, nil
 		},
 	}
 	r := c.Run(context.Background())
@@ -178,10 +212,16 @@ func TestConfigCheckWarnOnUnregisteredMachine(t *testing.T) {
 	}
 }
 
+// TestConfigCheckFailOnMachineLoadError verifies that a machine.toml parse
+// error yields Fail.
 func TestConfigCheckFailOnMachineLoadError(t *testing.T) {
 	c := ConfigCheck{
-		LoadMachine: func() (*config.MachineConfig, error) { return nil, errors.New("parse error") },
-		LoadShared:  func() (*config.SharedConfig, error) { return &config.SharedConfig{}, nil },
+		LoadMachineV2: func() (*config.MachineConfigV2, error) {
+			return nil, errors.New("parse error")
+		},
+		LoadStateV2: func() (*config.StateV2, error) {
+			return &config.StateV2{SyncthingDeviceID: "AAAAAAA-X"}, nil
+		},
 	}
 	r := c.Run(context.Background())
 	if r.Outcome != Fail {
@@ -277,10 +317,12 @@ func TestSyncthingAPICheckNilClient(t *testing.T) {
 // --- Peers ------------------------------------------------------------
 
 func TestPeersCheckAllConnected(t *testing.T) {
-	cfg := &config.SharedConfig{
-		Machines: map[string]config.MachineEntry{
-			"me":    {Hostname: "me", SyncthingID: "ME-ID"},
-			"other": {Hostname: "other", SyncthingID: "OTHER-ID"},
+	state := &config.StateV2{
+		SchemaVersion:     2,
+		SyncthingDeviceID: "ME-ID",
+		Peers: []config.PeerEntry{
+			{Name: "me", DeviceID: "ME-ID"},
+			{Name: "other", DeviceID: "OTHER-ID"},
 		},
 	}
 	st := &fakeST{
@@ -289,18 +331,20 @@ func TestPeersCheckAllConnected(t *testing.T) {
 			"OTHER-ID": {Connected: true},
 		}},
 	}
-	r := PeersCheck{Client: st, LoadShared: func() (*config.SharedConfig, error) { return cfg, nil }}.Run(context.Background())
+	r := PeersCheck{Client: st, LoadState: func() (*config.StateV2, error) { return state, nil }}.Run(context.Background())
 	if r.Outcome != OK {
 		t.Errorf("Outcome = %v, want OK; detail=%q", r.Outcome, r.Detail)
 	}
 }
 
 func TestPeersCheckSomeOffline(t *testing.T) {
-	cfg := &config.SharedConfig{
-		Machines: map[string]config.MachineEntry{
-			"me":    {Hostname: "me", SyncthingID: "ME-ID"},
-			"other": {Hostname: "other", SyncthingID: "OTHER-ID"},
-			"third": {Hostname: "third", SyncthingID: "THIRD-ID"},
+	state := &config.StateV2{
+		SchemaVersion:     2,
+		SyncthingDeviceID: "ME-ID",
+		Peers: []config.PeerEntry{
+			{Name: "me", DeviceID: "ME-ID"},
+			{Name: "other", DeviceID: "OTHER-ID"},
+			{Name: "third", DeviceID: "THIRD-ID"},
 		},
 	}
 	st := &fakeST{
@@ -310,7 +354,7 @@ func TestPeersCheckSomeOffline(t *testing.T) {
 			"THIRD-ID": {Connected: false},
 		}},
 	}
-	r := PeersCheck{Client: st, LoadShared: func() (*config.SharedConfig, error) { return cfg, nil }}.Run(context.Background())
+	r := PeersCheck{Client: st, LoadState: func() (*config.StateV2, error) { return state, nil }}.Run(context.Background())
 	if r.Outcome != Warn {
 		t.Errorf("Outcome = %v, want Warn; detail=%q", r.Outcome, r.Detail)
 	}
@@ -320,25 +364,27 @@ func TestPeersCheckSomeOffline(t *testing.T) {
 }
 
 func TestPeersCheckSoloMachine(t *testing.T) {
-	cfg := &config.SharedConfig{
-		Machines: map[string]config.MachineEntry{
-			"me": {Hostname: "me", SyncthingID: "ME-ID"},
+	state := &config.StateV2{
+		SchemaVersion:     2,
+		SyncthingDeviceID: "ME-ID",
+		Peers: []config.PeerEntry{
+			{Name: "me", DeviceID: "ME-ID"},
 		},
 	}
 	st := &fakeST{
 		status: &stclient.SystemStatus{MyID: "ME-ID"},
 		conns:  &stclient.Connections{Connections: map[string]stclient.Connection{}},
 	}
-	r := PeersCheck{Client: st, LoadShared: func() (*config.SharedConfig, error) { return cfg, nil }}.Run(context.Background())
+	r := PeersCheck{Client: st, LoadState: func() (*config.StateV2, error) { return state, nil }}.Run(context.Background())
 	if r.Outcome != OK {
 		t.Errorf("Outcome = %v, want OK (single-machine)", r.Outcome)
 	}
 }
 
 func TestPeersCheckAPIFailure(t *testing.T) {
-	cfg := &config.SharedConfig{Machines: map[string]config.MachineEntry{}}
+	state := &config.StateV2{SchemaVersion: 2, Peers: []config.PeerEntry{}}
 	st := &fakeST{statusErr: errors.New("boom")}
-	r := PeersCheck{Client: st, LoadShared: func() (*config.SharedConfig, error) { return cfg, nil }}.Run(context.Background())
+	r := PeersCheck{Client: st, LoadState: func() (*config.StateV2, error) { return state, nil }}.Run(context.Background())
 	if r.Outcome != Fail {
 		t.Errorf("Outcome = %v, want Fail", r.Outcome)
 	}
@@ -425,16 +471,21 @@ func TestFoldersCheckNoFoldersWarns(t *testing.T) {
 
 func TestGitRemotesCheckOK(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &config.SharedConfig{Repos: []config.RepoEntry{{Name: "r1", Path: dir, Git: true}}}
+	state := &config.StateV2{
+		SchemaVersion: 2,
+		ObservedRepos: map[string]config.ObservedRepo{
+			dir: {},
+		},
+	}
 	runner := &fakeGit{byDir: map[string]struct {
 		out     string
 		err     error
 		timeout bool
 	}{dir: {out: "ok\n"}}}
 	c := GitRemotesCheck{
-		Runner:     runner,
-		LoadShared: func() (*config.SharedConfig, error) { return cfg, nil },
-		Timeout:    time.Second,
+		Runner:    runner,
+		LoadState: func() (*config.StateV2, error) { return state, nil },
+		Timeout:   time.Second,
 	}
 	r := c.Run(context.Background())
 	if r.Outcome != OK {
@@ -444,16 +495,21 @@ func TestGitRemotesCheckOK(t *testing.T) {
 
 func TestGitRemotesCheckAuthFails(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &config.SharedConfig{Repos: []config.RepoEntry{{Name: "r1", Path: dir, Git: true}}}
+	state := &config.StateV2{
+		SchemaVersion: 2,
+		ObservedRepos: map[string]config.ObservedRepo{
+			dir: {},
+		},
+	}
 	runner := &fakeGit{byDir: map[string]struct {
 		out     string
 		err     error
 		timeout bool
 	}{dir: {out: "Permission denied (publickey)", err: errors.New("exit 128")}}}
 	c := GitRemotesCheck{
-		Runner:     runner,
-		LoadShared: func() (*config.SharedConfig, error) { return cfg, nil },
-		Timeout:    time.Second,
+		Runner:    runner,
+		LoadState: func() (*config.StateV2, error) { return state, nil },
+		Timeout:   time.Second,
 	}
 	r := c.Run(context.Background())
 	if r.Outcome != Fail {
@@ -466,16 +522,21 @@ func TestGitRemotesCheckAuthFails(t *testing.T) {
 
 func TestGitRemotesCheckTimeoutWarns(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &config.SharedConfig{Repos: []config.RepoEntry{{Name: "r1", Path: dir, Git: true}}}
+	state := &config.StateV2{
+		SchemaVersion: 2,
+		ObservedRepos: map[string]config.ObservedRepo{
+			dir: {},
+		},
+	}
 	runner := &fakeGit{byDir: map[string]struct {
 		out     string
 		err     error
 		timeout bool
 	}{dir: {timeout: true}}}
 	c := GitRemotesCheck{
-		Runner:     runner,
-		LoadShared: func() (*config.SharedConfig, error) { return cfg, nil },
-		Timeout:    50 * time.Millisecond,
+		Runner:    runner,
+		LoadState: func() (*config.StateV2, error) { return state, nil },
+		Timeout:   50 * time.Millisecond,
 	}
 	r := c.Run(context.Background())
 	if r.Outcome != Warn {
@@ -487,17 +548,20 @@ func TestGitRemotesCheckTimeoutWarns(t *testing.T) {
 }
 
 func TestGitRemotesCheckNoGitRepos(t *testing.T) {
-	cfg := &config.SharedConfig{Repos: []config.RepoEntry{{Name: "r1", Path: "/tmp", Git: false}}}
+	state := &config.StateV2{
+		SchemaVersion: 2,
+		ObservedRepos: map[string]config.ObservedRepo{},
+	}
 	c := GitRemotesCheck{
-		Runner:     &fakeGit{},
-		LoadShared: func() (*config.SharedConfig, error) { return cfg, nil },
+		Runner:    &fakeGit{},
+		LoadState: func() (*config.StateV2, error) { return state, nil },
 	}
 	r := c.Run(context.Background())
 	if r.Outcome != OK {
 		t.Errorf("Outcome = %v, want OK", r.Outcome)
 	}
-	if !strings.Contains(r.Detail, "no git-tracked") {
-		t.Errorf("expected 'no git-tracked' in detail: %q", r.Detail)
+	if !strings.Contains(r.Detail, "no observed") {
+		t.Errorf("expected 'no observed' in detail: %q", r.Detail)
 	}
 }
 
@@ -544,10 +608,9 @@ func TestBackupTimerCheckNilManager(t *testing.T) {
 func TestConflictsCheckNoneFound(t *testing.T) {
 	tmp := t.TempDir()
 	_ = os.MkdirAll(tmp, 0o755)
-	cfg := &config.SharedConfig{Repos: []config.RepoEntry{{Name: "r1", Path: tmp}}}
 	c := ConflictsCheck{
-		LoadShared: func() (*config.SharedConfig, error) { return cfg, nil },
-		Scanner:    func(root string) ([]conflict.Conflict, error) { return nil, nil },
+		FolderProvider: func() []string { return []string{tmp} },
+		Scanner:        func(root string) ([]conflict.Conflict, error) { return nil, nil },
 	}
 	r := c.Run(context.Background())
 	if r.Outcome != OK {
@@ -557,9 +620,8 @@ func TestConflictsCheckNoneFound(t *testing.T) {
 
 func TestConflictsCheckWarnsWhenFound(t *testing.T) {
 	tmp := t.TempDir()
-	cfg := &config.SharedConfig{Repos: []config.RepoEntry{{Name: "r1", Path: tmp}}}
 	c := ConflictsCheck{
-		LoadShared: func() (*config.SharedConfig, error) { return cfg, nil },
+		FolderProvider: func() []string { return []string{tmp} },
 		Scanner: func(root string) ([]conflict.Conflict, error) {
 			return []conflict.Conflict{{Path: filepath.Join(root, "file.sync-conflict-x")}}, nil
 		},
