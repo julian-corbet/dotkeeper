@@ -23,11 +23,11 @@ import (
 // and a fixed device ID. Any method can be made to return an error by setting
 // the corresponding Err* field.
 type fakeST struct {
-	cfg      map[string]any
-	myID     string
-	ErrGet   error
-	ErrSet   error
-	ErrAdd   error
+	cfg       map[string]any
+	myID      string
+	ErrGet    error
+	ErrSet    error
+	ErrAdd    error
 	ErrStatus error
 }
 

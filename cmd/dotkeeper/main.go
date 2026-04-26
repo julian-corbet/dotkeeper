@@ -21,6 +21,7 @@ import (
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/conflict"
+	"github.com/julian-corbet/dotkeeper/internal/discovery"
 	"github.com/julian-corbet/dotkeeper/internal/doctor"
 	"github.com/julian-corbet/dotkeeper/internal/service"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
@@ -215,9 +216,20 @@ func statusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show full status",
-		Run: func(cmd *cobra.Command, args []string) {
-			machine, _ := config.LoadMachineConfigV2()
-			state, _ := config.LoadStateV2()
+		RunE: func(cmd *cobra.Command, args []string) error {
+			machine, machineErr := config.LoadMachineConfigV2()
+			// A non-nil error means the file exists but failed to parse — tell the
+			// user rather than silently treating it as "not initialised".
+			if machineErr != nil {
+				fmt.Fprintf(os.Stderr, "[dotkeeper] ERROR: machine.toml parse failure: %v\n", machineErr)
+				return fmt.Errorf("machine.toml parse failure: %w", machineErr)
+			}
+
+			state, stateErr := config.LoadStateV2()
+			if stateErr != nil {
+				fmt.Fprintf(os.Stderr, "[dotkeeper] ERROR: state.toml parse failure: %v\n", stateErr)
+				return fmt.Errorf("state.toml parse failure: %w", stateErr)
+			}
 
 			fmt.Println("=== Machine ===")
 			if machine != nil {
@@ -295,6 +307,7 @@ func statusCmd() *cobra.Command {
 					}
 				}
 			}
+			return nil
 		},
 	}
 }
@@ -437,92 +450,18 @@ func handleConflictEvent(ctx context.Context, c conflict.Conflict, roots []strin
 }
 
 // managedFolderPathsV5 returns absolute, existing paths for every managed
-// folder discovered from v0.5 state: TrackedOverrides + repos found by
-// walking scan roots for dotkeeper.toml files. The config directory itself
-// is always included. Missing paths are skipped silently.
+// folder discovered from v0.5 state: config dir + TrackedOverrides + repos
+// found by walking scan roots for dotkeeper.toml files.
+//
+// ObservedRepos is intentionally NOT consulted: if a scan_root is removed
+// from machine.toml, repos under it should become invisible to the watcher,
+// and the next reconcile will prune them from ObservedRepos.
+//
+// Missing paths are skipped silently. The actual discovery logic lives in
+// internal/discovery so both this function and the doctor package share one
+// canonical implementation.
 func managedFolderPathsV5() []string {
-	var out []string
-	seen := map[string]struct{}{}
-	add := func(p string) {
-		if p == "" {
-			return
-		}
-		abs, err := filepath.Abs(config.ExpandPath(p))
-		if err != nil {
-			return
-		}
-		if _, err := os.Stat(abs); err != nil {
-			return
-		}
-		if _, ok := seen[abs]; ok {
-			return
-		}
-		seen[abs] = struct{}{}
-		out = append(out, abs)
-	}
-
-	// Always include the config directory.
-	add(config.ConfigDir())
-
-	// Add TrackedOverrides from state.toml.
-	if state, err := config.LoadStateV2(); err == nil && state != nil {
-		for _, p := range state.TrackedOverrides {
-			add(p)
-		}
-	}
-
-	// Walk scan roots to find repos with dotkeeper.toml.
-	if machine, err := config.LoadMachineConfigV2(); err == nil && machine != nil {
-		for _, root := range machine.Discovery.ScanRoots {
-			expanded := config.ExpandPath(root)
-			if info, err := os.Stat(expanded); err != nil || !info.IsDir() {
-				continue
-			}
-			walkDepth := machine.Discovery.ScanDepth
-			if walkDepth <= 0 {
-				walkDepth = 3
-			}
-			_ = walkScanRoot(expanded, 0, walkDepth, func(repoPath string) {
-				add(repoPath)
-			})
-		}
-	}
-
-	return out
-}
-
-// walkScanRoot recursively walks root up to maxDepth levels looking for
-// directories that contain a dotkeeper.toml file. When found, fn is called
-// with the directory path. The walk does not descend into dirs that already
-// have a dotkeeper.toml.
-func walkScanRoot(root string, depth, maxDepth int, fn func(string)) error {
-	if depth > maxDepth {
-		return nil
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
-
-	hasDotkeeper := false
-	for _, e := range entries {
-		if !e.IsDir() && e.Name() == "dotkeeper.toml" {
-			hasDotkeeper = true
-			break
-		}
-	}
-	if hasDotkeeper {
-		fn(root)
-		return nil // don't descend into a managed repo
-	}
-
-	for _, e := range entries {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
-			continue
-		}
-		_ = walkScanRoot(filepath.Join(root, e.Name()), depth+1, maxDepth, fn)
-	}
-	return nil
+	return discovery.ManagedFolderPaths()
 }
 
 func conflictCmd() *cobra.Command {
