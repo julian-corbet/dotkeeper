@@ -29,10 +29,10 @@ func TestScanFindsConflicts(t *testing.T) {
 
 	// Conflicts we expect to find.
 	want := map[string]bool{
-		filepath.Join(root, "config.sync-conflict-20260419-143015-UUS6FSQ.toml"):          false,
-		filepath.Join(root, "sub", "notes.sync-conflict-20260419-143015-WB25TET.md"):      false,
-		filepath.Join(root, "sub", "deep", "bin.sync-conflict-20260418-185451-WB25TET"):   false,
-		filepath.Join(root, ".sync-conflict-20260419-143015-UUS6FSQ.bashrc"):              false,
+		filepath.Join(root, "config.sync-conflict-20260419-143015-UUS6FSQ.toml"):        false,
+		filepath.Join(root, "sub", "notes.sync-conflict-20260419-143015-WB25TET.md"):    false,
+		filepath.Join(root, "sub", "deep", "bin.sync-conflict-20260418-185451-WB25TET"): false,
+		filepath.Join(root, ".sync-conflict-20260419-143015-UUS6FSQ.bashrc"):            false,
 	}
 	for p := range want {
 		writeFile(t, p)

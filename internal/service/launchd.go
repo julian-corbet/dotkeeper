@@ -199,4 +199,3 @@ func launchdSchedule(onCalendar string) string {
 	s += "\n    </dict>"
 	return s
 }
-
