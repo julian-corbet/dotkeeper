@@ -58,7 +58,7 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name: "observed folder not in desired → RemoveSyncthingFolder",
+			name:    "observed folder not in desired → RemoveSyncthingFolder",
 			desired: Desired{},
 			obs: Observed{
 				ManagedFolders: []FolderObs{
@@ -159,7 +159,7 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name: "dirty repo → GitCommitDirty",
+			name:    "dirty repo → GitCommitDirty",
 			desired: Desired{},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
@@ -183,7 +183,7 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name: "repo with head commit → GitPushRepo",
+			name:    "repo with head commit → GitPushRepo",
 			desired: Desired{},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
@@ -201,7 +201,7 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name: "dirty repo with head commit → commit then push",
+			name:    "dirty repo with head commit → commit then push",
 			desired: Desired{},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
@@ -221,7 +221,7 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name: "clean repo with empty head commit → no git actions",
+			name:    "clean repo with empty head commit → no git actions",
 			desired: Desired{},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
@@ -238,7 +238,7 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name: "multiple repos produce actions in path-sorted order",
+			name:    "multiple repos produce actions in path-sorted order",
 			desired: Desired{},
 			obs: Observed{
 				TrackedRepos: []RepoObs{

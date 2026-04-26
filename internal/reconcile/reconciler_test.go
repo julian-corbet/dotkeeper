@@ -40,10 +40,10 @@ func TestReconcilerEndToEnd(t *testing.T) {
 
 	stub := &StubApplier{}
 	r := &Reconciler{
-		Desired: func(_ context.Context) (Desired, error) { return desired, nil },
+		Desired:  func(_ context.Context) (Desired, error) { return desired, nil },
 		Observed: func(_ context.Context) (Observed, error) { return observed, nil },
-		Applier: stub,
-		Logger:  stubLogger(),
+		Applier:  stub,
+		Logger:   stubLogger(),
 	}
 
 	plan, err := r.Reconcile(context.Background())

@@ -22,7 +22,10 @@ type StateV2 struct {
 	// Syncthing private key.
 	SyncthingDeviceID string `toml:"syncthing_device_id"`
 
-	// Peers is the list of known mesh peers discovered via dotkeeper pair.
+	// Peers is the list of known mesh peers. Populated at runtime when pairing
+	// occurs; not hand-edited. In v0.5 the `dotkeeper pair` command is removed —
+	// peers are added by editing [[peers]] entries here directly or by the
+	// reconciler when it processes a Syncthing device announcement.
 	Peers []PeerEntry `toml:"peers"`
 
 	// TrackedOverrides lists absolute paths to repos outside any scan root

@@ -63,7 +63,7 @@ func TestMachineKeyEquivalent(t *testing.T) {
 		wantSafe bool
 	}{
 		{"my-desktop", true},
-		{"my.machine.local", true},     // dots should be replaced
+		{"my.machine.local", true}, // dots should be replaced
 		{"MY-LAPTOP-01", true},
 		{"machine with spaces", true},
 	}
