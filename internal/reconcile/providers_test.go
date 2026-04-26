@@ -427,6 +427,39 @@ func TestDesiredProvider_MissingStateNoPeers(t *testing.T) {
 	}
 }
 
+// TestDesiredProvider_MalformedStateErrors verifies that a malformed state.toml
+// (parse error, not "missing") produces a hard error rather than silently
+// degrading to an empty peer roster — which would cause the reconciler to plan
+// removal of every Syncthing peer. Distinguishing "absent" from "broken" is
+// load-bearing: the first is correct first-run behaviour, the second is
+// catastrophic config corruption that must surface to the operator.
+func TestDesiredProvider_MalformedStateErrors(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	machineFile := writeMachineToml(t, dir, []string{}, nil, 3)
+	statePath := filepath.Join(dir, "state.toml")
+
+	// Broken TOML: unbalanced quote on a string value.
+	brokenContent := `schema_version = 2
+syncthing_device_id = "AAAAAAA-BBBBBBB-CCCCCCC
+tracked_overrides = []
+`
+	if err := os.WriteFile(statePath, []byte(brokenContent), 0o600); err != nil {
+		t.Fatalf("writing broken state.toml: %v", err)
+	}
+
+	provider := NewDesiredProvider(machineFile, statePath)
+	_, err := provider(context.Background())
+	if err == nil {
+		t.Fatal("expected error for malformed state.toml, got nil")
+	}
+	msg := err.Error()
+	if !containsSubstr(msg, "loading state") && !containsSubstr(msg, statePath) {
+		t.Errorf("error should mention 'loading state' or the path %q, got: %v", statePath, err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ObservedProvider tests — stub Syncthing client
 // ---------------------------------------------------------------------------

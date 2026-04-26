@@ -46,9 +46,16 @@ func NewDesiredProvider(machineConfigPath, stateConfigPath string) DesiredProvid
 			return Desired{}, fmt.Errorf("repo discovery failed: %w", err)
 		}
 
-		// State is optional: a missing or unreadable state file means we have
-		// not paired with any peers yet. That is the correct first-run state.
-		state, _, _ := loadStateFromPath(stateConfigPath)
+		// State is optional only in the missing-file case (first-run, before
+		// any peers have been paired). A malformed or unreadable state file
+		// must be a hard error: silently ignoring it would yield an empty
+		// peer roster and the reconciler would then plan to *remove* every
+		// known Syncthing peer. Distinguish "absent" (safe) from "broken"
+		// (catastrophic) here.
+		state, _, err := loadStateFromPath(stateConfigPath)
+		if err != nil {
+			return Desired{}, fmt.Errorf("loading state from %s: %w", stateConfigPath, err)
+		}
 
 		return BuildDesired(machine, repos, state), nil
 	}
