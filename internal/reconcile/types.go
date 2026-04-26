@@ -5,14 +5,15 @@
 // It provides pure-function diff over (Desired, Observed) state, a set of
 // Action types, and a Reconciler that drives the diff→apply loop.
 //
-// Schema types (MachineConfigV2, StateV2, etc.) live on the parallel branch
-// v0.5/schema-types and are represented here by local stubs.
+// Schema types (MachineConfigV2, RepoConfigV2, StateV2, etc.) are imported
+// from internal/config.
 package reconcile
 
-import "time"
+import (
+	"time"
 
-// TODO(v0.5/schema-types): Replace all stubs in this file with types from
-// the schema-types package once that branch is merged.
+	"github.com/julian-corbet/dotkeeper/internal/config"
+)
 
 // Desired represents the declarative configuration for this machine: what
 // repos should be tracked, what Syncthing folders should exist, and which
@@ -63,6 +64,55 @@ type Observed struct {
 
 	// LivePeers is the list of Syncthing devices currently known.
 	LivePeers []LivePeer
+
+	// CachedState is the last-written state.toml snapshot. It provides
+	// per-repo push history so Diff can skip pushes for commits already backed
+	// up. May be nil if the state file has not been written yet.
+	CachedState *config.StateV2
+}
+
+// BuildDesired constructs a Desired from a parsed MachineConfigV2, the
+// per-repo configs keyed by absolute repo path, and the current StateV2.
+// It is the canonical way to translate the on-disk configuration into the
+// form expected by Diff.
+//
+// repos may be nil or empty (e.g. on first run before discovery has run).
+// state may be nil; when nil, no peers are populated.
+func BuildDesired(machine *config.MachineConfigV2, repos map[string]*config.RepoConfigV2, state *config.StateV2) Desired {
+	d := Desired{
+		Repos: make(map[string]RepoDesired, len(repos)),
+	}
+	if machine != nil {
+		d.MachineName = machine.Name
+	}
+	// Peers are sourced exclusively from state.Peers (which carries DeviceIDs
+	// learned during pairing). DefaultShareWith is a per-repo fallback share
+	// list only — it must not inflate the peer roster.
+	if state != nil {
+		for _, p := range state.Peers {
+			d.Peers = append(d.Peers, PeerDesired{Name: p.Name, DeviceID: p.DeviceID})
+		}
+	}
+	for path, r := range repos {
+		if r == nil {
+			continue
+		}
+		// Defensive copy: avoid slice aliasing with the source config. Sort or
+		// append on a RepoDesired must never mutate another RepoDesired or the
+		// original MachineConfigV2 / RepoConfigV2.
+		shareWith := append([]string(nil), r.Sync.ShareWith...)
+		if len(shareWith) == 0 && machine != nil {
+			shareWith = append([]string(nil), machine.DefaultShareWith...)
+		}
+		ignore := append([]string(nil), r.Sync.Ignore...)
+		d.Repos[path] = RepoDesired{
+			Path:              path,
+			SyncthingFolderID: r.Sync.SyncthingFolderID,
+			Ignore:            ignore,
+			ShareWith:         shareWith,
+		}
+	}
+	return d
 }
 
 // FolderObs is the observed state of a single Syncthing folder.

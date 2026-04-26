@@ -6,6 +6,8 @@ package reconcile
 import (
 	"testing"
 	"time"
+
+	"github.com/julian-corbet/dotkeeper/internal/config"
 )
 
 func TestDiff(t *testing.T) {
@@ -277,6 +279,67 @@ func TestDiff(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:    "repo already pushed at HEAD → no GitPushRepo",
+			desired: Desired{},
+			obs: Observed{
+				TrackedRepos: []RepoObs{
+					{Path: "/repo", IsDirty: false, HeadCommit: "abc123"},
+				},
+				CachedState: &config.StateV2{
+					ObservedRepos: map[string]config.ObservedRepo{
+						"/repo": {LastPushedCommit: "abc123"},
+					},
+				},
+			},
+			check: func(t *testing.T, plan Plan) {
+				for _, a := range plan {
+					if _, ok := a.(GitPushRepo); ok {
+						t.Error("should not push when HEAD already matches last pushed commit")
+					}
+				}
+			},
+		},
+		{
+			name:    "repo HEAD differs from last pushed → GitPushRepo",
+			desired: Desired{},
+			obs: Observed{
+				TrackedRepos: []RepoObs{
+					{Path: "/repo", IsDirty: false, HeadCommit: "newcommit"},
+				},
+				CachedState: &config.StateV2{
+					ObservedRepos: map[string]config.ObservedRepo{
+						"/repo": {LastPushedCommit: "oldcommit"},
+					},
+				},
+			},
+			check: func(t *testing.T, plan Plan) {
+				if len(plan) != 1 {
+					t.Fatalf("expected 1 action, got %d", len(plan))
+				}
+				if _, ok := plan[0].(GitPushRepo); !ok {
+					t.Fatalf("expected GitPushRepo, got %T", plan[0])
+				}
+			},
+		},
+		{
+			name:    "repo with head commit and nil CachedState → GitPushRepo",
+			desired: Desired{},
+			obs: Observed{
+				TrackedRepos: []RepoObs{
+					{Path: "/repo", IsDirty: false, HeadCommit: "abc123"},
+				},
+				CachedState: nil,
+			},
+			check: func(t *testing.T, plan Plan) {
+				if len(plan) != 1 {
+					t.Fatalf("expected 1 action, got %d", len(plan))
+				}
+				if _, ok := plan[0].(GitPushRepo); !ok {
+					t.Fatalf("expected GitPushRepo, got %T", plan[0])
+				}
+			},
+		},
 	}
 
 	for _, tc := range tests {
@@ -286,6 +349,231 @@ func TestDiff(t *testing.T) {
 			plan := Diff(tc.desired, tc.obs)
 			tc.check(t, plan)
 		})
+	}
+}
+
+// TestBuildDesired verifies that BuildDesired correctly translates
+// MachineConfigV2 + per-repo RepoConfigV2 maps into a Desired value.
+func TestBuildDesired(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil machine and empty repos yields zero Desired", func(t *testing.T) {
+		t.Parallel()
+		d := BuildDesired(nil, nil, nil)
+		if d.MachineName != "" {
+			t.Errorf("expected empty MachineName, got %q", d.MachineName)
+		}
+		if len(d.Repos) != 0 {
+			t.Errorf("expected empty Repos, got %d", len(d.Repos))
+		}
+		if len(d.Peers) != 0 {
+			t.Errorf("expected empty Peers, got %d", len(d.Peers))
+		}
+	})
+
+	t.Run("machine name is set from machine config; peers come from state", func(t *testing.T) {
+		t.Parallel()
+		machine := &config.MachineConfigV2{
+			Name:             "elitebook",
+			DefaultShareWith: []string{"desktop", "server"},
+		}
+		state := &config.StateV2{
+			Peers: []config.PeerEntry{
+				{Name: "desktop", DeviceID: "DEV-D"},
+				{Name: "server", DeviceID: "DEV-S"},
+			},
+		}
+		d := BuildDesired(machine, nil, state)
+		if d.MachineName != "elitebook" {
+			t.Errorf("expected MachineName=elitebook, got %q", d.MachineName)
+		}
+		if len(d.Peers) != 2 {
+			t.Fatalf("expected 2 peers, got %d", len(d.Peers))
+		}
+		if d.Peers[0].Name != "desktop" || d.Peers[0].DeviceID != "DEV-D" {
+			t.Errorf("unexpected peer[0]: %+v", d.Peers[0])
+		}
+		if d.Peers[1].Name != "server" || d.Peers[1].DeviceID != "DEV-S" {
+			t.Errorf("unexpected peer[1]: %+v", d.Peers[1])
+		}
+	})
+
+	t.Run("repo config populates RepoDesired with folder ID and share list", func(t *testing.T) {
+		t.Parallel()
+		machine := &config.MachineConfigV2{
+			Name:             "desktop",
+			DefaultShareWith: []string{"elitebook"},
+		}
+		repos := map[string]*config.RepoConfigV2{
+			"/home/user/dotfiles": {
+				Sync: config.RepoSyncConfig{
+					SyncthingFolderID: "dk-dotfiles",
+					ShareWith:         []string{"elitebook", "server"},
+					Ignore:            []string{"*.log"},
+				},
+			},
+		}
+		d := BuildDesired(machine, repos, nil)
+		r, ok := d.Repos["/home/user/dotfiles"]
+		if !ok {
+			t.Fatal("expected /home/user/dotfiles in Repos")
+		}
+		if r.SyncthingFolderID != "dk-dotfiles" {
+			t.Errorf("wrong folder ID: %q", r.SyncthingFolderID)
+		}
+		if len(r.ShareWith) != 2 {
+			t.Errorf("expected 2 share_with entries, got %d", len(r.ShareWith))
+		}
+		if len(r.Ignore) != 1 || r.Ignore[0] != "*.log" {
+			t.Errorf("wrong ignore list: %v", r.Ignore)
+		}
+	})
+
+	t.Run("repo with empty share_with inherits machine DefaultShareWith", func(t *testing.T) {
+		t.Parallel()
+		machine := &config.MachineConfigV2{
+			DefaultShareWith: []string{"server"},
+		}
+		repos := map[string]*config.RepoConfigV2{
+			"/repo": {
+				Sync: config.RepoSyncConfig{
+					SyncthingFolderID: "dk-repo",
+					ShareWith:         []string{},
+				},
+			},
+		}
+		d := BuildDesired(machine, repos, nil)
+		r := d.Repos["/repo"]
+		if len(r.ShareWith) != 1 || r.ShareWith[0] != "server" {
+			t.Errorf("expected inherited share_with [server], got %v", r.ShareWith)
+		}
+	})
+
+	t.Run("nil repo entry in map is skipped", func(t *testing.T) {
+		t.Parallel()
+		repos := map[string]*config.RepoConfigV2{
+			"/good": {Sync: config.RepoSyncConfig{SyncthingFolderID: "dk-good"}},
+			"/nil":  nil,
+		}
+		d := BuildDesired(nil, repos, nil)
+		if _, ok := d.Repos["/nil"]; ok {
+			t.Error("nil repo entry should be skipped")
+		}
+		if _, ok := d.Repos["/good"]; !ok {
+			t.Error("non-nil repo entry should be present")
+		}
+	})
+}
+
+// TestBuildDesired_PeersFromState verifies that BuildDesired populates
+// Desired.Peers from state.Peers (Name + DeviceID), not from DefaultShareWith.
+func TestBuildDesired_PeersFromState(t *testing.T) {
+	t.Parallel()
+
+	machine := &config.MachineConfigV2{
+		Name:             "desktop",
+		DefaultShareWith: []string{"elitebook", "server"},
+	}
+	state := &config.StateV2{
+		Peers: []config.PeerEntry{
+			{Name: "elitebook", DeviceID: "ABC123"},
+			{Name: "server", DeviceID: "DEF456"},
+		},
+	}
+	d := BuildDesired(machine, nil, state)
+	if len(d.Peers) != 2 {
+		t.Fatalf("expected 2 peers, got %d", len(d.Peers))
+	}
+	if d.Peers[0].Name != "elitebook" || d.Peers[0].DeviceID != "ABC123" {
+		t.Errorf("peer[0]: expected {elitebook, ABC123}, got %+v", d.Peers[0])
+	}
+	if d.Peers[1].Name != "server" || d.Peers[1].DeviceID != "DEF456" {
+		t.Errorf("peer[1]: expected {server, DEF456}, got %+v", d.Peers[1])
+	}
+}
+
+// TestBuildDesired_NilStateNoPeers verifies that a nil state produces no peers.
+func TestBuildDesired_NilStateNoPeers(t *testing.T) {
+	t.Parallel()
+
+	machine := &config.MachineConfigV2{
+		Name:             "desktop",
+		DefaultShareWith: []string{"elitebook"},
+	}
+	d := BuildDesired(machine, nil, nil)
+	if len(d.Peers) != 0 {
+		t.Errorf("expected 0 peers with nil state, got %d: %v", len(d.Peers), d.Peers)
+	}
+}
+
+// TestBuildDesired_PeersIgnoreDefaultShareWith verifies that DefaultShareWith
+// does NOT inflate the peer roster when state.Peers is empty.
+func TestBuildDesired_PeersIgnoreDefaultShareWith(t *testing.T) {
+	t.Parallel()
+
+	machine := &config.MachineConfigV2{
+		Name:             "desktop",
+		DefaultShareWith: []string{"foo"},
+	}
+	state := &config.StateV2{
+		Peers: []config.PeerEntry{},
+	}
+	d := BuildDesired(machine, nil, state)
+	if len(d.Peers) != 0 {
+		t.Errorf("expected 0 peers, DefaultShareWith must not inflate roster; got %d: %v", len(d.Peers), d.Peers)
+	}
+}
+
+// TestBuildDesired_NoShareWithAliasing verifies that mutating one repo's
+// ShareWith slice does not corrupt another repo's slice or the source config.
+func TestBuildDesired_NoShareWithAliasing(t *testing.T) {
+	t.Parallel()
+
+	machine := &config.MachineConfigV2{
+		DefaultShareWith: []string{"a", "b"},
+	}
+	repos := map[string]*config.RepoConfigV2{
+		"/repo1": {Sync: config.RepoSyncConfig{SyncthingFolderID: "dk-r1"}},
+		"/repo2": {Sync: config.RepoSyncConfig{SyncthingFolderID: "dk-r2"}},
+	}
+	d := BuildDesired(machine, repos, nil)
+
+	// Mutate repo1's ShareWith in-place.
+	sw1 := d.Repos["/repo1"].ShareWith
+	sw1[0] = "x"
+
+	// repo2 must be unaffected.
+	sw2 := d.Repos["/repo2"].ShareWith
+	if sw2[0] != "a" {
+		t.Errorf("slice aliasing: mutating repo1.ShareWith[0] corrupted repo2.ShareWith[0] = %q (want \"a\")", sw2[0])
+	}
+	// Source config must be unaffected.
+	if machine.DefaultShareWith[0] != "a" {
+		t.Errorf("slice aliasing: mutating repo1.ShareWith[0] corrupted machine.DefaultShareWith[0] = %q (want \"a\")", machine.DefaultShareWith[0])
+	}
+}
+
+// TestBuildDesired_NoIgnoreAliasing verifies that mutating a RepoDesired.Ignore
+// slice does not corrupt the source RepoConfigV2.Sync.Ignore.
+func TestBuildDesired_NoIgnoreAliasing(t *testing.T) {
+	t.Parallel()
+
+	src := &config.RepoConfigV2{
+		Sync: config.RepoSyncConfig{
+			SyncthingFolderID: "dk-test",
+			Ignore:            []string{"pat"},
+		},
+	}
+	repos := map[string]*config.RepoConfigV2{"/repo": src}
+	d := BuildDesired(nil, repos, nil)
+
+	// Mutate the resulting Ignore slice in-place.
+	ig := d.Repos["/repo"].Ignore
+	ig[0] = "x"
+
+	// Source config must be unaffected.
+	if src.Sync.Ignore[0] != "pat" {
+		t.Errorf("ignore slice aliasing: mutating RepoDesired.Ignore[0] corrupted source Ignore[0] = %q (want \"pat\")", src.Sync.Ignore[0])
 	}
 }
 
