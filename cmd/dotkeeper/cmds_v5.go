@@ -25,18 +25,29 @@ import (
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 )
 
-// reconcileCmd implements 'dotkeeper reconcile [<path>]'.
+// reconcilerIface is the narrow surface startReconcileLoop needs from a
+// Reconciler. Defining it here lets unit tests inject a stub without spinning
+// up a real Reconciler + its providers + Syncthing.
+type reconcilerIface interface {
+	Reconcile(ctx context.Context) (reconcile.Plan, error)
+}
+
+// reconcileCmd implements 'dotkeeper reconcile'.
 // It runs a single synchronous reconcile pass, prints the plan + outcomes,
 // exits 0 on success or 1 if any action failed.
+//
+// Note: a positional <path> argument was specced for scoping reconcile to a
+// single repo. Implementing scoped reconcile cleanly requires a path filter
+// inside DesiredProvider; that's a follow-up. Until then this command takes
+// no arguments — silently accepting one would be a worse UX than rejecting it.
 func reconcileCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "reconcile [<path>]",
+		Use:   "reconcile",
 		Short: "Run a single reconcile pass and print the plan",
 		Long: "Computes the difference between desired and observed state, prints\n" +
-			"each planned action, and applies them. Optional <path> argument\n" +
-			"scopes discovery to a single repo directory.\n\n" +
+			"each planned action, and applies them.\n\n" +
 			"Exits 0 on success, 1 if any action failed.",
-		Args: cobra.MaximumNArgs(1),
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			machinePath := config.MachineConfigPath()
 			statePath := config.StateV2Path()
@@ -199,6 +210,7 @@ func untrackCmd() *cobra.Command {
 // Passing a typed-nil *stclient.Client to NewObservedProvider would produce a
 // non-nil interface value and trigger a nil-pointer dereference inside
 // querySyncthing, so we only pass a non-nil client when one is actually available.
+// (NewObservedProvider also has a defensive nil-check; this is belt + braces.)
 func buildObservedProvider(statePath string) reconcile.ObservedProvider {
 	if key, err := engine().APIKey(); err == nil {
 		return reconcile.NewObservedProvider(stclient.New(key), statePath)
@@ -266,8 +278,10 @@ func startReconcileDaemon(ctx context.Context, logger *slog.Logger) {
 		Logger:   logger,
 	}
 
-	// Build the set of paths to watch with fsnotify:
-	// each scan root + state.toml + machine.toml.
+	// Build the set of roots to watch with fsnotify. The loop walks each
+	// scan root recursively and adds every subdirectory; new directories
+	// created at runtime get added on the fly. state.toml and machine.toml
+	// are individual file watches added alongside the scan roots.
 	var watchPaths []string
 	for _, root := range machine.Discovery.ScanRoots {
 		expanded := config.ExpandPath(root)
@@ -286,44 +300,126 @@ func startReconcileDaemon(ctx context.Context, logger *slog.Logger) {
 	startReconcileLoop(ctx, r, reconcileInterval, watchPaths, logger)
 }
 
-// startReconcileLoop starts two reconcile triggers in the given context:
-//  1. A time.Ticker at reconcileInterval (safety-net periodic pass).
-//  2. fsnotify watches on every scan root directory, state.toml, and
-//     machine.toml. On any relevant fs event, reconcile fires after a
-//     1-second debounce.
+// startReconcileLoop wires reconcile triggers and a single serialised worker.
+// Triggers:
+//  1. An initial reconcile fired once on entry (so a fresh daemon doesn't
+//     wait the full ReconcileInterval before doing anything).
+//  2. A time.Ticker at reconcileInterval (safety net).
+//  3. fsnotify watches over every directory under each scan root, plus
+//     state.toml and machine.toml. New directories created under a scan
+//     root are added to the watch on the fly. Events on dotkeeper.toml,
+//     state.toml, or machine.toml fire reconcile after a 1-second debounce.
 //
-// The loop logs errors but never aborts — individual reconcile failures must
-// not bring down the daemon.
-func startReconcileLoop(ctx context.Context, r *reconcile.Reconciler, interval time.Duration, watchPaths []string, logger *slog.Logger) {
-	ticker := time.NewTicker(interval)
+// All triggers funnel into a single buffered channel of size 1. A single
+// worker goroutine drains it. Triggers that arrive while reconcile is
+// already running or already pending are dropped (not queued) — at most
+// one extra reconcile is ever pending, which is exactly what we want.
+//
+// The function returns once the watcher is initialised; the goroutines run
+// until ctx is cancelled. Failures are logged but never abort the loop.
+func startReconcileLoop(
+	ctx context.Context,
+	r reconcilerIface,
+	interval time.Duration,
+	watchPaths []string,
+	logger *slog.Logger,
+) {
+	// Single-slot pending channel: triggers send "request reconcile" without
+	// blocking; the worker drains them one at a time. Dropped sends are fine
+	// — if a reconcile is already pending, queuing a second one would do the
+	// same work twice.
+	pending := make(chan string, 1)
 
-	// fsnotify watcher.
+	// requestReconcile is called by every trigger source. Non-blocking send
+	// with a default branch: if the channel is full, drop and warn-log.
+	requestReconcile := func(reason string) {
+		select {
+		case pending <- reason:
+		default:
+			logger.DebugContext(ctx, "reconcile already pending, dropping trigger", "reason", reason)
+		}
+	}
+
+	// --- Worker goroutine: serialises every reconcile call. ---
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case reason := <-pending:
+				logger.InfoContext(ctx, "reconcile triggered", "by", reason)
+				if _, err := r.Reconcile(ctx); err != nil {
+					logger.ErrorContext(ctx, "reconcile failed", "err", err)
+				}
+			}
+		}
+	}()
+
+	// --- Initial reconcile: fire once before the loop so the daemon is
+	// useful from the moment it starts, not 5 minutes later. ---
+	requestReconcile("initial")
+
+	// --- fsnotify watcher. ---
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		logger.WarnContext(ctx, "could not start fsnotify watcher", "err", err)
 	} else {
+		// For each watch path, decide whether it's a directory (scan root —
+		// walk recursively) or a file (state.toml / machine.toml — add as-is).
 		for _, p := range watchPaths {
-			if err := watcher.Add(p); err != nil {
-				logger.WarnContext(ctx, "fsnotify watch failed", "path", p, "err", err)
+			info, err := os.Stat(p)
+			if err != nil {
+				// File doesn't exist yet (e.g. state.toml on first boot).
+				// Watch the parent dir so we see the eventual CREATE.
+				parent := filepath.Dir(p)
+				if _, perr := os.Stat(parent); perr == nil {
+					if werr := watcher.Add(parent); werr != nil {
+						logger.WarnContext(ctx, "fsnotify watch failed",
+							"path", parent, "err", werr)
+					}
+				}
+				continue
+			}
+			if info.IsDir() {
+				addWatchRecursive(watcher, p, logger)
+			} else {
+				if werr := watcher.Add(p); werr != nil {
+					logger.WarnContext(ctx, "fsnotify watch failed",
+						"path", p, "err", werr)
+				}
 			}
 		}
 	}
 
+	// --- Trigger goroutine: drives ticker + fsnotify into requestReconcile. ---
 	go func() {
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		if watcher != nil {
 			defer func() { _ = watcher.Close() }()
 		}
 
-		// debounceTimer fires the next reconcile after 1s of silence.
-		var debounce *time.Timer
-
-		runReconcile := func(trigger string) {
-			logger.InfoContext(ctx, "reconcile triggered", "by", trigger)
-			if _, err := r.Reconcile(ctx); err != nil {
-				logger.ErrorContext(ctx, "reconcile failed", "err", err)
-			}
+		// Hoist the watcher channels — read once, with nil if no watcher.
+		// A receive from a nil channel blocks forever, which makes those
+		// select cases inert (cleaner than the closure-returning-channel
+		// trick).
+		var events <-chan fsnotify.Event
+		var errs <-chan error
+		if watcher != nil {
+			events = watcher.Events
+			errs = watcher.Errors
 		}
+
+		// debounce coalesces bursts of fs events (e.g. an editor rewriting
+		// a file) into a single reconcile request 1s after the last event.
+		var debounce *time.Timer
+		// Defensive: stop the timer on shutdown so the AfterFunc doesn't
+		// fire after ctx cancellation.
+		defer func() {
+			if debounce != nil {
+				debounce.Stop()
+			}
+		}()
 
 		for {
 			select {
@@ -331,37 +427,15 @@ func startReconcileLoop(ctx context.Context, r *reconcile.Reconciler, interval t
 				return
 
 			case <-ticker.C:
-				runReconcile("timer")
+				requestReconcile("timer")
 
-			case event, ok := <-func() <-chan fsnotify.Event {
-				if watcher != nil {
-					return watcher.Events
-				}
-				return nil
-			}():
+			case event, ok := <-events:
 				if !ok {
 					return
 				}
-				// Only care about dotkeeper.toml create/write/remove events.
-				if filepath.Base(event.Name) != "dotkeeper.toml" &&
-					filepath.Base(event.Name) != "machine.toml" &&
-					filepath.Base(event.Name) != "state.toml" {
-					continue
-				}
-				// Debounce: reset timer to 1s from last event.
-				if debounce != nil {
-					debounce.Stop()
-				}
-				debounce = time.AfterFunc(time.Second, func() {
-					runReconcile("fsnotify:" + event.Name)
-				})
+				handleFsnotifyEvent(ctx, event, watcher, logger, &debounce, requestReconcile)
 
-			case err, ok := <-func() <-chan error {
-				if watcher != nil {
-					return watcher.Errors
-				}
-				return nil
-			}():
+			case err, ok := <-errs:
 				if !ok {
 					return
 				}
@@ -369,4 +443,72 @@ func startReconcileLoop(ctx context.Context, r *reconcile.Reconciler, interval t
 			}
 		}
 	}()
+}
+
+// handleFsnotifyEvent processes one fsnotify event. It auto-watches new
+// directories created under any watched root and debounces dotkeeper.toml /
+// state.toml / machine.toml changes into a single reconcile request.
+func handleFsnotifyEvent(
+	ctx context.Context,
+	event fsnotify.Event,
+	watcher *fsnotify.Watcher,
+	logger *slog.Logger,
+	debounce **time.Timer,
+	requestReconcile func(string),
+) {
+	// New directory created under a watched root → walk and watch it.
+	// This makes the daemon react when a user does `mkdir <scan-root>/new-repo`
+	// then drops a dotkeeper.toml inside it.
+	if event.Op&fsnotify.Create == fsnotify.Create && watcher != nil {
+		if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
+			addWatchRecursive(watcher, event.Name, logger)
+			// Don't return — a new directory by itself doesn't warrant a
+			// reconcile (no dotkeeper.toml yet), but we also don't want the
+			// basename filter below to skip it; just fall through.
+		}
+	}
+
+	// We only reconcile in response to dotkeeper.toml / state.toml / machine.toml
+	// changes. Directory events and unrelated files are ignored.
+	base := filepath.Base(event.Name)
+	if base != "dotkeeper.toml" && base != "machine.toml" && base != "state.toml" {
+		return
+	}
+
+	if *debounce != nil {
+		(*debounce).Stop()
+	}
+	*debounce = time.AfterFunc(time.Second, func() {
+		requestReconcile("fsnotify:" + event.Name)
+	})
+}
+
+// addWatchRecursive walks root and adds every subdirectory to watcher.
+// Symlinks are not followed (filepath.Walk does not follow symlinks for
+// directories, which is what we want — symlinked dirs would risk infinite
+// recursion across user home + scan_roots).
+//
+// Errors from Add are logged but not returned: a single un-watchable
+// subdirectory shouldn't disable the whole tree.
+func addWatchRecursive(watcher *fsnotify.Watcher, root string, logger *slog.Logger) {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			// e.g. permission denied — log and skip this subtree.
+			logger.DebugContext(context.Background(), "fsnotify walk error",
+				"path", path, "err", walkErr)
+			return nil
+		}
+		if !info.IsDir() {
+			return nil
+		}
+		if werr := watcher.Add(path); werr != nil {
+			logger.DebugContext(context.Background(), "fsnotify add failed",
+				"path", path, "err", werr)
+		}
+		return nil
+	})
+	if err != nil {
+		logger.WarnContext(context.Background(), "fsnotify recursive watch incomplete",
+			"root", root, "err", err)
+	}
 }

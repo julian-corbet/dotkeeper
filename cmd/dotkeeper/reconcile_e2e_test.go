@@ -16,7 +16,8 @@ import (
 // TestE2EReconcileAddsRepoToSyncthing verifies the end-to-end reconcile path:
 // given a dotkeeper.toml in a scan root, reconcile plans and attempts to add
 // the folder to Syncthing. The Syncthing API call will fail (not running in
-// tests) but the plan itself must be non-empty for a newly discovered repo.
+// tests) but the plan itself must contain an AddSyncthingFolder action for
+// the discovered repo — that is the contract the test name promises.
 func TestE2EReconcileAddsRepoToSyncthing(t *testing.T) {
 	binary := buildTestBinary(t)
 	tmp := t.TempDir()
@@ -34,17 +35,18 @@ func TestE2EReconcileAddsRepoToSyncthing(t *testing.T) {
 	writeMachineV2WithScanRoot(t, tmp, "test-machine", scanRoot)
 
 	// Reconcile — Syncthing is not running so the apply will fail,
-	// but the command itself should exit 0 (reconcile continues-on-error)
-	// and describe the actions it attempted.
+	// but the plan itself must include AddSyncthingFolder for the repo.
 	output, code := runDotkeeper(t, binary, tmp, "reconcile")
-	// Exit 1 is expected when apply fails; what we check is the plan was built.
-	// If code == 0 great; if code == 1 that means Syncthing apply failed which is fine.
 	if code > 1 {
 		t.Errorf("reconcile exit code = %d; expected 0 or 1\noutput: %s", code, output)
 	}
-	// The plan should mention the repo folder ID.
-	if !strings.Contains(output, "myrepo") {
-		t.Errorf("reconcile output should mention discovered repo 'myrepo'; got:\n%s", output)
+	// The plan must contain an AddSyncthingFolder action for our repo.
+	// AddSyncthingFolder.Describe() format: "add Syncthing folder <id> at <path>".
+	if !strings.Contains(output, "add Syncthing folder dk-myrepo") {
+		t.Errorf("reconcile output should contain AddSyncthingFolder action for dk-myrepo; got:\n%s", output)
+	}
+	if !strings.Contains(output, repoDir) {
+		t.Errorf("reconcile output should reference the repo path %q; got:\n%s", repoDir, output)
 	}
 }
 
@@ -116,19 +118,24 @@ func TestE2EStartTriggersReconcileOnFileChange(t *testing.T) {
 	mustGitInit(t, repoDir)
 	writeDotKeeperToml(t, repoDir, "newrepo")
 
-	// Wait for reconcile to fire (fsnotify + 1s debounce + processing).
-	deadline := time.Now().Add(10 * time.Second)
+	// The daemon logs "reconcile daemon starting" on boot AND
+	// "reconcile triggered" on every trigger (initial + timer + fsnotify).
+	// We discard everything emitted before our file change so we only count
+	// triggers that happened in response to it.
+	bootLog := logBuf.String()
+	bootTriggerCount := strings.Count(bootLog, "reconcile triggered")
+
+	// Wait for a NEW "reconcile triggered" line (fsnotify + 1s debounce + processing).
+	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		if strings.Contains(logBuf.String(), "reconcile") {
-			break
+		if strings.Count(logBuf.String(), "reconcile triggered") > bootTriggerCount {
+			return
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
 
-	log := logBuf.String()
-	if !strings.Contains(log, "reconcile") {
-		t.Errorf("daemon did not log a reconcile pass after file change; log:\n%s", log)
-	}
+	t.Errorf("daemon did not log a NEW 'reconcile triggered' after file change.\nbootTriggerCount=%d\nfull log:\n%s",
+		bootTriggerCount, logBuf.String())
 }
 
 // --- helpers for E2E reconcile tests ---

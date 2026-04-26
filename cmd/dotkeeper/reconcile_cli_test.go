@@ -247,7 +247,7 @@ func TestCLIHelpIncludesNewSubcommands(t *testing.T) {
 }
 
 // TestCLIReconcileHelp verifies that 'dotkeeper reconcile --help' exits 0
-// and describes the optional path argument.
+// and describes the command.
 func TestCLIReconcileHelp(t *testing.T) {
 	binary := buildTestBinary(t)
 	tmp := t.TempDir()
@@ -258,6 +258,22 @@ func TestCLIReconcileHelp(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(output), "reconcile") {
 		t.Errorf("reconcile --help missing description: %q", output)
+	}
+}
+
+// TestCLIReconcileRejectsPositionalArg verifies that 'dotkeeper reconcile <path>'
+// errors out — the optional path-argument feature was removed (until a
+// scoped-reconcile implementation lands). This guards against silently
+// accepting an arg the command does nothing with.
+func TestCLIReconcileRejectsPositionalArg(t *testing.T) {
+	binary := buildTestBinary(t)
+	tmp := t.TempDir()
+
+	writeMinimalMachineV2(t, tmp, "test-machine")
+
+	_, code := runDotkeeper(t, binary, tmp, "reconcile", "/tmp/some/path")
+	if code == 0 {
+		t.Error("reconcile with positional arg should fail (feature not yet implemented)")
 	}
 }
 

@@ -37,6 +37,13 @@ var (
 )
 
 func main() {
+	// Wire SIGINT/SIGTERM into the root context so cmd.Context() inside
+	// every subcommand carries cancellation. Without ExecuteContext, a
+	// long-running reconcile (or any blocking subcommand work) would not
+	// observe Ctrl-C until it returned naturally.
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
 	root := &cobra.Command{
 		Use:   "dotkeeper",
 		Short: "P2P repo sync with git history",
@@ -62,7 +69,7 @@ func main() {
 	root.AddCommand(trackCmd())
 	root.AddCommand(untrackCmd())
 
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
 	}
 }
@@ -791,8 +798,9 @@ func startCmd() *cobra.Command {
 			"filesystem changes in scan roots, state.toml, and machine.toml.\n\n" +
 			"Use --debug to raise the log level to DEBUG.",
 		Run: func(cmd *cobra.Command, args []string) {
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-			defer cancel()
+			// SIGINT/SIGTERM is wired into the root context in main(), so
+			// cmd.Context() already cancels on signal. No need to redo it.
+			ctx := cmd.Context()
 
 			// Configure slog handler.
 			logLevel := slog.LevelInfo
