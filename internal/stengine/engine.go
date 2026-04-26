@@ -244,11 +244,11 @@ func (e *Engine) generateConfig(configFile, certFile, keyFile string) error {
 	cfg.Options.NATEnabled = true
 
 	// Disable only privacy-invasive and self-management features
-	cfg.Options.URAccepted = -1           // no usage reporting
-	cfg.Options.CREnabled = false         // no crash reporting
-	cfg.Options.CRURL = ""                // blank out crash-report endpoint
-	cfg.Options.AutoUpgradeIntervalH = 0  // we manage our own binary
-	cfg.Options.StartBrowser = false      // headless
+	cfg.Options.URAccepted = -1          // no usage reporting
+	cfg.Options.CREnabled = false        // no crash reporting
+	cfg.Options.CRURL = ""               // blank out crash-report endpoint
+	cfg.Options.AutoUpgradeIntervalH = 0 // we manage our own binary
+	cfg.Options.StartBrowser = false     // headless
 
 	// Write config.xml with restricted permissions (contains API key)
 	fd, err := os.OpenFile(configFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
