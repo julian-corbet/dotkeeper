@@ -983,7 +983,6 @@ func buildDoctorChecks() []doctor.Check {
 		doctor.PeersCheck{Client: client},
 		doctor.FoldersCheck{Client: client},
 		doctor.GitRemotesCheck{},
-		doctor.BackupTimerCheck{Manager: mgr},
 		doctor.ConflictsCheck{},
 	}
 }

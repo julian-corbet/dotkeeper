@@ -551,44 +551,7 @@ func (c GitRemotesCheck) Run(ctx context.Context) Result {
 	}
 }
 
-// --- 8. backup timer --------------------------------------------------
-
-// BackupTimerCheck queries the platform service manager for the git
-// backup timer. OK when active (with next-run time when available),
-// Warn when inactive.
-//
-// In v0.5, git backup is driven by the reconcile daemon's timer rather
-// than a separate systemd timer. This check now reports whether the
-// dotkeeper-syncthing service is running (which implies the daemon is
-// active). The hint points users to the service unit, not install-timer.
-type BackupTimerCheck struct {
-	Manager service.Manager
-}
-
-func (BackupTimerCheck) Name() string { return "backup timer" }
-func (c BackupTimerCheck) Run(_ context.Context) Result {
-	if c.Manager == nil {
-		return Result{Name: "backup timer", Outcome: Warn, Detail: "no service manager available"}
-	}
-	if !c.Manager.IsTimerActive() {
-		return Result{
-			Name:    "backup timer",
-			Outcome: Warn,
-			Detail:  "inactive",
-			Hint:    "enable the dotkeeper-syncthing service: systemctl --user enable --now dotkeeper-syncthing.service",
-		}
-	}
-	// Rich next-run info when the backend provides it (systemd today).
-	if rich, ok := c.Manager.(interface{ TimerNext() service.TimerNextRun }); ok {
-		next := rich.TimerNext()
-		if next.Raw != "" {
-			return Result{Name: "backup timer", Outcome: OK, Detail: "active, next run " + next.Raw}
-		}
-	}
-	return Result{Name: "backup timer", Outcome: OK, Detail: "active"}
-}
-
-// --- 9. conflicts -----------------------------------------------------
+// --- 8. conflicts -----------------------------------------------------
 
 // ConflictsCheck scans every managed folder for pending sync-conflict
 // files. OK when zero; Warn when any exist.

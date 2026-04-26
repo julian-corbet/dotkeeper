@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -64,41 +63,6 @@ WantedBy=default.target
 	return exec.Command("systemctl", "--user", "enable", "--now", "dotkeeper-syncthing.service").Run()
 }
 
-func (s *Systemd) InstallTimer(binaryPath, configPath, onCalendar string) error {
-	svc := fmt.Sprintf(`[Unit]
-Description=dotkeeper git auto-backup
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart="%s" sync
-`, binaryPath)
-
-	tmr := fmt.Sprintf(`[Unit]
-Description=dotkeeper git auto-backup timer
-
-[Timer]
-OnCalendar=%s
-Persistent=true
-RandomizedDelaySec=30
-
-[Install]
-WantedBy=timers.target
-`, onCalendar)
-
-	if err := s.writeUnit("dotkeeper-sync.service", svc); err != nil {
-		return err
-	}
-	if err := s.writeUnit("dotkeeper-sync.timer", tmr); err != nil {
-		return err
-	}
-	if err := s.DaemonReload(); err != nil {
-		return err
-	}
-	return exec.Command("systemctl", "--user", "enable", "--now", "dotkeeper-sync.timer").Run()
-}
-
 func (s *Systemd) StartSyncthing() error {
 	return exec.Command("systemctl", "--user", "start", "dotkeeper-syncthing.service").Run()
 }
@@ -109,10 +73,6 @@ func (s *Systemd) StopSyncthing() error {
 
 func (s *Systemd) IsSyncthingRunning() bool {
 	return exec.Command("systemctl", "--user", "is-active", "--quiet", "dotkeeper-syncthing.service").Run() == nil
-}
-
-func (s *Systemd) IsTimerActive() bool {
-	return exec.Command("systemctl", "--user", "is-active", "--quiet", "dotkeeper-sync.timer").Run() == nil
 }
 
 // SyncthingStatus returns the ActiveState/SubState/since triple for the
@@ -128,26 +88,6 @@ func (s *Systemd) SyncthingStatus() SyncthingUnitStatus {
 		return SyncthingUnitStatus{}
 	}
 	return parseSystemctlShow(string(out))
-}
-
-// TimerNext returns the scheduled next-fire time for the
-// dotkeeper-sync.timer user unit. Zero-valued if the timer is inactive
-// or systemd doesn't populate the property yet (can happen in the few
-// seconds after `enable --now`).
-//
-// We pass --timestamp=unix so recent systemd versions (≥ v245) return
-// a stable "@<seconds>" form. Older systemds return a pretty string
-// like "Wed 2026-04-22 02:05:20 CEST" which the parser also handles.
-func (s *Systemd) TimerNext() TimerNextRun {
-	out, err := exec.Command("systemctl", "--user", "show",
-		"dotkeeper-sync.timer",
-		"--property=NextElapseUSecRealtime",
-		"--timestamp=unix",
-	).Output()
-	if err != nil {
-		return TimerNextRun{}
-	}
-	return parseTimerNext(string(out))
 }
 
 // parseSystemctlShow parses the key=value output of `systemctl show`.
@@ -181,47 +121,6 @@ func parseSystemctlShow(raw string) SyncthingUnitStatus {
 		}
 	}
 	return st
-}
-
-// parseTimerNext extracts NextElapseUSecRealtime from a `systemctl show`
-// block. Supported value forms:
-//
-//   - "@<seconds>"        — produced with --timestamp=unix (newer systemd).
-//   - "<microseconds>"    — legacy bare integer form.
-//   - "Wed 2026-04-22 02:05:20 CEST" — pretty form on older systemd without
-//     the --timestamp flag.
-//   - "" or "0"           — timer inactive.
-func parseTimerNext(raw string) TimerNextRun {
-	for _, line := range strings.Split(raw, "\n") {
-		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
-		if !ok || k != "NextElapseUSecRealtime" {
-			continue
-		}
-		if v == "" || v == "0" {
-			return TimerNextRun{}
-		}
-		// Unix seconds form: "@1776816320".
-		if strings.HasPrefix(v, "@") {
-			secs, err := strconv.ParseInt(v[1:], 10, 64)
-			if err != nil || secs <= 0 {
-				return TimerNextRun{}
-			}
-			t := time.Unix(secs, 0)
-			return TimerNextRun{Next: t, Raw: t.Local().Format("Mon 2006-01-02 15:04 MST")}
-		}
-		// Bare integer: treat as microseconds since epoch.
-		if us, err := strconv.ParseInt(v, 10, 64); err == nil && us > 0 {
-			t := time.Unix(0, us*1000)
-			return TimerNextRun{Next: t, Raw: t.Local().Format("Mon 2006-01-02 15:04 MST")}
-		}
-		// Pretty form: use it verbatim as Raw and try to parse Next.
-		trimmed := trimWeekdayAndZone(v)
-		if t, err := time.ParseInLocation("2006-01-02 15:04:05", trimmed, time.Local); err == nil {
-			return TimerNextRun{Next: t, Raw: v}
-		}
-		return TimerNextRun{Raw: v}
-	}
-	return TimerNextRun{}
 }
 
 // trimWeekdayAndZone strips a leading weekday abbreviation (e.g. "Sat ")
