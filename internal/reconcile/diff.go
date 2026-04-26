@@ -111,11 +111,18 @@ func Diff(desired Desired, observed Observed) Plan {
 			})
 		}
 		if repo.HeadCommit != "" {
-			// TODO(v0.5/schema-types): Compare repo.HeadCommit against
-			// StateV2.LastPushedCommit once schema-types is merged. For now we
-			// emit GitPushRepo whenever there is any known HEAD commit, which is
-			// idempotent because git push is a no-op when already up-to-date.
-			plan = append(plan, GitPushRepo{RepoPath: repo.Path})
+			// Only push if HEAD differs from the last successfully pushed commit
+			// recorded in state.toml. This avoids redundant pushes when the repo
+			// is already up-to-date on the remote.
+			alreadyPushed := false
+			if observed.CachedState != nil {
+				if obs, ok := observed.CachedState.ObservedRepos[repo.Path]; ok {
+					alreadyPushed = obs.LastPushedCommit == repo.HeadCommit
+				}
+			}
+			if !alreadyPushed {
+				plan = append(plan, GitPushRepo{RepoPath: repo.Path})
+			}
 		}
 	}
 

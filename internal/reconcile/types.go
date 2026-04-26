@@ -5,14 +5,15 @@
 // It provides pure-function diff over (Desired, Observed) state, a set of
 // Action types, and a Reconciler that drives the diff→apply loop.
 //
-// Schema types (MachineConfigV2, StateV2, etc.) live on the parallel branch
-// v0.5/schema-types and are represented here by local stubs.
+// Schema types (MachineConfigV2, RepoConfigV2, StateV2, etc.) are imported
+// from internal/config.
 package reconcile
 
-import "time"
+import (
+	"time"
 
-// TODO(v0.5/schema-types): Replace all stubs in this file with types from
-// the schema-types package once that branch is merged.
+	"github.com/julian-corbet/dotkeeper/internal/config"
+)
 
 // Desired represents the declarative configuration for this machine: what
 // repos should be tracked, what Syncthing folders should exist, and which
@@ -63,6 +64,44 @@ type Observed struct {
 
 	// LivePeers is the list of Syncthing devices currently known.
 	LivePeers []LivePeer
+
+	// CachedState is the last-written state.toml snapshot. It provides
+	// per-repo push history so Diff can skip pushes for commits already backed
+	// up. May be nil if the state file has not been written yet.
+	CachedState *config.StateV2
+}
+
+// BuildDesired constructs a Desired from a parsed MachineConfigV2 and the
+// per-repo configs keyed by absolute repo path. It is the canonical way to
+// translate the on-disk configuration into the form expected by Diff.
+//
+// repos may be nil or empty (e.g. on first run before discovery has run).
+func BuildDesired(machine *config.MachineConfigV2, repos map[string]*config.RepoConfigV2) Desired {
+	d := Desired{
+		Repos: make(map[string]RepoDesired, len(repos)),
+	}
+	if machine != nil {
+		d.MachineName = machine.Name
+		for _, p := range machine.DefaultShareWith {
+			d.Peers = append(d.Peers, PeerDesired{Name: p})
+		}
+	}
+	for path, r := range repos {
+		if r == nil {
+			continue
+		}
+		shareWith := r.Sync.ShareWith
+		if len(shareWith) == 0 && machine != nil {
+			shareWith = machine.DefaultShareWith
+		}
+		d.Repos[path] = RepoDesired{
+			Path:              path,
+			SyncthingFolderID: r.Sync.SyncthingFolderID,
+			Ignore:            r.Sync.Ignore,
+			ShareWith:         shareWith,
+		}
+	}
+	return d
 }
 
 // FolderObs is the observed state of a single Syncthing folder.
