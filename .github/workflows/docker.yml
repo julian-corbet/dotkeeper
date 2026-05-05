@@ -3,7 +3,7 @@ name: Docker
 on:
   release:
     types: [published]
-  # Also build on pushes to main for :latest tag
+  # Build on pushes to main as a Dockerfile smoke test; release events publish.
   push:
     branches: [main]
     paths:
@@ -12,6 +12,7 @@ on:
       - 'go.mod'
       - 'go.sum'
       - 'Dockerfile'
+      - '.github/workflows/docker.yml'
 
 # Least privilege at workflow level; the one job below elevates only what it needs.
 permissions: read-all
@@ -19,7 +20,7 @@ permissions: read-all
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Pushes image to GHCR; needs write on packages.
+    # Release events push to GHCR; main pushes only build the image.
     permissions:
       contents: read
       packages: write
@@ -35,6 +36,7 @@ jobs:
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
 
       - name: Log in to GHCR
+        if: github.event_name == 'release'
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           registry: ghcr.io
@@ -64,8 +66,8 @@ jobs:
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
-          push: true
           platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'release' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
