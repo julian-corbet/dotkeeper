@@ -10,6 +10,8 @@
 package reconcile
 
 import (
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
@@ -42,6 +44,21 @@ type RepoDesired struct {
 
 	// ShareWith is the list of peer device IDs this folder should be shared with.
 	ShareWith []string
+
+	// CommitPolicy controls whether and when dotkeeper may auto-commit and push.
+	CommitPolicy string
+
+	// IdleSeconds is the quiet period required by the "on-idle" policy.
+	IdleSeconds uint
+
+	// GitInterval controls the "timer" policy and push cadence.
+	GitInterval string
+
+	// SkipSlots lists machine slots that should not run git backups.
+	SkipSlots []uint
+
+	// MachineSlot is copied from machine.toml for skip-slot evaluation.
+	MachineSlot uint
 }
 
 // PeerDesired is the desired state for a single Syncthing peer.
@@ -85,13 +102,36 @@ func BuildDesired(machine *config.MachineConfigV2, repos map[string]*config.Repo
 	if machine != nil {
 		d.MachineName = machine.Name
 	}
-	// Peers are sourced exclusively from state.Peers (which carries DeviceIDs
-	// learned during pairing). DefaultShareWith is a per-repo fallback share
-	// list only — it must not inflate the peer roster.
+	// Peers may be declared in machine.toml (Home Manager/Nix friendly) and/or
+	// added imperatively to state.toml. Merge both sources by device ID.
+	peersByName := make(map[string]string)
+	seenPeerIDs := make(map[string]bool)
+	addPeer := func(p config.PeerEntry) {
+		if p.Name == "" || p.DeviceID == "" || seenPeerIDs[p.DeviceID] {
+			return
+		}
+		seenPeerIDs[p.DeviceID] = true
+		peersByName[p.Name] = p.DeviceID
+		d.Peers = append(d.Peers, PeerDesired{Name: p.Name, DeviceID: p.DeviceID})
+	}
+	if machine != nil {
+		for _, p := range machine.Peers {
+			addPeer(p)
+		}
+	}
 	if state != nil {
 		for _, p := range state.Peers {
-			d.Peers = append(d.Peers, PeerDesired{Name: p.Name, DeviceID: p.DeviceID})
+			addPeer(p)
 		}
+	}
+
+	defaultCommitPolicy := "manual"
+	defaultGitInterval := "hourly"
+	var machineSlot uint
+	if machine != nil {
+		defaultCommitPolicy = machine.DefaultCommitPolicy
+		defaultGitInterval = machine.DefaultGitInterval
+		machineSlot = machine.Slot
 	}
 	for path, r := range repos {
 		if r == nil {
@@ -104,15 +144,69 @@ func BuildDesired(machine *config.MachineConfigV2, repos map[string]*config.Repo
 		if len(shareWith) == 0 && machine != nil {
 			shareWith = append([]string(nil), machine.DefaultShareWith...)
 		}
+		shareWith = resolveShareWith(shareWith, d.Peers, peersByName)
 		ignore := append([]string(nil), r.Sync.Ignore...)
+		commitPolicy := r.Commit.Policy
+		if commitPolicy == "" {
+			commitPolicy = defaultCommitPolicy
+		}
+		gitInterval := r.GitBackup.Interval
+		if gitInterval == "" {
+			gitInterval = defaultGitInterval
+		}
 		d.Repos[path] = RepoDesired{
 			Path:              path,
 			SyncthingFolderID: r.Sync.SyncthingFolderID,
 			Ignore:            ignore,
 			ShareWith:         shareWith,
+			CommitPolicy:      commitPolicy,
+			IdleSeconds:       r.Commit.IdleSeconds,
+			GitInterval:       gitInterval,
+			SkipSlots:         append([]uint(nil), r.GitBackup.SkipSlots...),
+			MachineSlot:       machineSlot,
 		}
 	}
 	return d
+}
+
+func resolveShareWith(namesOrIDs []string, peers []PeerDesired, peersByName map[string]string) []string {
+	if len(namesOrIDs) == 0 {
+		out := make([]string, 0, len(peers))
+		for _, p := range peers {
+			out = append(out, p.DeviceID)
+		}
+		return out
+	}
+
+	out := make([]string, 0, len(namesOrIDs))
+	seen := make(map[string]bool, len(namesOrIDs))
+	for _, item := range namesOrIDs {
+		deviceID := ""
+		if resolved, ok := peersByName[item]; ok {
+			deviceID = resolved
+		} else if looksLikeDeviceID(item) {
+			deviceID = item
+		}
+		if deviceID == "" || seen[deviceID] {
+			continue
+		}
+		seen[deviceID] = true
+		out = append(out, deviceID)
+	}
+	return out
+}
+
+func looksLikeDeviceID(s string) bool {
+	if len(s) < 7 || !strings.Contains(s, "-") {
+		return false
+	}
+	for _, r := range s {
+		if r == '-' || (r >= 'A' && r <= 'Z') || (r >= '2' && r <= '7') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // FolderObs is the observed state of a single Syncthing folder.
@@ -140,6 +234,10 @@ type RepoObs struct {
 
 	// LastBackupAt is when this repo was last successfully pushed to a remote.
 	LastBackupAt time.Time
+
+	// LastChangeAt is the newest modification time among dirty working-tree
+	// files. It is zero when the repo is clean or the timestamp is unknown.
+	LastChangeAt time.Time
 }
 
 // LivePeer is the observed connection state of a single Syncthing device.
@@ -152,6 +250,20 @@ type LivePeer struct {
 
 	// Connected reports whether this device is currently online.
 	Connected bool
+}
+
+// DesiredForPath returns the desired repo settings for path, or false when
+// the path is not managed by dotkeeper's declarative config.
+func (d Desired) DesiredForPath(path string) (RepoDesired, bool) {
+	if d.Repos == nil {
+		return RepoDesired{}, false
+	}
+	r, ok := d.Repos[path]
+	return r, ok
+}
+
+func (r RepoDesired) slotSkipped() bool {
+	return slices.Contains(r.SkipSlots, r.MachineSlot)
 }
 
 // Action describes a single idempotent side-effect that the reconciler should
@@ -190,6 +302,17 @@ type UpdateSyncthingFolderDevices struct {
 
 func (a UpdateSyncthingFolderDevices) Describe() string {
 	return "update devices for Syncthing folder " + a.FolderID
+}
+
+// AddSyncthingDevice is emitted when a desired peer is missing from the
+// Syncthing device roster.
+type AddSyncthingDevice struct {
+	Name     string
+	DeviceID string
+}
+
+func (a AddSyncthingDevice) Describe() string {
+	return "add Syncthing peer " + a.Name
 }
 
 // GitCommitDirty is emitted when a tracked repo has uncommitted changes that

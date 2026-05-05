@@ -67,6 +67,10 @@ func TestReconcilerContinuesOnError(t *testing.T) {
 			{Path: "/b", IsDirty: true},
 		},
 	}
+	desired := Desired{Repos: map[string]RepoDesired{
+		"/a": {Path: "/a", CommitPolicy: "timer", GitInterval: "hourly"},
+		"/b": {Path: "/b", CommitPolicy: "timer", GitInterval: "hourly"},
+	}}
 
 	firstAction := GitCommitDirty{RepoPath: "/a"}
 	sentinel := errors.New("commit failed")
@@ -77,7 +81,7 @@ func TestReconcilerContinuesOnError(t *testing.T) {
 	}
 
 	r := &Reconciler{
-		Desired:  func(_ context.Context) (Desired, error) { return Desired{}, nil },
+		Desired:  func(_ context.Context) (Desired, error) { return desired, nil },
 		Observed: func(_ context.Context) (Observed, error) { return observed, nil },
 		Applier:  stub,
 		Logger:   stubLogger(),

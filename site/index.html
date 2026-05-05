@@ -29,7 +29,7 @@
   <div class="hero-content">
     <h1>dotkeeper</h1>
     <p class="tagline">Keep every machine in sync</p>
-    <p class="subtitle">Real-time P2P file sync powered by Syncthing. Automatic git backup on schedule. One binary, zero config servers.</p>
+    <p class="subtitle">Real-time P2P file sync powered by Syncthing. Declarative repo config, staggered git backup, and no config server.</p>
     <div class="cta">
       <a href="#install" class="btn btn-primary">Get Started</a>
       <a href="https://github.com/julian-corbet/dotkeeper" class="btn btn-secondary">View on GitHub</a>
@@ -49,13 +49,17 @@
 [dotkeeper] Syncthing identity generated
 [dotkeeper] device ID: KFZZ7TP-GH5OLNL-WNSTHWQ-...</span>
 
-<span class="prompt">$</span> dotkeeper add ~/Documents/project ~/dotfiles
-<span class="output">[dotkeeper] added: project &rarr; ~/Documents/project (git: yes)
-[dotkeeper] added: dotfiles &rarr; ~/dotfiles (git: yes)
-[dotkeeper] config updated</span>
+<span class="prompt">$</span> dotkeeper identity
+<span class="output">laptop	KFZZ7TP-GH5OLNL-WNSTHWQ-...</span>
 
-<span class="prompt">$</span> dotkeeper install-timer
-<span class="output">[dotkeeper] timer installed (daily, slot 0, systemd)</span>
+<span class="prompt">$</span> dotkeeper track ~/Documents/project
+<span class="output">[dotkeeper] tracked: /home/me/Documents/project</span>
+
+<span class="prompt">$</span> dotkeeper reconcile
+<span class="output">Plan:
+  + add Syncthing folder project
+  + share project with laptop
+  + push git backup for project</span>
 
 <span class="prompt">$</span> dotkeeper status
 <span class="output">=== Machine ===
@@ -68,11 +72,10 @@
   Folders: 3
 
 === Repos ===
-  project:  ~/Documents/project [ok, git, syncthing]
-  dotfiles: ~/dotfiles [ok, git, syncthing]
+  project: ~/Documents/project [ok, git, syncthing]
 
-=== Git Backup Timer ===
-  Status: active</span></code></pre>
+=== Reconcile ===
+  Pending actions: 0</span></code></pre>
     </div>
   </div>
 </header>
@@ -90,13 +93,13 @@
       </div>
       <div class="step">
         <div class="step-num">2</div>
-        <h3>Join</h3>
-        <p><code>dotkeeper join &lt;ID&gt;</code> on other machines. Config syncs automatically via Syncthing.</p>
+        <h3>Declare peers</h3>
+        <p>Put peer device IDs in <code>machine.toml</code>, or use <code>dotkeeper peer add</code> for imperative bootstrap scripts.</p>
       </div>
       <div class="step">
         <div class="step-num">3</div>
-        <h3>Add repos</h3>
-        <p><code>dotkeeper add ~/project</code> starts syncing. Files propagate in real-time. Git backs up on schedule.</p>
+        <h3>Track repos</h3>
+        <p>Commit <code>dotkeeper.toml</code> in each repo. Scan roots pick them up automatically; <code>dotkeeper track</code> covers out-of-root repos.</p>
       </div>
     </div>
   </div>
@@ -146,7 +149,8 @@
         |                                   |
    ~/.config/dotkeeper/              ~/.config/dotkeeper/
      machine.toml (local)              machine.toml (local)
-     config.toml  (synced)             config.toml  (synced)</code></pre>
+     state.toml   (local)              state.toml   (local)
+     dotkeeper.toml in each repo        dotkeeper.toml in each repo</code></pre>
     <div class="arch-details">
       <div class="arch-detail">
         <h3>Isolated Syncthing</h3>
@@ -154,7 +158,7 @@
       </div>
       <div class="arch-detail">
         <h3>Three-file config</h3>
-        <p><strong>machine.toml</strong> &mdash; local identity, never synced. <strong>config.toml</strong> &mdash; shared settings, synced via Syncthing. <strong>dotkeeper.toml</strong> &mdash; per-repo breadcrumb, tracked in git.</p>
+        <p><strong>machine.toml</strong> &mdash; declarative local config. <strong>state.toml</strong> &mdash; tool-owned runtime state. <strong>dotkeeper.toml</strong> &mdash; per-repo desired state tracked in git.</p>
       </div>
       <div class="arch-detail">
         <h3>Smart .stignore</h3>
@@ -182,7 +186,7 @@
         <pre><code>git clone https://github.com/julian-corbet/dotkeeper
 cd dotkeeper
 make install</code></pre>
-        <p>Requires Go 1.22+ and git.</p>
+        <p>Requires Go 1.26+ and git.</p>
       </div>
     </div>
   </div>
@@ -194,15 +198,14 @@ make install</code></pre>
     <table>
       <tbody>
         <tr><td><code>dotkeeper init</code></td><td>Initialize this machine</td></tr>
-        <tr><td><code>dotkeeper join &lt;ID&gt;</code></td><td>Join an existing setup</td></tr>
-        <tr><td><code>dotkeeper add &lt;path&gt;</code></td><td>Add repos to sync</td></tr>
-        <tr><td><code>dotkeeper remove &lt;name&gt;</code></td><td>Remove a repo from sync</td></tr>
-        <tr><td><code>dotkeeper pair</code></td><td>Apply config to Syncthing</td></tr>
-        <tr><td><code>dotkeeper sync</code></td><td>Run git backup now</td></tr>
+        <tr><td><code>dotkeeper identity</code></td><td>Print this machine and device ID</td></tr>
+        <tr><td><code>dotkeeper reconcile</code></td><td>Converge Syncthing and git now</td></tr>
+        <tr><td><code>dotkeeper peer add/list/remove</code></td><td>Manage imperative peers</td></tr>
+        <tr><td><code>dotkeeper track &lt;path&gt;</code></td><td>Register an out-of-root repo</td></tr>
+        <tr><td><code>dotkeeper untrack &lt;path&gt;</code></td><td>Remove an out-of-root override</td></tr>
         <tr><td><code>dotkeeper status</code></td><td>Show full status</td></tr>
-        <tr><td><code>dotkeeper install-timer</code></td><td>Install scheduled git backup</td></tr>
-        <tr><td><code>dotkeeper start</code></td><td>Start embedded Syncthing</td></tr>
-        <tr><td><code>dotkeeper stop</code></td><td>Stop Syncthing service</td></tr>
+        <tr><td><code>dotkeeper doctor</code></td><td>Run diagnostic checks</td></tr>
+        <tr><td><code>dotkeeper start</code></td><td>Run the daemon</td></tr>
       </tbody>
     </table>
   </div>

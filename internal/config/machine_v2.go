@@ -35,6 +35,12 @@ type MachineConfigV2 struct {
 	// repos with by default. Empty means share with all peers.
 	DefaultShareWith []string `toml:"default_share_with"`
 
+	// Peers is an optional declarative peer roster. It is safe for
+	// home-manager/Nix to generate because Syncthing device IDs are public
+	// identities, not private keys. Imperative peer commands may still add
+	// peers to state.toml; callers merge both sources.
+	Peers []PeerEntry `toml:"peers"`
+
 	// Discovery configures how dotkeeper finds managed repos on this machine.
 	Discovery DiscoveryConfig `toml:"discovery"`
 
@@ -46,7 +52,7 @@ type MachineConfigV2 struct {
 // DiscoveryConfig configures scan-root–based repo discovery (ADR 0004).
 type DiscoveryConfig struct {
 	// ScanRoots are the directories dotkeeper walks looking for dotkeeper.toml
-	// files. Tilde-prefixed paths are expanded. Default: ["~/Documents/GitHub", "~/.config/notes"].
+	// files. Tilde-prefixed paths are expanded. Default: ["~/Documents/GitHub"].
 	ScanRoots []string `toml:"scan_roots"`
 	// Exclude is a list of paths to skip during discovery.
 	Exclude []string `toml:"exclude"`
@@ -69,7 +75,7 @@ func applyMachineV2Defaults(cfg *MachineConfigV2) {
 		cfg.DefaultSlotOffsetMinutes = 5
 	}
 	if len(cfg.Discovery.ScanRoots) == 0 {
-		cfg.Discovery.ScanRoots = []string{"~/Documents/GitHub", "~/.config/notes"}
+		cfg.Discovery.ScanRoots = []string{"~/Documents/GitHub"}
 	}
 	if cfg.Discovery.ScanInterval == "" {
 		cfg.Discovery.ScanInterval = "5m"
@@ -82,6 +88,9 @@ func applyMachineV2Defaults(cfg *MachineConfigV2) {
 	}
 	if cfg.DefaultShareWith == nil {
 		cfg.DefaultShareWith = []string{}
+	}
+	if cfg.Peers == nil {
+		cfg.Peers = []PeerEntry{}
 	}
 	if cfg.Discovery.Exclude == nil {
 		cfg.Discovery.Exclude = []string{}
@@ -133,6 +142,21 @@ func WriteMachineConfigV2(cfg *MachineConfigV2) error {
 		fmt.Fprintf(&b, "%q", s)
 	}
 	b.WriteString("]\n")
+
+	if len(cfg.Peers) > 0 {
+		b.WriteString("\n")
+		for _, p := range cfg.Peers {
+			b.WriteString("[[peers]]\n")
+			fmt.Fprintf(&b, "name = %q\n", p.Name)
+			fmt.Fprintf(&b, "device_id = %q\n", p.DeviceID)
+			if p.LearnedAt.IsZero() {
+				fmt.Fprintf(&b, "learned_at = %s\n", p.LearnedAt.UTC().Format("2006-01-02T15:04:05Z07:00"))
+			} else {
+				fmt.Fprintf(&b, "learned_at = %s\n", p.LearnedAt.UTC().Format("2006-01-02T15:04:05Z07:00"))
+			}
+			b.WriteString("\n")
+		}
+	}
 
 	b.WriteString("\n[discovery]\n")
 	b.WriteString("scan_roots = [\n")

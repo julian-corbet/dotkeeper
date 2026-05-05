@@ -23,7 +23,7 @@ func TestMachineConfigV2RoundTrip(t *testing.T) {
 		DefaultGitInterval:  "hourly",
 		ReconcileInterval:   "5m",
 		Discovery: DiscoveryConfig{
-			ScanRoots:    []string{"~/Documents", "~/.config/notes"},
+			ScanRoots:    []string{"~/Documents", "~/.config/nvim"},
 			ScanDepth:    3,
 			ScanInterval: "5m",
 		},

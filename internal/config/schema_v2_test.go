@@ -28,14 +28,17 @@ func TestMachineV2Defaults(t *testing.T) {
 	if cfg.ReconcileInterval != "5m" {
 		t.Errorf("ReconcileInterval = %q, want %q", cfg.ReconcileInterval, "5m")
 	}
-	if len(cfg.Discovery.ScanRoots) != 2 {
-		t.Errorf("ScanRoots has %d entries, want 2", len(cfg.Discovery.ScanRoots))
+	if len(cfg.Discovery.ScanRoots) != 1 {
+		t.Errorf("ScanRoots has %d entries, want 1", len(cfg.Discovery.ScanRoots))
 	}
 	if cfg.Discovery.ScanInterval != "5m" {
 		t.Errorf("ScanInterval = %q, want %q", cfg.Discovery.ScanInterval, "5m")
 	}
 	if cfg.Discovery.ScanDepth != 3 {
 		t.Errorf("ScanDepth = %d, want 3", cfg.Discovery.ScanDepth)
+	}
+	if cfg.Peers == nil {
+		t.Error("Peers should not be nil")
 	}
 }
 
@@ -89,7 +92,10 @@ func TestMachineV2RoundTrip(t *testing.T) {
 		DefaultGitInterval:       "daily",
 		DefaultSlotOffsetMinutes: 7,
 		DefaultShareWith:         []string{"laptop", "server"},
-		ReconcileInterval:        "3m",
+		Peers: []PeerEntry{
+			{Name: "laptop", DeviceID: "DEV-L", LearnedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)},
+		},
+		ReconcileInterval: "3m",
 		Discovery: DiscoveryConfig{
 			ScanRoots:    []string{"~/Documents/GitHub", "~/Projects"},
 			Exclude:      []string{"~/Documents/GitHub/some-fork"},
@@ -130,6 +136,9 @@ func TestMachineV2RoundTrip(t *testing.T) {
 	}
 	if len(loaded.DefaultShareWith) != len(original.DefaultShareWith) {
 		t.Errorf("DefaultShareWith len = %d, want %d", len(loaded.DefaultShareWith), len(original.DefaultShareWith))
+	}
+	if len(loaded.Peers) != 1 || loaded.Peers[0].Name != "laptop" || loaded.Peers[0].DeviceID != "DEV-L" {
+		t.Errorf("Peers = %+v, want laptop/DEV-L", loaded.Peers)
 	}
 	if loaded.ReconcileInterval != original.ReconcileInterval {
 		t.Errorf("ReconcileInterval = %q, want %q", loaded.ReconcileInterval, original.ReconcileInterval)
@@ -351,6 +360,7 @@ func TestStateV2RoundTrip(t *testing.T) {
 		},
 		LastSeenPeers: map[string]time.Time{
 			"EEEEEEE-LLLLLLL-1111111-2222222-3333333-4444444-5555555-6666666": now,
+			"FFFFFFF-LLLLLLL-1111111-2222222-3333333-4444444-5555555-6666666": now,
 		},
 	}
 
@@ -403,8 +413,8 @@ func TestStateV2RoundTrip(t *testing.T) {
 	if obs.LastBackupAt.IsZero() {
 		t.Error("LastBackupAt should not be zero after round-trip")
 	}
-	if len(loaded.LastSeenPeers) != 1 {
-		t.Errorf("LastSeenPeers len = %d, want 1", len(loaded.LastSeenPeers))
+	if len(loaded.LastSeenPeers) != 2 {
+		t.Errorf("LastSeenPeers len = %d, want 2", len(loaded.LastSeenPeers))
 	}
 }
 

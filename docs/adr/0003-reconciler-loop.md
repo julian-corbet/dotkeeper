@@ -48,7 +48,7 @@ Four ways to invoke reconcile:
 2. **Periodic timer** (`machine.reconcile_interval`, default 5 min) — a
    safety net in case an inotify event is missed or a remote change arrived
    without local filesystem activity.
-3. **Explicit `dotkeeper reconcile [<path>]`** — one-shot apply, blocks
+3. **Explicit `dotkeeper reconcile`** — one-shot apply, blocks
    until done, exits with success/failure codes suitable for scripting.
 4. **Local webhook** (future): dotkeeper listens on a local HTTP socket;
    `POST /reconcile` triggers an immediate pass. Useful for git hooks, CI
@@ -59,13 +59,13 @@ Four ways to invoke reconcile:
 Shrinks dramatically. What remains:
 
 - `dotkeeper start` — run the daemon (systemd target)
-- `dotkeeper reconcile [<path>]` — force a pass
+- `dotkeeper reconcile` — force a pass
 - `dotkeeper identity` — print this machine's Syncthing device ID
-- `dotkeeper track <path>` — register a path outside scan roots
+- `dotkeeper peer add/list/remove` — manage imperative peers in `state.toml`
+- `dotkeeper track <path>` — bootstrap and register a path outside scan roots
 - `dotkeeper untrack <path>` — deregister a tracked override
 - `dotkeeper status` — current state snapshot (last reconcile time, tracked repos, mesh peers, pending work)
 - `dotkeeper doctor` — health checks
-- `dotkeeper logs` — tail the journal for this unit
 
 Removed: `add`, `remove`, `join`, `pair`, `install-timer`, `stop`, `sync`.
 Their jobs are now either (a) edit a file and commit, or (b) what the

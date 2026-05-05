@@ -131,6 +131,14 @@ func TestCLITrackAddsPath(t *testing.T) {
 	if !strings.Contains(stateData, repoDir) {
 		t.Errorf("state.toml does not contain tracked path %q\nstate:\n%s", repoDir, stateData)
 	}
+	repoConfig, err := os.ReadFile(filepath.Join(repoDir, "dotkeeper.toml"))
+	if err != nil {
+		t.Fatalf("track should create dotkeeper.toml: %v", err)
+	}
+	if !strings.Contains(string(repoConfig), "schema_version = 2") ||
+		!strings.Contains(string(repoConfig), "syncthing_folder_id = \"dk-tracked-repo-") {
+		t.Errorf("dotkeeper.toml missing bootstrap fields:\n%s", repoConfig)
+	}
 }
 
 // TestCLITrackNonRepo verifies that 'dotkeeper track <path>' rejects a path
@@ -156,6 +164,34 @@ func TestCLITrackNonRepo(t *testing.T) {
 		if strings.Contains(string(data), notARepo) {
 			t.Error("state.toml should not contain non-repo path after failed track")
 		}
+	}
+}
+
+func TestCLIPeerAddListRemove(t *testing.T) {
+	binary := buildTestBinary(t)
+	tmp := t.TempDir()
+
+	output, code := runDotkeeper(t, binary, tmp, "peer", "add", "laptop", "DEV-L")
+	if code != 0 {
+		t.Fatalf("peer add exit code = %d\noutput: %s", code, output)
+	}
+	output, code = runDotkeeper(t, binary, tmp, "peer", "list", "--json")
+	if code != 0 {
+		t.Fatalf("peer list exit code = %d\noutput: %s", code, output)
+	}
+	if !strings.Contains(output, `"name": "laptop"`) || !strings.Contains(output, `"device_id": "DEV-L"`) {
+		t.Fatalf("peer list missing added peer:\n%s", output)
+	}
+	output, code = runDotkeeper(t, binary, tmp, "peer", "remove", "laptop")
+	if code != 0 {
+		t.Fatalf("peer remove exit code = %d\noutput: %s", code, output)
+	}
+	output, code = runDotkeeper(t, binary, tmp, "peer", "list", "--json")
+	if code != 0 {
+		t.Fatalf("peer list after remove exit code = %d\noutput: %s", code, output)
+	}
+	if strings.Contains(output, "DEV-L") {
+		t.Fatalf("removed peer still listed:\n%s", output)
 	}
 }
 

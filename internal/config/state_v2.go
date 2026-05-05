@@ -18,14 +18,12 @@ import (
 type StateV2 struct {
 	SchemaVersion int `toml:"schema_version"`
 
-	// SyncthingDeviceID is the Syncthing device ID derived from this machine's
-	// Syncthing private key.
+	// SyncthingDeviceID is the public Syncthing device ID derived from this
+	// machine's runtime Syncthing certificate.
 	SyncthingDeviceID string `toml:"syncthing_device_id"`
 
-	// Peers is the list of known mesh peers. Populated at runtime when pairing
-	// occurs; not hand-edited. In v0.5 the `dotkeeper pair` command is removed —
-	// peers are added by editing [[peers]] entries here directly or by the
-	// reconciler when it processes a Syncthing device announcement.
+	// Peers is the imperative list of known mesh peers. Declarative peers may
+	// also be generated into machine.toml; BuildDesired merges both sources.
 	Peers []PeerEntry `toml:"peers"`
 
 	// TrackedOverrides lists absolute paths to repos outside any scan root
@@ -130,9 +128,11 @@ func WriteStateV2(s *StateV2) error {
 		b.WriteString("\n")
 	}
 
-	for deviceID, ts := range s.LastSeenPeers {
+	if len(s.LastSeenPeers) > 0 {
 		b.WriteString("[last_seen_peers]\n")
-		fmt.Fprintf(&b, "%q = %s\n", sanitizeTOMLKey(deviceID), ts.UTC().Format(time.RFC3339))
+		for deviceID, ts := range s.LastSeenPeers {
+			fmt.Fprintf(&b, "%q = %s\n", sanitizeTOMLKey(deviceID), ts.UTC().Format(time.RFC3339))
+		}
 	}
 
 	return os.WriteFile(StateV2Path(), []byte(b.String()), 0o600)

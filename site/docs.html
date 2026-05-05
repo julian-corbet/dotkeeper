@@ -63,7 +63,7 @@
     <thead><tr><th>Port</th><th>Protocol</th><th>Purpose</th></tr></thead>
     <tbody>
       <tr><td><code>18384</code></td><td>HTTP</td><td>REST API (loopback only)</td></tr>
-      <tr><td><code>12000</code></td><td>TCP + QUIC</td><td>Syncthing file sync</td></tr>
+      <tr><td><code>12000</code></td><td>TCP</td><td>Syncthing file sync</td></tr>
       <tr><td><code>11027</code></td><td>UDP</td><td>Local discovery</td></tr>
     </tbody>
   </table>
@@ -73,9 +73,9 @@
   <table>
     <thead><tr><th>File</th><th>Location</th><th>Purpose</th><th>Synced?</th></tr></thead>
     <tbody>
-      <tr><td><code>machine.toml</code></td><td><code>~/.config/dotkeeper/</code></td><td>Local identity (name, slot)</td><td>Never</td></tr>
-      <tr><td><code>config.toml</code></td><td><code>~/.config/dotkeeper/</code></td><td>Shared settings (machines, repos, ignore patterns)</td><td>Via Syncthing</td></tr>
-      <tr><td><code>dotkeeper.toml</code></td><td>Each managed repo</td><td>Breadcrumb log (machines, timestamps)</td><td>Via git</td></tr>
+      <tr><td><code>machine.toml</code></td><td><code>~/.config/dotkeeper/</code></td><td>Declarative local config: name, slot, peers, defaults, scan roots</td><td>Never</td></tr>
+      <tr><td><code>state.toml</code></td><td><code>~/.local/state/dotkeeper/</code></td><td>Tool-owned runtime state: Syncthing identity cache, learned peers, tracked overrides</td><td>Never</td></tr>
+      <tr><td><code>dotkeeper.toml</code></td><td>Each managed repo</td><td>Per-repo desired state</td><td>Via git</td></tr>
     </tbody>
   </table>
 </div>
@@ -87,28 +87,27 @@
   <h3>Setup</h3>
   <table>
     <tbody>
-      <tr><td><code>dotkeeper init</code></td><td>Initialize this machine. Creates identity, generates Syncthing keys, starts service. Flags: <code>--name</code>, <code>--slot</code>, <code>--force</code>.</td></tr>
-      <tr><td><code>dotkeeper join &lt;ID&gt;</code></td><td>Join an existing setup. Pass the device ID from <code>dotkeeper init</code> on the first machine. Config syncs automatically.</td></tr>
-      <tr><td><code>dotkeeper pair</code></td><td>Re-apply config. Adds all devices and folders to Syncthing. Run after config changes.</td></tr>
+      <tr><td><code>dotkeeper init</code></td><td>Initialize this machine. Creates runtime state and Syncthing identity. Flags: <code>--name</code>, <code>--slot</code>, <code>--force</code>, <code>--no-service</code>.</td></tr>
+      <tr><td><code>dotkeeper identity</code></td><td>Print this machine's name and Syncthing device ID.</td></tr>
+      <tr><td><code>dotkeeper peer add/list/remove</code></td><td>Manage imperative peers in <code>state.toml</code>. Declarative peers can live in <code>machine.toml</code>.</td></tr>
     </tbody>
   </table>
 
   <h3>Repos</h3>
   <table>
     <tbody>
-      <tr><td><code>dotkeeper add &lt;path&gt;</code></td><td>Add one or more repos to sync. Auto-detects git. Flags: <code>--no-git</code>, <code>--name</code>.</td></tr>
-      <tr><td><code>dotkeeper remove &lt;name&gt;</code></td><td>Stop syncing a repo. Files are untouched, only sync is stopped.</td></tr>
-      <tr><td><code>dotkeeper sync</code></td><td>Run git backup now on all configured repos. Pull, commit, push.</td></tr>
+      <tr><td><code>dotkeeper reconcile</code></td><td>Run one reconcile pass and apply the plan.</td></tr>
+      <tr><td><code>dotkeeper track &lt;path&gt;</code></td><td>Bootstrap <code>dotkeeper.toml</code> and register a git repo outside any scan root.</td></tr>
+      <tr><td><code>dotkeeper untrack &lt;path&gt;</code></td><td>Remove an out-of-root tracked override.</td></tr>
     </tbody>
   </table>
 
   <h3>Service</h3>
   <table>
     <tbody>
-      <tr><td><code>dotkeeper start</code></td><td>Start embedded Syncthing in foreground. Used by service managers.</td></tr>
-      <tr><td><code>dotkeeper stop</code></td><td>Stop the Syncthing service.</td></tr>
-      <tr><td><code>dotkeeper install-timer</code></td><td>Install scheduled git backup. Uses the interval from <code>config.toml</code>.</td></tr>
-      <tr><td><code>dotkeeper status</code></td><td>Show machine info, Syncthing status, repos, peers, and timer state.</td></tr>
+      <tr><td><code>dotkeeper start</code></td><td>Run embedded Syncthing and the reconcile daemon in the foreground.</td></tr>
+      <tr><td><code>dotkeeper status</code></td><td>Show machine info, Syncthing status, repos, peers, and pending work.</td></tr>
+      <tr><td><code>dotkeeper doctor</code></td><td>Run self-diagnostic checks; use <code>--json</code> for machine-readable output.</td></tr>
       <tr><td><code>dotkeeper version</code></td><td>Print version and commit.</td></tr>
     </tbody>
   </table>
@@ -120,19 +119,22 @@
 
   <h3>First machine</h3>
   <pre><code>dotkeeper init --name laptop --slot 0
-dotkeeper add ~/dotfiles ~/projects/myapp
-dotkeeper install-timer</code></pre>
+dotkeeper identity
+$EDITOR ~/.config/dotkeeper/machine.toml</code></pre>
 
   <h3>Second machine</h3>
-  <pre><code># Use the device ID shown by init on the first machine
-dotkeeper join KFZZ7TP-GH5OLNL-WNSTHWQ-...
-dotkeeper install-timer</code></pre>
-  <p>After joining, the shared config syncs automatically. All repos configured on the first machine will start syncing.</p>
+  <pre><code># Put the first machine's device ID in machine.toml, or:
+dotkeeper peer add laptop KFZZ7TP-GH5OLNL-WNSTHWQ-...
+dotkeeper reconcile</code></pre>
+  <p>Each machine keeps its own <code>machine.toml</code>. Home Manager, a flake activation script, or your own bootstrap script can generate it.</p>
 
   <h3>Adding repos later</h3>
-  <pre><code># On any machine — config syncs to all others
-dotkeeper add ~/new-project
-dotkeeper pair   # on other machines, to pick up the new repo</code></pre>
+  <pre><code># Repos under scan roots only need a committed dotkeeper.toml.
+cp dotkeeper.toml.example ~/Documents/GitHub/new-project/dotkeeper.toml
+
+# For repos outside scan roots:
+dotkeeper track ~/src/special-project
+dotkeeper reconcile</code></pre>
 </div>
 
 <!-- PLATFORMS -->
@@ -155,10 +157,9 @@ dotkeeper pair   # on other machines, to pick up the new repo</code></pre>
 <!-- GIT TIMER -->
 <div class="docs-section">
   <h2>Git timer configuration</h2>
-  <p>The git backup schedule is set in <code>config.toml</code>:</p>
-  <pre><code>[sync]
-git_interval = "daily"      # hourly, daily, weekly, monthly, 2h, 6h, 12h
-slot_offset_minutes = 5     # minutes between each machine's timer</code></pre>
+  <p>The default git backup schedule is set in <code>machine.toml</code>, with per-repo overrides in <code>dotkeeper.toml</code>:</p>
+  <pre><code>default_git_interval = "daily"       # hourly, daily, weekly, monthly, 2h, 6h, 12h
+default_slot_offset_minutes = 5      # minutes between each machine's backup slot</code></pre>
   <p>Each machine gets a <strong>slot number</strong> (set during init). The timer fires at <code>base_time + (slot * offset)</code>. With slot offset 5 and daily interval:</p>
   <ul>
     <li>Machine 0 (slot 0): 02:00</li>
@@ -183,14 +184,14 @@ __pycache__
 .DS_Store, Thumbs.db, desktop.ini
 target/, dist/, build/
 .idea/, .vscode/ (volatile state only)</code></pre>
-  <p>Customize by editing the <code>ignore</code> list in <code>config.toml</code>. Changes sync to all machines.</p>
+  <p>Customize per repo by editing the <code>[sync].ignore</code> list in <code>dotkeeper.toml</code>.</p>
 </div>
 
 <!-- SECURITY -->
 <div class="docs-section">
   <h2>Security</h2>
   <ul>
-    <li><strong>machine.toml</strong> and <strong>config.toml</strong> are created with <code>0600</code> permissions</li>
+    <li><strong>machine.toml</strong> and <strong>state.toml</strong> are created with <code>0600</code> permissions</li>
     <li><strong>config.xml</strong> (Syncthing, contains API key) is <code>0600</code></li>
     <li>Config and data directories are <code>0700</code></li>
     <li>The Syncthing API listens on <code>127.0.0.1</code> only, authenticated via API key</li>
