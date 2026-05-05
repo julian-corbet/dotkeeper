@@ -171,21 +171,69 @@ func (a *RealApplier) applyUpdateSyncthingFolderDevices(act UpdateSyncthingFolde
 // so the commit identity is controlled by the caller's environment.
 // The function is idempotent: if there is nothing staged after `git add -A`
 // it skips the commit.
+//
+// Deletion safeguard: dotkeeper auto-commit must never propagate accidental
+// deletions caused by plain `rm`, filesystem faults, or sync glitches. We
+// capture deletions the user has explicitly staged via `git rm` before
+// staging, then unstage any new deletions that `git add -A` produced.
+//
+// Local-only debug note: after a successful commit, a git note in
+// refs/notes/dotkeeper records the machine name and time. Notes are not
+// pushed by default, so commits going to a remote — including public
+// remotes — never carry machine-identifying metadata.
 func applyGitCommitDirty(act GitCommitDirty) error {
+	preDels := stagedDeletionsApplier(act.RepoPath)
+
 	if err := gitRun(act.RepoPath, "git", "add", "-A"); err != nil {
 		return fmt.Errorf("GitCommitDirty %q: stage: %w", act.RepoPath, err)
 	}
 
-	// Check whether there is anything to commit.
+	preDelSet := make(map[string]bool, len(preDels))
+	for _, f := range preDels {
+		preDelSet[f] = true
+	}
+	var unintended []string
+	for _, f := range stagedDeletionsApplier(act.RepoPath) {
+		if !preDelSet[f] {
+			unintended = append(unintended, f)
+		}
+	}
+	if len(unintended) > 0 {
+		args := append([]string{"reset", "HEAD", "--"}, unintended...)
+		_ = gitRun(act.RepoPath, "git", args...)
+	}
+
 	if gitRun(act.RepoPath, "git", "diff", "--cached", "--quiet") == nil {
-		// Nothing staged — nothing to commit. Idempotent no-op.
 		return nil
 	}
 
 	if err := gitRun(act.RepoPath, "git", "commit", "-m", act.Message); err != nil {
 		return fmt.Errorf("GitCommitDirty %q: commit: %w", act.RepoPath, err)
 	}
+
+	if cfg, err := config.LoadMachineConfigV2(); err == nil && cfg != nil {
+		note := fmt.Sprintf("machine=%s\ntime=%s\n", cfg.Name, time.Now().UTC().Format(time.RFC3339))
+		_ = gitRun(act.RepoPath, "git", "notes", "--ref=dotkeeper", "add", "-f", "-m", note, "HEAD")
+	}
+
 	return nil
+}
+
+// stagedDeletionsApplier returns paths currently staged for deletion in the
+// given repo. A nil return indicates either no deletions or a git failure;
+// both are safe to treat as "no pre-existing deletions" by callers.
+func stagedDeletionsApplier(repoPath string) []string {
+	cmd := exec.Command("git", "diff", "--cached", "--name-only", "--diff-filter=D")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return nil
+	}
+	return strings.Split(s, "\n")
 }
 
 // applyGitPushRepo pushes the current branch. The remote enforces

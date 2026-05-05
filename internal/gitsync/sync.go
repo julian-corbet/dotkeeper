@@ -53,18 +53,52 @@ func SyncRepo(repoPath, machineName string) error {
 		}
 	}
 
-	// Stage all changes
+	// Capture deletions the user has intentionally staged via `git rm`
+	// before SyncRepo ran. Those represent explicit intent and must be
+	// preserved through the safeguard below.
+	preDels := stagedDeletions(repoPath)
+
+	// Stage all working-tree changes.
 	if _, err := runCapture(repoPath, "git", "add", "-A"); err != nil {
 		return fmt.Errorf("staging failed")
 	}
 
-	// Commit if there are staged changes
+	// Unstage deletions that we ourselves just staged. Auto-commit must not
+	// propagate accidental deletions: if a tracked file disappears from the
+	// working tree without `git rm` (filesystem fault, plain `rm`, sync
+	// glitch), `git add -A` would otherwise stage the deletion and the next
+	// push would propagate it to the remote. Pre-existing `git rm`
+	// deletions captured above survive — only deletions we added are
+	// unstaged.
+	preDelSet := make(map[string]bool, len(preDels))
+	for _, f := range preDels {
+		preDelSet[f] = true
+	}
+	var unintended []string
+	for _, f := range stagedDeletions(repoPath) {
+		if !preDelSet[f] {
+			unintended = append(unintended, f)
+		}
+	}
+	if len(unintended) > 0 {
+		args := append([]string{"reset", "HEAD", "--"}, unintended...)
+		_, _ = runCapture(repoPath, "git", args...)
+		fmt.Printf("[dotkeeper] %s: skipped %d unintended deletion(s); use `git rm` to delete files intentionally\n", repoName(repoPath), len(unintended))
+	}
+
+	// Commit if there are staged changes.
+	//
+	// The commit message is a fixed, non-identifying string. Hostname and
+	// timestamp go into a local-only git note (refs/notes/dotkeeper) so
+	// commits pushed to a remote — including public remotes — never carry
+	// machine-identifying metadata. Notes are not pushed by default, so
+	// debug info stays on the originating machine.
 	if err := run(repoPath, "git", "diff", "--cached", "--quiet"); err != nil {
-		timestamp := time.Now().UTC().Format("2006-01-02 15:04 UTC")
-		msg := fmt.Sprintf("auto: %s %s", machineName, timestamp)
-		if stderr, err := runCapture(repoPath, "git", "commit", "-m", msg, "--quiet"); err != nil {
+		if stderr, err := runCapture(repoPath, "git", "commit", "-m", "auto: scheduled backup", "--quiet"); err != nil {
 			return fmt.Errorf("commit failed: %s", strings.TrimSpace(stderr))
 		}
+		note := fmt.Sprintf("machine=%s\ntime=%s\n", machineName, time.Now().UTC().Format(time.RFC3339))
+		_, _ = runCapture(repoPath, "git", "notes", "--ref=dotkeeper", "add", "-f", "-m", note, "HEAD")
 		fmt.Printf("[dotkeeper] %s: committed changes\n", repoName(repoPath))
 	}
 
@@ -231,4 +265,13 @@ func splitLines(s string) []string {
 		return nil
 	}
 	return strings.Split(s, "\n")
+}
+
+// stagedDeletions returns paths currently staged for deletion in repoPath.
+func stagedDeletions(repoPath string) []string {
+	out, err := runOutput(repoPath, "git", "diff", "--cached", "--name-only", "--diff-filter=D")
+	if err != nil {
+		return nil
+	}
+	return splitLines(out)
 }

@@ -70,20 +70,143 @@ func TestSyncRepoWithChanges(t *testing.T) {
 		t.Fatalf("SyncRepo with changes: %v", err)
 	}
 
-	// Verify commit was made
-	cmd := exec.Command("git", "log", "--oneline", "-1")
+	// Verify commit was made with the anonymous fixed message: no
+	// hostname, no timestamp, no other identifier.
+	cmd := exec.Command("git", "log", "--format=%s", "-1")
 	cmd.Dir = work
 	out, _ := cmd.Output()
-	if !strings.Contains(string(out), "auto: test-machine") {
-		t.Errorf("expected auto-commit message, got: %s", out)
+	subject := strings.TrimSpace(string(out))
+	if subject != "auto: scheduled backup" {
+		t.Errorf("commit subject = %q, want %q", subject, "auto: scheduled backup")
+	}
+	if strings.Contains(subject, "test-machine") {
+		t.Errorf("commit subject leaked machine name: %q", subject)
 	}
 
-	// Verify push happened (remote should have the commit)
-	cmd = exec.Command("git", "log", "--oneline", "origin/main", "-1")
+	// Verify the same anonymous subject was pushed to the remote.
+	cmd = exec.Command("git", "log", "--format=%s", "origin/main", "-1")
 	cmd.Dir = work
 	out, _ = cmd.Output()
-	if !strings.Contains(string(out), "auto: test-machine") {
-		t.Errorf("commit not pushed, remote log: %s", out)
+	if got := strings.TrimSpace(string(out)); got != "auto: scheduled backup" {
+		t.Errorf("remote subject = %q, want %q", got, "auto: scheduled backup")
+	}
+
+	// Verify the local-only git note carries the machine name and time.
+	// refs/notes/dotkeeper is not pushed by default, so the debug info
+	// stays on the originating machine.
+	cmd = exec.Command("git", "notes", "--ref=dotkeeper", "show", "HEAD")
+	cmd.Dir = work
+	noteOut, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("expected git note on HEAD, got error: %v", err)
+	}
+	note := string(noteOut)
+	if !strings.Contains(note, "machine=test-machine") {
+		t.Errorf("note missing machine=test-machine, got: %q", note)
+	}
+	if !strings.Contains(note, "time=") {
+		t.Errorf("note missing time=, got: %q", note)
+	}
+
+	// Verify the note was NOT pushed to the remote.
+	cmd = exec.Command("git", "ls-remote", "origin", "refs/notes/dotkeeper")
+	cmd.Dir = work
+	remoteRefs, _ := cmd.Output()
+	if strings.TrimSpace(string(remoteRefs)) != "" {
+		t.Errorf("refs/notes/dotkeeper leaked to remote: %q", remoteRefs)
+	}
+}
+
+// TestSyncRepoSkipsAccidentalDeletions verifies the safeguard that
+// dotkeeper auto-commit must not propagate file deletions caused by plain
+// `rm`, filesystem faults, or sync glitches. Only deletions explicitly
+// staged by the user via `git rm` may flow through.
+func TestSyncRepoSkipsAccidentalDeletions(t *testing.T) {
+	work := setupGitRepo(t)
+
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	// Set up: tracked file with content, committed and pushed.
+	p := filepath.Join(work, "important.txt")
+	if err := os.WriteFile(p, []byte("important data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "important.txt")
+	runGit("commit", "-m", "add important")
+	runGit("push")
+
+	// Simulate accidental deletion: plain `rm`, NOT `git rm`.
+	if err := os.Remove(p); err != nil {
+		t.Fatalf("os.Remove: %v", err)
+	}
+
+	// Run sync. Must not propagate the deletion.
+	if err := SyncRepo(work, "test-machine"); err != nil {
+		t.Fatalf("SyncRepo: %v", err)
+	}
+
+	// HEAD must still contain the file — the deletion should never have
+	// been committed.
+	cmd := exec.Command("git", "ls-tree", "HEAD", "important.txt")
+	cmd.Dir = work
+	out, _ := cmd.Output()
+	if strings.TrimSpace(string(out)) == "" {
+		t.Fatalf("safeguard failed: deletion was committed despite being unintended")
+	}
+}
+
+// TestSyncRepoCommitsIntentionalDeletions verifies the other side of the
+// safeguard: a deletion the user explicitly staged via `git rm` flows
+// through unchanged.
+func TestSyncRepoCommitsIntentionalDeletions(t *testing.T) {
+	work := setupGitRepo(t)
+
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = work
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=test", "GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=test", "GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	p := filepath.Join(work, "obsolete.txt")
+	if err := os.WriteFile(p, []byte("temp\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "obsolete.txt")
+	runGit("commit", "-m", "add obsolete")
+	runGit("push")
+
+	// User explicitly stages the deletion with `git rm`.
+	runGit("rm", "obsolete.txt")
+
+	if err := SyncRepo(work, "test-machine"); err != nil {
+		t.Fatalf("SyncRepo: %v", err)
+	}
+
+	// HEAD must NOT contain the file — the intentional deletion should
+	// have been committed.
+	cmd := exec.Command("git", "ls-tree", "HEAD", "obsolete.txt")
+	cmd.Dir = work
+	out, _ := cmd.Output()
+	if strings.TrimSpace(string(out)) != "" {
+		t.Errorf("intentional `git rm` deletion was not committed: %q", out)
 	}
 }
 
