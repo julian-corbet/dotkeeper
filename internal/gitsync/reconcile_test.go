@@ -154,7 +154,7 @@ func TestReconcile_PreservesGenuineLocalChanges(t *testing.T) {
 		t.Fatalf("HEAD did not include upstream commit")
 	}
 	// local.txt should have been committed by work2.
-	if !headContains(t, work2, "auto: work2") {
+	if !headContains(t, work2, "auto: scheduled backup") {
 		t.Fatalf("work2's local edit was not committed")
 	}
 }

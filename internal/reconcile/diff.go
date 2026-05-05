@@ -5,10 +5,7 @@
 package reconcile
 
 import (
-	"fmt"
-	"path/filepath"
 	"sort"
-	"time"
 )
 
 // Diff computes the Plan needed to move observed state towards desired state.
@@ -103,11 +100,9 @@ func Diff(desired Desired, observed Observed) Plan {
 
 	for _, repo := range sortedRepos {
 		if repo.IsDirty {
-			shortPath := filepath.Base(repo.Path)
-			ts := time.Now().UTC().Format(time.RFC3339)
 			plan = append(plan, GitCommitDirty{
 				RepoPath: repo.Path,
-				Message:  fmt.Sprintf("auto: %s %s", shortPath, ts),
+				Message:  "auto: scheduled backup",
 			})
 		}
 		if repo.HeadCommit != "" {
