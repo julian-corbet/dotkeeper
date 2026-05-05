@@ -6,6 +6,7 @@ package reconcile
 
 import (
 	"sort"
+	"time"
 )
 
 // Diff computes the Plan needed to move observed state towards desired state.
@@ -18,12 +19,27 @@ import (
 //   - Folders in Observed but not Desired → RemoveSyncthingFolder
 //   - Folders in both but with differing device lists → UpdateSyncthingFolderDevices
 //
-// Repo reconciliation:
-//   - Observed repo that IsDirty → GitCommitDirty with "auto: <short-path> <ISO timestamp>"
-//   - Observed repo with a non-empty HeadCommit → GitPushRepo
-//     (TODO: compare against StateV2.LastPushedCommit once schema-types lands)
+// Peer reconciliation:
+//   - Desired peer missing from Syncthing → AddSyncthingDevice
+//
+// Repo reconciliation honours RepoDesired.CommitPolicy:
+//   - manual: no automatic git action
+//   - on-idle: commit/push after the dirty tree has been quiet long enough
+//   - timer: commit/push once the configured interval is due
 func Diff(desired Desired, observed Observed) Plan {
 	var plan Plan
+
+	// Add missing peers first so subsequent folder actions can reference them.
+	obsPeers := make(map[string]bool, len(observed.LivePeers))
+	for _, p := range observed.LivePeers {
+		obsPeers[p.DeviceID] = true
+	}
+	for _, p := range desired.Peers {
+		if p.DeviceID == "" || obsPeers[p.DeviceID] {
+			continue
+		}
+		plan = append(plan, AddSyncthingDevice(p))
+	}
 
 	// Index observed folders by SyncthingFolderID for O(1) lookup.
 	obsFolders := make(map[string]FolderObs, len(observed.ManagedFolders))
@@ -99,13 +115,19 @@ func Diff(desired Desired, observed Observed) Plan {
 	})
 
 	for _, repo := range sortedRepos {
-		if repo.IsDirty {
+		repoDesired, managed := desired.DesiredForPath(repo.Path)
+		if !managed || repoDesired.CommitPolicy == "manual" || repoDesired.slotSkipped() {
+			continue
+		}
+
+		due := repoBackupDue(repoDesired, repo, time.Now())
+		if repo.IsDirty && due {
 			plan = append(plan, GitCommitDirty{
 				RepoPath: repo.Path,
 				Message:  "auto: scheduled backup",
 			})
 		}
-		if repo.HeadCommit != "" {
+		if repo.HeadCommit != "" && due {
 			// Only push if HEAD differs from the last successfully pushed commit
 			// recorded in state.toml. This avoids redundant pushes when the repo
 			// is already up-to-date on the remote.
@@ -122,6 +144,52 @@ func Diff(desired Desired, observed Observed) Plan {
 	}
 
 	return plan
+}
+
+func repoBackupDue(desired RepoDesired, observed RepoObs, now time.Time) bool {
+	switch desired.CommitPolicy {
+	case "on-idle":
+		idleFor := 5 * time.Minute
+		if desired.IdleSeconds > 0 {
+			idleFor = time.Duration(desired.IdleSeconds) * time.Second
+		}
+		if observed.IsDirty {
+			if observed.LastChangeAt.IsZero() {
+				return true
+			}
+			return !observed.LastChangeAt.After(now.Add(-idleFor))
+		}
+		return true
+	case "timer":
+		interval := parseGitInterval(desired.GitInterval)
+		if interval <= 0 {
+			interval = time.Hour
+		}
+		if observed.LastBackupAt.IsZero() {
+			return true
+		}
+		return !observed.LastBackupAt.Add(interval).After(now)
+	default:
+		return false
+	}
+}
+
+func parseGitInterval(raw string) time.Duration {
+	switch raw {
+	case "", "hourly":
+		return time.Hour
+	case "daily":
+		return 24 * time.Hour
+	case "weekly":
+		return 7 * 24 * time.Hour
+	case "monthly":
+		return 30 * 24 * time.Hour
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0
+	}
+	return d
 }
 
 // sortedCopy returns a sorted copy of s without modifying the original.

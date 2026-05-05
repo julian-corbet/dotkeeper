@@ -13,8 +13,8 @@ how it should be written or read:
 - **Name and slot** want to be declaratively set, possibly nix-generated.
 - **The Syncthing private key** is a secret; it must never appear in a
   world-readable nix store path or in any file a human is likely to commit.
-- **The peer directory** (name→device-ID map) grows at runtime as pairings
-  happen — not declarable in advance.
+- **The peer directory** (name→device-ID map) can be declarative for
+  Home Manager/Nix and can also grow at runtime as pairings happen.
 - **Default commit policy and default git interval** are nice to set
   declaratively; they fall through to repos that don't override.
 - **Cached observed state** (last-reconciled commit per repo, last-seen
@@ -35,6 +35,7 @@ Human- or Nix-authorable. Contains:
 - `slot` — staggered git-backup slot (0-based, unique per machine)
 - `default_commit_policy` / `default_git_interval` / `default_slot_offset_minutes` — inherited by repos that don't override
 - `default_share_with` — list of device names to share newly-discovered repos with by default
+- `[[peers]]` — optional declarative peer roster (`name`, `device_id`, `learned_at`)
 - `[discovery]` — scan roots and exclusions (see ADR 0004)
 
 Never contains secrets. On Nix machines, home-manager generates this file.
@@ -45,9 +46,8 @@ via `$EDITOR`.
 
 Owned exclusively by dotkeeper. Contains:
 
-- This machine's Syncthing private key (or a reference to it)
 - This machine's Syncthing device ID (derived public identity)
-- Peer directory — map of known `{name, device_id, learned_at}` tuples, populated by `dotkeeper pair`
+- Imperative peer directory — map of known `{name, device_id, learned_at}` tuples, populated by `dotkeeper peer add`
 - `tracked_overrides` — paths outside scan roots that have been explicitly registered via `dotkeeper track`
 - Cached observed state per tracked repo: last-reconciled commit, last-pushed commit, last-backup timestamp
 - Cached peer state: last-seen timestamps, connection attempts
@@ -69,10 +69,9 @@ world-readable (by design — the store is a cache). Anything the home-manager
 module touches could end up there. So the Syncthing private key must live in
 a file the tool creates at runtime, not one the nix activation writes.
 
-**The peer directory is discovered, not declared.** You learn a peer's
-device ID when you pair with them (or they pair with you). It can't be in
-a declared config because the information doesn't exist until the action
-happens.
+**Peer topology has two inputs.** Device IDs are public identities, so they
+may be declared in `machine.toml` for Home Manager/Nix. `state.toml` remains
+the imperative fallback for bootstrap and non-Nix machines.
 
 **Cached state must be local.** Observed-commit hashes, last-seen
 timestamps, etc. are per-machine and shouldn't propagate. They belong in
@@ -86,11 +85,11 @@ tool-territory.
 
 **Bootstrap sequence on a new machine:** `dotkeeper init` creates
 `state.toml` (generates Syncthing identity), then `dotkeeper identity`
-prints the device ID so you can add it to the peer list on another
-machine via the usual "pair" pattern. `machine.toml` either exists already
-(Nix wrote it via home-manager) or gets populated interactively.
+prints the device ID so you can add it to another machine's declarative
+`machine.toml` or with `dotkeeper peer add`. `machine.toml` either exists
+already (Nix wrote it via home-manager) or gets populated interactively.
 
-**CLI commands that formerly mutated `config.toml`** (`dotkeeper pair`,
+**CLI commands that formerly mutated `config.toml`** (`dotkeeper peer add`,
 etc.) now mutate `state.toml` and are legitimate — these are runtime
 identity actions, not configuration edits.
 

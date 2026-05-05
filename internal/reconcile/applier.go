@@ -29,6 +29,8 @@ type SyncthingClient interface {
 	GetStatus() (*stclient.SystemStatus, error)
 	// AddOrUpdateFolder creates or merges a folder entry in the configuration.
 	AddOrUpdateFolder(id, label, path string, deviceIDs []string) error
+	// AddDevice adds a Syncthing peer device if it is not already present.
+	AddDevice(deviceID, name string) error
 }
 
 // RealApplier executes Actions against live system state. It is idempotent:
@@ -58,6 +60,8 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 		return a.applyRemoveSyncthingFolder(act)
 	case UpdateSyncthingFolderDevices:
 		return a.applyUpdateSyncthingFolderDevices(act)
+	case AddSyncthingDevice:
+		return a.applyAddSyncthingDevice(act)
 	case GitCommitDirty:
 		return applyGitCommitDirty(act)
 	case GitPushRepo:
@@ -69,6 +73,16 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 	default:
 		return fmt.Errorf("unknown action type: %T", action)
 	}
+}
+
+func (a *RealApplier) applyAddSyncthingDevice(act AddSyncthingDevice) error {
+	if a.ST == nil {
+		return fmt.Errorf("AddSyncthingDevice %q: Syncthing client not available (is Syncthing running?)", act.Name)
+	}
+	if err := a.ST.AddDevice(act.DeviceID, act.Name); err != nil {
+		return fmt.Errorf("AddSyncthingDevice %q: %w", act.Name, err)
+	}
+	return nil
 }
 
 // applyAddSyncthingFolder creates or updates the Syncthing folder configuration.
@@ -242,10 +256,37 @@ func stagedDeletionsApplier(repoPath string) []string {
 // overwritten. If the remote is already up-to-date the push succeeds
 // silently (idempotent).
 func applyGitPushRepo(act GitPushRepo) error {
+	if err := gitRun(act.RepoPath, "git", "pull", "--rebase", "--autostash", "--quiet"); err != nil {
+		_ = gitRun(act.RepoPath, "git", "rebase", "--abort")
+		return fmt.Errorf("GitPushRepo %q: pull before push: %w", act.RepoPath, err)
+	}
 	if err := gitRun(act.RepoPath, "git", "push"); err != nil {
 		return fmt.Errorf("GitPushRepo %q: %w", act.RepoPath, err)
 	}
+	if err := markRepoPushed(act.RepoPath); err != nil {
+		return fmt.Errorf("GitPushRepo %q: record state: %w", act.RepoPath, err)
+	}
 	return nil
+}
+
+func markRepoPushed(repoPath string) error {
+	head := gitHeadCommit(repoPath)
+	if head == "" {
+		return nil
+	}
+	state, err := loadOrInitState()
+	if err != nil {
+		return err
+	}
+	if state.ObservedRepos == nil {
+		state.ObservedRepos = make(map[string]config.ObservedRepo)
+	}
+	state.ObservedRepos[repoPath] = config.ObservedRepo{
+		LastReconciledCommit: head,
+		LastPushedCommit:     head,
+		LastBackupAt:         time.Now().UTC(),
+	}
+	return config.WriteStateV2(state)
 }
 
 // applyTrackRepo appends the path to state.toml's tracked_overrides if not

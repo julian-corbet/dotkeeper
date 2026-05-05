@@ -5,15 +5,12 @@ package reconcile
 
 import (
 	"testing"
-	"time"
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
 )
 
 func TestDiff(t *testing.T) {
 	t.Parallel()
-
-	now := time.Now()
 
 	tests := []struct {
 		name    string
@@ -28,6 +25,25 @@ func TestDiff(t *testing.T) {
 			check: func(t *testing.T, plan Plan) {
 				if len(plan) != 0 {
 					t.Fatalf("expected empty plan, got %d actions", len(plan))
+				}
+			},
+		},
+		{
+			name: "desired peer missing from Syncthing → AddSyncthingDevice",
+			desired: Desired{
+				Peers: []PeerDesired{{Name: "laptop", DeviceID: "DEV-L"}},
+			},
+			obs: Observed{},
+			check: func(t *testing.T, plan Plan) {
+				if len(plan) != 1 {
+					t.Fatalf("expected 1 action, got %d", len(plan))
+				}
+				a, ok := plan[0].(AddSyncthingDevice)
+				if !ok {
+					t.Fatalf("expected AddSyncthingDevice, got %T", plan[0])
+				}
+				if a.Name != "laptop" || a.DeviceID != "DEV-L" {
+					t.Errorf("unexpected peer action: %+v", a)
 				}
 			},
 		},
@@ -161,8 +177,10 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name:    "dirty repo → GitCommitDirty",
-			desired: Desired{},
+			name: "dirty timer repo → GitCommitDirty",
+			desired: Desired{Repos: map[string]RepoDesired{
+				"/home/user/notes": {Path: "/home/user/notes", CommitPolicy: "timer", GitInterval: "hourly"},
+			}},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
 					{Path: "/home/user/notes", IsDirty: true, HeadCommit: ""},
@@ -185,8 +203,10 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name:    "repo with head commit → GitPushRepo",
-			desired: Desired{},
+			name: "timer repo with head commit → GitPushRepo",
+			desired: Desired{Repos: map[string]RepoDesired{
+				"/home/user/code": {Path: "/home/user/code", CommitPolicy: "timer", GitInterval: "hourly"},
+			}},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
 					{Path: "/home/user/code", IsDirty: false, HeadCommit: "abc123"},
@@ -203,8 +223,10 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name:    "dirty repo with head commit → commit then push",
-			desired: Desired{},
+			name: "dirty timer repo with head commit → commit then push",
+			desired: Desired{Repos: map[string]RepoDesired{
+				"/repo": {Path: "/repo", CommitPolicy: "timer", GitInterval: "hourly"},
+			}},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
 					{Path: "/repo", IsDirty: true, HeadCommit: "def456"},
@@ -240,12 +262,15 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name:    "multiple repos produce actions in path-sorted order",
-			desired: Desired{},
+			name: "multiple repos produce actions in path-sorted order",
+			desired: Desired{Repos: map[string]RepoDesired{
+				"/a/repo": {Path: "/a/repo", CommitPolicy: "timer", GitInterval: "hourly"},
+				"/z/repo": {Path: "/z/repo", CommitPolicy: "timer", GitInterval: "hourly"},
+			}},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
-					{Path: "/z/repo", IsDirty: true, HeadCommit: "", LastBackupAt: now},
-					{Path: "/a/repo", IsDirty: true, HeadCommit: "", LastBackupAt: now},
+					{Path: "/z/repo", IsDirty: true, HeadCommit: ""},
+					{Path: "/a/repo", IsDirty: true, HeadCommit: ""},
 				},
 			},
 			check: func(t *testing.T, plan Plan) {
@@ -280,8 +305,10 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name:    "repo already pushed at HEAD → no GitPushRepo",
-			desired: Desired{},
+			name: "timer repo already pushed at HEAD → no GitPushRepo",
+			desired: Desired{Repos: map[string]RepoDesired{
+				"/repo": {Path: "/repo", CommitPolicy: "timer", GitInterval: "hourly"},
+			}},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
 					{Path: "/repo", IsDirty: false, HeadCommit: "abc123"},
@@ -301,8 +328,10 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name:    "repo HEAD differs from last pushed → GitPushRepo",
-			desired: Desired{},
+			name: "timer repo HEAD differs from last pushed → GitPushRepo",
+			desired: Desired{Repos: map[string]RepoDesired{
+				"/repo": {Path: "/repo", CommitPolicy: "timer", GitInterval: "hourly"},
+			}},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
 					{Path: "/repo", IsDirty: false, HeadCommit: "newcommit"},
@@ -323,8 +352,10 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
-			name:    "repo with head commit and nil CachedState → GitPushRepo",
-			desired: Desired{},
+			name: "timer repo with head commit and nil CachedState → GitPushRepo",
+			desired: Desired{Repos: map[string]RepoDesired{
+				"/repo": {Path: "/repo", CommitPolicy: "timer", GitInterval: "hourly"},
+			}},
 			obs: Observed{
 				TrackedRepos: []RepoObs{
 					{Path: "/repo", IsDirty: false, HeadCommit: "abc123"},
@@ -398,11 +429,34 @@ func TestBuildDesired(t *testing.T) {
 		}
 	})
 
+	t.Run("machine.toml peers merge with state peers", func(t *testing.T) {
+		t.Parallel()
+		machine := &config.MachineConfigV2{
+			Name: "desktop",
+			Peers: []config.PeerEntry{
+				{Name: "laptop", DeviceID: "DEV-L"},
+			},
+		}
+		state := &config.StateV2{
+			Peers: []config.PeerEntry{
+				{Name: "server", DeviceID: "DEV-S"},
+			},
+		}
+		d := BuildDesired(machine, nil, state)
+		if len(d.Peers) != 2 {
+			t.Fatalf("expected 2 peers, got %d: %+v", len(d.Peers), d.Peers)
+		}
+	})
+
 	t.Run("repo config populates RepoDesired with folder ID and share list", func(t *testing.T) {
 		t.Parallel()
 		machine := &config.MachineConfigV2{
 			Name:             "desktop",
 			DefaultShareWith: []string{"laptop"},
+			Peers: []config.PeerEntry{
+				{Name: "laptop", DeviceID: "DEV-L"},
+				{Name: "server", DeviceID: "DEV-S"},
+			},
 		}
 		repos := map[string]*config.RepoConfigV2{
 			"/home/user/dotfiles": {
@@ -424,6 +478,9 @@ func TestBuildDesired(t *testing.T) {
 		if len(r.ShareWith) != 2 {
 			t.Errorf("expected 2 share_with entries, got %d", len(r.ShareWith))
 		}
+		if r.ShareWith[0] != "DEV-L" || r.ShareWith[1] != "DEV-S" {
+			t.Errorf("share_with names should resolve to device IDs, got %v", r.ShareWith)
+		}
 		if len(r.Ignore) != 1 || r.Ignore[0] != "*.log" {
 			t.Errorf("wrong ignore list: %v", r.Ignore)
 		}
@@ -433,6 +490,9 @@ func TestBuildDesired(t *testing.T) {
 		t.Parallel()
 		machine := &config.MachineConfigV2{
 			DefaultShareWith: []string{"server"},
+			Peers: []config.PeerEntry{
+				{Name: "server", DeviceID: "DEV-S"},
+			},
 		}
 		repos := map[string]*config.RepoConfigV2{
 			"/repo": {
@@ -444,8 +504,8 @@ func TestBuildDesired(t *testing.T) {
 		}
 		d := BuildDesired(machine, repos, nil)
 		r := d.Repos["/repo"]
-		if len(r.ShareWith) != 1 || r.ShareWith[0] != "server" {
-			t.Errorf("expected inherited share_with [server], got %v", r.ShareWith)
+		if len(r.ShareWith) != 1 || r.ShareWith[0] != "DEV-S" {
+			t.Errorf("expected inherited share_with [DEV-S], got %v", r.ShareWith)
 		}
 	})
 
@@ -531,6 +591,10 @@ func TestBuildDesired_NoShareWithAliasing(t *testing.T) {
 
 	machine := &config.MachineConfigV2{
 		DefaultShareWith: []string{"a", "b"},
+		Peers: []config.PeerEntry{
+			{Name: "a", DeviceID: "DEV-A"},
+			{Name: "b", DeviceID: "DEV-B"},
+		},
 	}
 	repos := map[string]*config.RepoConfigV2{
 		"/repo1": {Sync: config.RepoSyncConfig{SyncthingFolderID: "dk-r1"}},
@@ -544,8 +608,8 @@ func TestBuildDesired_NoShareWithAliasing(t *testing.T) {
 
 	// repo2 must be unaffected.
 	sw2 := d.Repos["/repo2"].ShareWith
-	if sw2[0] != "a" {
-		t.Errorf("slice aliasing: mutating repo1.ShareWith[0] corrupted repo2.ShareWith[0] = %q (want \"a\")", sw2[0])
+	if sw2[0] != "DEV-A" {
+		t.Errorf("slice aliasing: mutating repo1.ShareWith[0] corrupted repo2.ShareWith[0] = %q (want \"DEV-A\")", sw2[0])
 	}
 	// Source config must be unaffected.
 	if machine.DefaultShareWith[0] != "a" {

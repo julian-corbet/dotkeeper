@@ -32,7 +32,6 @@ Dotkeeper's `machine.toml` (see ADR 0002) declares a list of scan roots:
 [discovery]
 scan_roots = [
   "~/Documents/GitHub",
-  "~/.config/notes",
   "~/Projects",
 ]
 exclude = [
@@ -44,9 +43,10 @@ scan_interval = "5m"
 On startup and on each `scan_interval` tick, dotkeeper walks each scan
 root (bounded depth — say 3, configurable) looking for
 `<any-dir>/dotkeeper.toml`. For each found, it reads the file, checks
-whether this machine's name is in its `share_with` list (or the list is
-unset, meaning "all peers"), and if so, tracks the repo. Unchanged
-compared to the previous pass: no action.
+resolves its `share_with` peer names through the declarative/imperative peer
+roster, and tracks the repo when it applies to this machine. Empty
+`share_with` inherits `machine.toml` defaults; empty defaults mean all known
+peers. Unchanged compared to the previous pass: no action.
 
 Changes trigger reconcile for the affected repo. Removal of a
 `dotkeeper.toml` (git deletion or rename) triggers untracking: dotkeeper
@@ -63,9 +63,10 @@ The scan is the primary mechanism. Two other sources feed the tracked set:
    root for `dotkeeper.toml` on acceptance. If present and this machine
    qualifies, track it.
 2. **Explicit `dotkeeper track <path>`.** For repos outside any scan
-   root. Writes the path to `state.toml`'s `tracked_overrides` list.
-   Subsequent reconciles treat it as tracked regardless of scan-root
-   membership. `dotkeeper untrack <path>` removes the override.
+   root. Creates/fills `dotkeeper.toml` when needed, then writes the path
+   to `state.toml`'s `tracked_overrides` list. Subsequent reconciles treat
+   it as tracked regardless of scan-root membership. `dotkeeper untrack
+   <path>` removes the override.
 
 All three sources converge on the same check: "this repo has a
 `dotkeeper.toml` and this machine should manage it." The entry point just

@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -95,7 +96,7 @@ func applyMachineV2DefaultsLocal(cfg *config.MachineConfigV2) {
 		cfg.DefaultSlotOffsetMinutes = 5
 	}
 	if len(cfg.Discovery.ScanRoots) == 0 {
-		cfg.Discovery.ScanRoots = []string{"~/Documents/GitHub", "~/.config/notes"}
+		cfg.Discovery.ScanRoots = []string{"~/Documents/GitHub"}
 	}
 	if cfg.Discovery.ScanInterval == "" {
 		cfg.Discovery.ScanInterval = "5m"
@@ -108,6 +109,9 @@ func applyMachineV2DefaultsLocal(cfg *config.MachineConfigV2) {
 	}
 	if cfg.DefaultShareWith == nil {
 		cfg.DefaultShareWith = []string{}
+	}
+	if cfg.Peers == nil {
+		cfg.Peers = []config.PeerEntry{}
 	}
 	if cfg.Discovery.Exclude == nil {
 		cfg.Discovery.Exclude = []string{}
@@ -331,17 +335,39 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 		}
 	}
 
-	// Build LivePeer slice from connections map.
-	var peers []LivePeer
-	if conns != nil {
-		for deviceID, conn := range conns.Connections {
-			peers = append(peers, LivePeer{
-				DeviceID:  deviceID,
-				LastSeen:  time.Now(), // Syncthing REST does not surface last-seen in connections
-				Connected: conn.Connected,
-			})
+	// Build LivePeer slice from configured devices, then overlay connection
+	// state when Syncthing reports it. Folder sharing requires devices to be
+	// present in config, so "configured" is the observed state Diff cares about.
+	peersByID := make(map[string]LivePeer)
+	if rawDevices, ok := cfg["devices"].([]any); ok {
+		for _, rd := range rawDevices {
+			dm, ok := rd.(map[string]any)
+			if !ok {
+				continue
+			}
+			deviceID, _ := dm["deviceID"].(string)
+			if deviceID == "" {
+				continue
+			}
+			peersByID[deviceID] = LivePeer{DeviceID: deviceID}
 		}
 	}
+	if conns != nil {
+		for deviceID, conn := range conns.Connections {
+			p := peersByID[deviceID]
+			p.DeviceID = deviceID
+			p.LastSeen = time.Now() // Syncthing REST does not surface last-seen in connections
+			p.Connected = conn.Connected
+			peersByID[deviceID] = p
+		}
+	}
+	var peers []LivePeer
+	for _, p := range peersByID {
+		peers = append(peers, p)
+	}
+	sort.Slice(peers, func(i, j int) bool {
+		return peers[i].DeviceID < peers[j].DeviceID
+	})
 
 	return folders, peers, nil
 }
@@ -385,6 +411,9 @@ func queryRepoGitState(repoPath string, state *config.StateV2) RepoObs {
 
 	obs.HeadCommit = gitHeadCommit(repoPath)
 	obs.IsDirty = gitIsDirty(repoPath)
+	if obs.IsDirty {
+		obs.LastChangeAt = gitLastChange(repoPath)
+	}
 
 	if state != nil {
 		if sr, ok := state.ObservedRepos[repoPath]; ok {
@@ -393,6 +422,52 @@ func queryRepoGitState(repoPath string, state *config.StateV2) RepoObs {
 	}
 
 	return obs
+}
+
+func gitLastChange(repoPath string) time.Time {
+	cmd := exec.Command("git", "status", "--porcelain", "-z")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil || len(out) == 0 {
+		return time.Time{}
+	}
+
+	var newest time.Time
+	for _, rel := range statusPaths(out) {
+		info, err := os.Stat(filepath.Join(repoPath, rel))
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+	}
+	return newest
+}
+
+func statusPaths(out []byte) []string {
+	parts := bytes.Split(out, []byte{0})
+	paths := make([]string, 0, len(parts))
+	for i := 0; i < len(parts); i++ {
+		part := parts[i]
+		if len(part) < 4 {
+			continue
+		}
+		status := string(part[:2])
+		rel := string(part[3:])
+		if rel == "" {
+			continue
+		}
+		paths = append(paths, rel)
+		// Renames/copies include a second path entry in porcelain -z output.
+		if strings.ContainsAny(status, "RC") && i+1 < len(parts) {
+			i++
+			if string(parts[i]) != "" {
+				paths = append(paths, string(parts[i]))
+			}
+		}
+	}
+	return paths
 }
 
 // gitHeadCommit returns the current HEAD commit hash, or empty string on error.

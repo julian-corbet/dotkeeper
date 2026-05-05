@@ -53,6 +53,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Plan, error) {
 	if err != nil {
 		return nil, err
 	}
+	augmentObservedRepos(&observed, desired)
 
 	plan := Diff(desired, observed)
 
@@ -70,4 +71,20 @@ func (r *Reconciler) Reconcile(ctx context.Context) (Plan, error) {
 	}
 
 	return plan, firstErr
+}
+
+func augmentObservedRepos(observed *Observed, desired Desired) {
+	if observed == nil || len(desired.Repos) == 0 {
+		return
+	}
+	seen := make(map[string]bool, len(observed.TrackedRepos))
+	for _, repo := range observed.TrackedRepos {
+		seen[repo.Path] = true
+	}
+	for path := range desired.Repos {
+		if seen[path] {
+			continue
+		}
+		observed.TrackedRepos = append(observed.TrackedRepos, queryRepoGitState(path, observed.CachedState))
+	}
 }

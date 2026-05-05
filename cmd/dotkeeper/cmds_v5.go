@@ -11,10 +11,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -145,11 +148,12 @@ func identityCmd() *cobra.Command {
 }
 
 // trackCmd implements 'dotkeeper track <path>'.
-// Registers an absolute path to a git repo in state.toml's tracked_overrides.
+// Bootstraps dotkeeper.toml when needed and registers an absolute path to a
+// git repo in state.toml's tracked_overrides.
 func trackCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "track <path>",
-		Short: "Register a git repo outside any scan root in state.toml",
+		Short: "Bootstrap and register a git repo outside any scan root",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rawPath := args[0]
@@ -163,6 +167,10 @@ func trackCmd() *cobra.Command {
 				return fmt.Errorf("%s is not a git repository (no .git directory)", absPath)
 			}
 
+			if err := ensureRepoConfig(absPath); err != nil {
+				return err
+			}
+
 			// Apply the TrackRepo action directly via RealApplier.
 			applier := &reconcile.RealApplier{Logger: slog.Default()}
 			if err := applier.Apply(cmd.Context(), reconcile.TrackRepo{Path: absPath}); err != nil {
@@ -173,6 +181,107 @@ func trackCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func ensureRepoConfig(repoPath string) error {
+	cfg, err := config.LoadRepoConfigV2(repoPath)
+	if err != nil {
+		return err
+	}
+	if cfg == nil {
+		cfg = &config.RepoConfigV2{
+			SchemaVersion: 2,
+			Meta: config.RepoMeta{
+				Name:    filepath.Base(repoPath),
+				Added:   time.Now().UTC().Format(time.RFC3339),
+				AddedBy: "unknown",
+			},
+			Sync: config.RepoSyncConfig{
+				SyncthingFolderID: folderIDForRepo(repoPath),
+				Ignore:            []string{},
+				ShareWith:         []string{},
+			},
+			Commit: config.RepoCommitConfig{},
+			GitBackup: config.RepoGitBackupConfig{
+				SkipSlots: []uint{},
+			},
+		}
+		if name, err := loadMachineName(); err == nil {
+			cfg.Meta.AddedBy = name
+		}
+		return config.WriteRepoConfigV2(repoPath, cfg)
+	}
+
+	changed := false
+	if cfg.SchemaVersion == 0 {
+		cfg.SchemaVersion = 2
+		changed = true
+	}
+	if cfg.Meta.Name == "" {
+		cfg.Meta.Name = filepath.Base(repoPath)
+		changed = true
+	}
+	if cfg.Meta.Added == "" {
+		cfg.Meta.Added = time.Now().UTC().Format(time.RFC3339)
+		changed = true
+	}
+	if cfg.Meta.AddedBy == "" {
+		cfg.Meta.AddedBy = "unknown"
+		if name, err := loadMachineName(); err == nil {
+			cfg.Meta.AddedBy = name
+		}
+		changed = true
+	}
+	if cfg.Sync.SyncthingFolderID == "" {
+		cfg.Sync.SyncthingFolderID = folderIDForRepo(repoPath)
+		changed = true
+	}
+	if changed {
+		return config.WriteRepoConfigV2(repoPath, cfg)
+	}
+	return nil
+}
+
+func folderIDForRepo(repoPath string) string {
+	identity := gitRemoteOrigin(repoPath)
+	if identity == "" {
+		identity = repoPath
+	}
+	sum := sha256.Sum256([]byte(identity))
+	return "dk-" + slug(filepath.Base(repoPath)) + "-" + fmt.Sprintf("%x", sum[:4])
+}
+
+func gitRemoteOrigin(repoPath string) string {
+	cmd := exec.Command("git", "config", "--get", "remote.origin.url")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func slug(raw string) string {
+	raw = strings.TrimSuffix(strings.ToLower(raw), ".git")
+	var b strings.Builder
+	lastDash := false
+	for _, r := range raw {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if ok {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "repo"
+	}
+	return out
 }
 
 // untrackCmd implements 'dotkeeper untrack <path>'.

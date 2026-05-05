@@ -4,7 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | Yes       |
+| 0.5.x   | Yes       |
+| < 0.5   | No        |
 
 ## Reporting a Vulnerability
 
@@ -25,7 +26,7 @@ You should receive a response within 48 hours. We will work with you to understa
 
 dotkeeper embeds Syncthing and manages git repositories. Security-relevant areas include:
 
-- **Config file permissions** (`machine.toml`, `config.toml`, `config.xml`) — these contain API keys and machine identity
+- **Config/state file permissions** (`machine.toml`, `state.toml`, `config.xml`) — `state.toml` and Syncthing's `config.xml` contain runtime identity material and API keys
 - **Syncthing API** — listens on `127.0.0.1:18384`, authenticated via API key
 - **Git operations** — auto-commit and push to configured remotes
 - **Service installation** — systemd units, launchd plists, cron entries, Windows scheduled tasks
@@ -37,7 +38,7 @@ dotkeeper tracks known vulnerabilities in its dependency tree via `govulncheck`.
 
 ### Known unresolved advisories
 
-As of v0.1.2, `govulncheck -tags noassets ./...` reports two outstanding advisories, both in `github.com/quic-go/quic-go`:
+As of v0.5.0, `govulncheck -tags noassets ./...` reports outstanding advisories in `github.com/quic-go/quic-go`:
 
 | Advisory | Status | Notes |
 |----------|--------|-------|

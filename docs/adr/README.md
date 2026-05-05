@@ -38,5 +38,5 @@ Files are named `NNNN-kebab-case-title.md` with zero-padded sequence numbers.
 ## Note on timing
 
 ADRs can describe decisions that are **accepted but not yet implemented**.
-That's the point — the record precedes the code. ADRs 0001–0004 together
-describe the architecture planned for v0.5.
+That's the point — the record precedes the code. ADRs 0001-0004 describe
+the architecture implemented by v0.5.

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 )
 
@@ -28,6 +29,7 @@ type fakeST struct {
 	ErrGet    error
 	ErrSet    error
 	ErrAdd    error
+	ErrDevice error
 	ErrStatus error
 }
 
@@ -87,6 +89,24 @@ func (f *fakeST) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 		"id":    id,
 		"label": label,
 		"path":  path,
+	})
+	return nil
+}
+
+func (f *fakeST) AddDevice(deviceID, name string) error {
+	if f.ErrDevice != nil {
+		return f.ErrDevice
+	}
+	devices, _ := f.cfg["devices"].([]any)
+	for _, d := range devices {
+		dm, _ := d.(map[string]any)
+		if dm["deviceID"] == deviceID {
+			return nil
+		}
+	}
+	f.cfg["devices"] = append(devices, map[string]any{
+		"deviceID": deviceID,
+		"name":     name,
 	})
 	return nil
 }
@@ -205,6 +225,25 @@ func TestRealApplierAddSyncthingFolderError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "syncthing unavailable") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestRealApplierAddSyncthingDevice(t *testing.T) {
+	t.Parallel()
+
+	fake := newFakeST()
+	applier := &RealApplier{ST: fake}
+
+	if err := applier.Apply(context.Background(), AddSyncthingDevice{Name: "laptop", DeviceID: "DEV-L"}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	devices, _ := fake.cfg["devices"].([]any)
+	if len(devices) != 1 {
+		t.Fatalf("expected 1 device, got %d", len(devices))
+	}
+	device, _ := devices[0].(map[string]any)
+	if device["deviceID"] != "DEV-L" || device["name"] != "laptop" {
+		t.Errorf("unexpected device config: %+v", device)
 	}
 }
 
@@ -452,8 +491,8 @@ func TestRealApplierGitCommitDirtyRespectsGitEnv(t *testing.T) {
 // --- GitPushRepo tests -------------------------------------------------------
 
 func TestRealApplierGitPushRepo(t *testing.T) {
-	t.Parallel()
-
+	stateDir := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateDir)
 	work := setupBareAndClone(t)
 
 	// Create a local commit that hasn't been pushed.
@@ -470,6 +509,13 @@ func TestRealApplierGitPushRepo(t *testing.T) {
 	out := runGit(t, work, "log", "--oneline", "origin/main", "-1")
 	if !strings.Contains(out, "local commit") {
 		t.Errorf("push did not reach remote: %q", out)
+	}
+	state, err := config.LoadStateV2()
+	if err != nil {
+		t.Fatalf("LoadStateV2: %v", err)
+	}
+	if state == nil || state.ObservedRepos[work].LastPushedCommit == "" {
+		t.Fatalf("push state was not recorded: %+v", state)
 	}
 }
 
