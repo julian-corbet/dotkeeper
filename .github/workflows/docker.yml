@@ -3,7 +3,7 @@ name: Docker
 on:
   release:
     types: [published]
-  # Build on pushes to main as a Dockerfile smoke test; release events publish.
+  # Build on pushes to main as a Dockerfile smoke test.
   push:
     branches: [main]
     paths:
@@ -14,16 +14,16 @@ on:
       - 'Dockerfile'
       - '.github/workflows/docker.yml'
 
-# Least privilege at workflow level; the one job below elevates only what it needs.
+# Least privilege at workflow level.
 permissions: read-all
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Release events push to GHCR; main pushes only build the image.
+    # GHCR publishing needs package-level ownership/linkage outside this repo.
+    # Keep this workflow build-only until that registry access is explicit.
     permissions:
       contents: read
-      packages: write
     # Skip auto-sync commits
     if: "!startsWith(github.event.head_commit.message, 'auto:')"
     steps:
@@ -34,14 +34,6 @@ jobs:
 
       - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
-
-      - name: Log in to GHCR
-        if: github.event_name == 'release'
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker metadata
         id: meta
@@ -67,7 +59,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: ${{ github.event_name == 'release' }}
+          push: false
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
