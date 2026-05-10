@@ -26,7 +26,7 @@ cwd, etc.
 
 ## Decision
 
-Dotkeeper's `machine.toml` (see ADR 0002) declares a list of scan roots:
+dotkeeper's `machine.toml` (see ADR 0002) declares a list of scan roots:
 
 ```toml
 [discovery]
@@ -59,7 +59,7 @@ via config flag).
 The scan is the primary mechanism. Two other sources feed the tracked set:
 
 1. **Syncthing-delivered folders.** When a paired peer shares a folder
-   with this device, Syncthing announces it. Dotkeeper checks the folder's
+   with this device, Syncthing announces it. dotkeeper checks the folder's
    root for `dotkeeper.toml` on acceptance. If present and this machine
    qualifies, track it.
 2. **Explicit `dotkeeper track <path>`.** For repos outside any scan
