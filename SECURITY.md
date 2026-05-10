@@ -9,18 +9,25 @@
 
 ## Reporting a Vulnerability
 
-If you discover a security vulnerability in dotkeeper, please report it responsibly.
-
 **Do not open a public GitHub issue for security vulnerabilities.**
 
-Instead, email **admin+aur@sys.corbet.ch** with:
+Use GitHub's private security advisory channel:
+
+> **[Report a vulnerability](https://github.com/julian-corbet/dotkeeper/security/advisories/new)**
+
+The form encrypts the report end-to-end, gives the maintainer a private workspace
+to coordinate a fix with you, and supports issuing a CVE on disclosure. Please
+include:
 
 - A description of the vulnerability
 - Steps to reproduce
 - The affected version(s)
 - Any suggested fix (optional)
 
-You should receive a response within 48 hours. We will work with you to understand the issue and coordinate a fix before any public disclosure.
+You should receive an acknowledgement within 48 hours.
+
+If GitHub Security Advisories is unavailable to you, contact the maintainer
+through the [GitHub profile](https://github.com/julian-corbet).
 
 ## Scope
 
