@@ -140,17 +140,24 @@
 <section class="architecture">
   <div class="container">
     <h2>Architecture</h2>
-    <pre class="arch-diagram"><code>  Machine A                          Machine B
-  +-----------------+                +-----------------+
-  | dotkeeper       |  Syncthing     | dotkeeper       |
-  |   embedded ST --|---(P2P sync)---|--  embedded ST  |
-  |   git timer   --|---> remote <---|--  git timer    |
-  +-----------------+                +-----------------+
-        |                                   |
-   ~/.config/dotkeeper/              ~/.config/dotkeeper/
-     machine.toml (local)              machine.toml (local)
-     state.toml   (local)              state.toml   (local)
-     dotkeeper.toml in each repo        dotkeeper.toml in each repo</code></pre>
+    <pre class="arch-diagram"><code>                        +-------------+
+                        |  Machine A  |
+                        +-------------+
+                         /           \
+                        /             \
+                       v               v
+            +-------------+   <--->   +-------------+
+            |  Machine B  |           |  Machine C  |    ...
+            +-------------+           +-------------+
+                  \                       /
+                   \                     /
+                    v                   v
+                     +-----------------+
+                     |   git remote    |   <- staggered
+                     +-----------------+      backup slots
+
+  Per machine:  ~/.config/dotkeeper/machine.toml + state.toml
+  Per repo:     &lt;repo&gt;/dotkeeper.toml  (in git, the opt-in signal)</code></pre>
     <div class="arch-details">
       <div class="arch-detail">
         <h3>Isolated Syncthing</h3>
@@ -178,6 +185,11 @@
         <a href="https://github.com/julian-corbet/dotkeeper/releases/latest" class="btn btn-primary">Download from GitHub</a>
       </div>
       <div class="install-method">
+        <h3>macOS / Linux (Homebrew)</h3>
+        <pre><code>brew tap julian-corbet/dotkeeper
+brew install dotkeeper</code></pre>
+      </div>
+      <div class="install-method">
         <h3>Arch Linux (AUR)</h3>
         <pre><code>yay -S dotkeeper-bin</code></pre>
       </div>
@@ -198,14 +210,19 @@ make install</code></pre>
     <table>
       <tbody>
         <tr><td><code>dotkeeper init</code></td><td>Initialize this machine</td></tr>
-        <tr><td><code>dotkeeper identity</code></td><td>Print this machine and device ID</td></tr>
+        <tr><td><code>dotkeeper identity</code></td><td>Print this machine's name and device ID</td></tr>
+        <tr><td><code>dotkeeper start</code></td><td>Run the daemon (Syncthing + reconciler)</td></tr>
         <tr><td><code>dotkeeper reconcile</code></td><td>Converge Syncthing and git now</td></tr>
+        <tr><td><code>dotkeeper status</code></td><td>Show full status</td></tr>
+        <tr><td><code>dotkeeper doctor</code></td><td>Run diagnostic checks</td></tr>
         <tr><td><code>dotkeeper peer add/list/remove</code></td><td>Manage imperative peers</td></tr>
         <tr><td><code>dotkeeper track &lt;path&gt;</code></td><td>Register an out-of-root repo</td></tr>
         <tr><td><code>dotkeeper untrack &lt;path&gt;</code></td><td>Remove an out-of-root override</td></tr>
-        <tr><td><code>dotkeeper status</code></td><td>Show full status</td></tr>
-        <tr><td><code>dotkeeper doctor</code></td><td>Run diagnostic checks</td></tr>
-        <tr><td><code>dotkeeper start</code></td><td>Run the daemon</td></tr>
+        <tr><td><code>dotkeeper conflict list</code></td><td>List Syncthing sync-conflict files</td></tr>
+        <tr><td><code>dotkeeper conflict resolve-all</code></td><td>Auto-resolve trivial conflicts (dedup + 3-way merge)</td></tr>
+        <tr><td><code>dotkeeper conflict keep &lt;path&gt;</code></td><td>Keep current, drop the conflict variant</td></tr>
+        <tr><td><code>dotkeeper conflict accept &lt;path&gt;</code></td><td>Replace current with the variant and commit</td></tr>
+        <tr><td><code>dotkeeper version</code></td><td>Print version and commit</td></tr>
       </tbody>
     </table>
   </div>
