@@ -7,6 +7,17 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Vulnerability disclosure now goes through the [GitHub Security
+  Advisories form](https://github.com/julian-corbet/dotkeeper/security/advisories/new)
+  instead of email. See [SECURITY.md](SECURITY.md) for the full
+  policy.
+
+### Added
+
+- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
+
 ## [0.5.0] - 2026-04-26
 
 ### Added
