@@ -69,16 +69,62 @@ Prefer small, reviewable PRs over sweeping changes. If a feature naturally split
 
 ### Commit message conventions
 
-Follow conventional-ish prefixes where they help:
-- `feat:` new functionality
-- `fix:` bug fix
-- `docs:` documentation only
-- `ci:` CI / workflow changes
-- `refactor:` code restructure, no behaviour change
-- `test:` test-only changes
-- `deps:` dependency updates (Dependabot uses this)
+dotkeeper follows [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/)
+for the subject line and the [Tim Pope rules](https://tbaggery.com/2008/04/19/a-note-about-git-commit-messages.html)
+for the body.
 
-Commit message bodies should explain the *why*, not the *what*. Read a few recent `git log` entries for the local style.
+#### Subject
+
+```
+<type>(<scope>): <imperative summary>
+```
+
+- **Types:** `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `build`, `chore`, `deps`, `perf`, `style`.
+- **Scope:** optional, lowercase, single word matching a package or area (`gitsync`, `reconcile`, `doctor`, `cmd`).
+- **Summary:** imperative mood (`add`, not `added`/`adds`); no trailing period; ≤ 72 characters total including the prefix.
+- **Breaking changes:** add `!` after the type/scope (`feat(cmd)!: ...`) and explain in a `BREAKING CHANGE:` footer.
+
+#### Body
+
+- Blank line between subject and body. Wrap body lines at 72 characters.
+- Explain **why** the change is being made and the user-visible or operational impact. Do not narrate the diff — `git show` already shows it.
+- Use third-person, neutral voice. No first-person (`I manually`, `we should`, `let's`), no anecdotes, no speculation about future work.
+- Do not narrate alternatives that were considered and rejected. That belongs in an ADR or in inline comments next to the surprising choice, not in version history.
+- Do not reference the PR review process (`addresses three nits from review`, `per @reviewer`). The commit stands alone after merge.
+- For squash-merges: rewrite the body as a single coherent message. Do not ship a list of `* feat: ...` / `* fix: ...` bullets that mirror the original PR commit history.
+
+#### Footer
+
+- Reference issues and PRs at the end: `Closes #42`, `Refs #17`.
+- No `Co-Authored-By:` lines from coding assistants. Tool-generated attribution is removed before merge.
+
+#### Examples
+
+Good:
+
+```
+fix(stengine): disable QUIC listener by default
+
+The QUIC listener pulls in two reachable advisories
+(GO-2025-4017, GO-2025-4233) and a v0.52.0 startup panic that triggers
+a systemd restart loop on some peer-state combinations. With QUIC off,
+both CVE paths become unreachable on a default install and Syncthing
+falls back to TCP, which is unaffected.
+
+The default can be re-enabled per machine in machine.toml.
+```
+
+Bad:
+
+```
+fix(stengine): disable QUIC listener by default
+
+I manually disabled QUIC after observing 49 restarts in a couple of
+minutes. We can revisit when Syncthing bumps past quic-go v0.54.1.
+No need for the operator workaround anymore.
+```
+
+The "bad" version leaks first-person narrative, speculates about a future bump, and references operator history rather than the resulting behaviour.
 
 ## Code style
 
