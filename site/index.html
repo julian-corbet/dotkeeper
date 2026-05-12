@@ -106,7 +106,7 @@
       <div class="step">
         <div class="step-num">3</div>
         <h3>Track repos</h3>
-        <p>Commit <code>dotkeeper.toml</code> in each repo. Scan roots pick them up automatically; <code>dotkeeper track</code> covers out-of-root repos.</p>
+        <p>Run <code>dotkeeper track</code> or generate local <code>.dotkeeper.toml</code> files from Nix/Home Manager. Scan roots pick them up automatically.</p>
       </div>
     </div>
   </div>
@@ -164,7 +164,7 @@
                      +-----------------+      backup slots
 
   Per machine:  ~/.config/dotkeeper/machine.toml + state.toml
-  Per repo:     &lt;repo&gt;/dotkeeper.toml  (in git, the opt-in signal)</code></pre>
+  Per repo:     &lt;repo&gt;/.dotkeeper.toml  (local-only opt-in signal)</code></pre>
     <div class="arch-details">
       <div class="arch-detail">
         <h3>Isolated Syncthing</h3>
@@ -172,7 +172,7 @@
       </div>
       <div class="arch-detail">
         <h3>Three-file config</h3>
-        <p><strong>machine.toml</strong> &mdash; declarative local config. <strong>state.toml</strong> &mdash; tool-owned runtime state. <strong>dotkeeper.toml</strong> &mdash; per-repo desired state tracked in git.</p>
+        <p><strong>machine.toml</strong> &mdash; declarative local config. <strong>state.toml</strong> &mdash; tool-owned runtime state. <strong>.dotkeeper.toml</strong> &mdash; local per-repo desired state.</p>
       </div>
       <div class="arch-detail">
         <h3>Smart .stignore</h3>

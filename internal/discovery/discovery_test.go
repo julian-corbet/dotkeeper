@@ -8,11 +8,13 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/julian-corbet/dotkeeper/internal/config"
 )
 
 // TestWalkScanRootStopsAtRepoRoot asserts the canonical walk behaviour:
-// a directory containing dotkeeper.toml is reported via fn and the walk does
-// not descend into it. Any dotkeeper.toml files nested further inside should
+// a directory containing .dotkeeper.toml is reported via fn and the walk does
+// not descend into it. Any .dotkeeper.toml files nested further inside should
 // not be found as separate repos.
 func TestWalkScanRootStopsAtRepoRoot(t *testing.T) {
 	tmp := t.TempDir()
@@ -20,11 +22,11 @@ func TestWalkScanRootStopsAtRepoRoot(t *testing.T) {
 	// Structure:
 	//   root/
 	//     repo-a/
-	//       dotkeeper.toml       <- managed repo root
+	//       .dotkeeper.toml      <- managed repo root
 	//       sub/
-	//         dotkeeper.toml     <- must NOT be reported (descent stopped)
+	//         .dotkeeper.toml    <- must NOT be reported (descent stopped)
 	//     repo-b/
-	//       dotkeeper.toml       <- separate managed repo
+	//       .dotkeeper.toml      <- separate managed repo
 	repoA := filepath.Join(tmp, "repo-a")
 	repoASub := filepath.Join(repoA, "sub")
 	repoB := filepath.Join(tmp, "repo-b")
@@ -35,9 +37,9 @@ func TestWalkScanRootStopsAtRepoRoot(t *testing.T) {
 		}
 	}
 	for _, f := range []string{
-		filepath.Join(repoA, "dotkeeper.toml"),
-		filepath.Join(repoASub, "dotkeeper.toml"),
-		filepath.Join(repoB, "dotkeeper.toml"),
+		config.RepoConfigPath(repoA),
+		config.RepoConfigPath(repoASub),
+		config.RepoConfigPath(repoB),
 	} {
 		if err := os.WriteFile(f, []byte{}, 0o600); err != nil {
 			t.Fatalf("write %s: %v", f, err)
@@ -68,6 +70,23 @@ func TestWalkScanRootStopsAtRepoRoot(t *testing.T) {
 	}
 }
 
+func TestWalkScanRootIgnoresOldRepoConfigName(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "dotkeeper.toml"), []byte("schema_version = 2\n"), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	var found []string
+	_ = WalkScanRoot(tmp, 0, 3, func(p string) { found = append(found, p) })
+	if len(found) != 0 {
+		t.Fatalf("old dotkeeper.toml must not opt a repo into management; got %v", found)
+	}
+}
+
 // TestWalkScanRootRespectsMaxDepth asserts that repos deeper than maxDepth
 // are not found.
 func TestWalkScanRootRespectsMaxDepth(t *testing.T) {
@@ -78,12 +97,12 @@ func TestWalkScanRootRespectsMaxDepth(t *testing.T) {
 	//     a/
 	//       b/
 	//         c/
-	//           dotkeeper.toml   <- depth 3 from root
+	//           .dotkeeper.toml  <- depth 3 from root
 	deep := filepath.Join(tmp, "a", "b", "c")
 	if err := os.MkdirAll(deep, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(deep, "dotkeeper.toml"), []byte{}, 0o600); err != nil {
+	if err := os.WriteFile(config.RepoConfigPath(deep), []byte{}, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -111,7 +130,7 @@ func TestWalkScanRootSkipsHiddenDirs(t *testing.T) {
 	if err := os.MkdirAll(hidden, 0o755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(hidden, "dotkeeper.toml"), []byte{}, 0o600); err != nil {
+	if err := os.WriteFile(config.RepoConfigPath(hidden), []byte{}, 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 
@@ -128,7 +147,7 @@ func TestWalkScanRootSkipsHiddenDirs(t *testing.T) {
 // even if they are still recorded in state.toml's ObservedRepos.
 //
 // Setup:
-//   - one scan_root pointing at a directory that contains a dotkeeper.toml repo
+//   - one scan_root pointing at a directory that contains a .dotkeeper.toml repo
 //   - that repo is also recorded in ObservedRepos in state.toml
 //
 // After removing the scan_root from machine.toml, ManagedFolderPaths should
@@ -148,8 +167,8 @@ func TestManagedFolderPathsExcludesObservedReposWhenScanRootRemoved(t *testing.T
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {
 		t.Fatalf("mkdir repo: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(repoDir, "dotkeeper.toml"), []byte{}, 0o600); err != nil {
-		t.Fatalf("write dotkeeper.toml: %v", err)
+	if err := os.WriteFile(config.RepoConfigPath(repoDir), []byte{}, 0o600); err != nil {
+		t.Fatalf("write .dotkeeper.toml: %v", err)
 	}
 
 	// Write machine.toml pointing at the scan_root.

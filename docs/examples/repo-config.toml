@@ -1,18 +1,18 @@
-# dotkeeper — per-repo configuration example
+# dotkeeper - per-repo local configuration example
 #
-# In v0.5, every repo dotkeeper manages has a `dotkeeper.toml` at its root,
-# committed to git. The presence of this file is the opt-in signal: dotkeeper
-# only manages repos that carry one. See ADR 0001 for the rationale.
+# In v0.6, every repo dotkeeper manages has a `.dotkeeper.toml` at its root.
+# That file is local machine state. It must be ignored by Git and Syncthing.
 #
-# This file is one of three v0.5 config locations:
+# This file is one of three config locations:
 #
-#   <repo>/dotkeeper.toml                        — this file (per-repo, in git)
-#   $XDG_CONFIG_HOME/dotkeeper/machine.toml      — per-machine (run `dotkeeper init`)
-#   $XDG_STATE_HOME/dotkeeper/state.toml         — per-machine, tool-owned
+#   <repo>/.dotkeeper.toml                       - local per-repo desired state
+#   $XDG_CONFIG_HOME/dotkeeper/machine.toml      - local machine identity
+#   $XDG_STATE_HOME/dotkeeper/state.toml         - tool-owned runtime state
 #
 # `dotkeeper init` scaffolds machine.toml and state.toml. `dotkeeper track
-# <path>` creates this file when it is missing; Home Manager or other
-# declarative systems can also generate it directly.
+# <path>` creates .dotkeeper.toml when it is missing and writes local Git and
+# Syncthing excludes. Nix/Home Manager can also generate .dotkeeper.toml
+# directly on each machine.
 
 schema_version = 2
 

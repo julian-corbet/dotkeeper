@@ -200,6 +200,12 @@ func TestRepoV2RoundTrip(t *testing.T) {
 	if err := WriteRepoConfigV2(tmp, original); err != nil {
 		t.Fatalf("WriteRepoConfigV2: %v", err)
 	}
+	if _, err := os.Stat(RepoConfigPath(tmp)); err != nil {
+		t.Fatalf("WriteRepoConfigV2 should write %s: %v", RepoConfigFileName, err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "dotkeeper.toml")); !os.IsNotExist(err) {
+		t.Fatalf("WriteRepoConfigV2 must not write old dotkeeper.toml name; stat err = %v", err)
+	}
 
 	loaded, err := LoadRepoConfigV2(tmp)
 	if err != nil {
@@ -299,13 +305,13 @@ added_by = "desktop"
 			want: 2,
 		},
 		{
-			name: "v1 legacy file (no schema_version)",
+			name: "file without schema_version",
 			content: `[repo]
 name = "old-repo"
 added = "2025-01-01T00:00:00Z"
 added_by = "desktop"
 `,
-			want: 1,
+			want: 0,
 		},
 		{
 			name:    "missing file",
@@ -323,7 +329,7 @@ added_by = "desktop"
 		t.Run(tt.name, func(t *testing.T) {
 			dir := t.TempDir()
 			if tt.content != "" || tt.name == "invalid TOML" {
-				path := filepath.Join(dir, "dotkeeper.toml")
+				path := RepoConfigPath(dir)
 				if err := os.WriteFile(path, []byte(tt.content), 0o644); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
@@ -333,6 +339,16 @@ added_by = "desktop"
 				t.Errorf("DetectRepoConfigVersion() = %d, want %d", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestDetectRepoConfigVersionIgnoresOldName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "dotkeeper.toml"), []byte("schema_version = 2\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if got := DetectRepoConfigVersion(dir); got != 0 {
+		t.Fatalf("old dotkeeper.toml must not be read; got version %d", got)
 	}
 }
 
@@ -494,7 +510,7 @@ func TestStateV2Path(t *testing.T) {
 
 func TestRepoConfigPath(t *testing.T) {
 	got := RepoConfigPath("/home/user/my-repo")
-	want := "/home/user/my-repo/dotkeeper.toml"
+	want := "/home/user/my-repo/.dotkeeper.toml"
 	if got != want {
 		t.Errorf("RepoConfigPath() = %q, want %q", got, want)
 	}

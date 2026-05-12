@@ -49,9 +49,9 @@ type MachineConfigV2 struct {
 	ReconcileInterval string `toml:"reconcile_interval"`
 }
 
-// DiscoveryConfig configures scan-root–based repo discovery (ADR 0004).
+// DiscoveryConfig configures scan-root-based repo discovery (ADR 0004).
 type DiscoveryConfig struct {
-	// ScanRoots are the directories dotkeeper walks looking for dotkeeper.toml
+	// ScanRoots are the directories dotkeeper walks looking for .dotkeeper.toml
 	// files. Tilde-prefixed paths are expanded. Default: ["~/Documents/GitHub"].
 	ScanRoots []string `toml:"scan_roots"`
 	// Exclude is a list of paths to skip during discovery.

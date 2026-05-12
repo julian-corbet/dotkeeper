@@ -16,8 +16,8 @@ contents:
   - src: dotkeeper
     dst: /usr/bin/dotkeeper
 
-  - src: dotkeeper.toml.example
-    dst: /usr/share/doc/dotkeeper/dotkeeper.toml.example
+  - src: docs/examples/repo-config.toml
+    dst: /usr/share/doc/dotkeeper/repo-config.toml
 
   - src: README.md
     dst: /usr/share/doc/dotkeeper/README.md

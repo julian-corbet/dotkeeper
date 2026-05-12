@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 )
 
+const RepoConfigFileName = ".dotkeeper.toml"
+
 // StateDir returns the XDG state directory for dotkeeper:
 // $XDG_STATE_HOME/dotkeeper, falling back to $HOME/.local/state/dotkeeper.
 func StateDir() string {
@@ -24,8 +26,8 @@ func StateV2Path() string {
 	return filepath.Join(StateDir(), "state.toml")
 }
 
-// RepoConfigPath returns the path to the per-repo dotkeeper.toml for the
+// RepoConfigPath returns the path to the per-repo .dotkeeper.toml for the
 // given repo root.
 func RepoConfigPath(repoRoot string) string {
-	return filepath.Join(repoRoot, "dotkeeper.toml")
+	return filepath.Join(repoRoot, RepoConfigFileName)
 }

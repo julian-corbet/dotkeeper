@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -62,6 +63,8 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 		return a.applyUpdateSyncthingFolderDevices(act)
 	case AddSyncthingDevice:
 		return a.applyAddSyncthingDevice(act)
+	case EnsureIgnoreFile:
+		return applyEnsureIgnoreFile(act)
 	case GitCommitDirty:
 		return applyGitCommitDirty(act)
 	case GitPushRepo:
@@ -73,6 +76,93 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 	default:
 		return fmt.Errorf("unknown action type: %T", action)
 	}
+}
+
+func applyEnsureIgnoreFile(act EnsureIgnoreFile) error {
+	if act.RepoPath == "" {
+		return fmt.Errorf("EnsureIgnoreFile: empty repo path")
+	}
+	if info, err := os.Stat(act.RepoPath); err != nil {
+		return fmt.Errorf("EnsureIgnoreFile %q: stat repo: %w", act.RepoPath, err)
+	} else if !info.IsDir() {
+		return fmt.Errorf("EnsureIgnoreFile %q: not a directory", act.RepoPath)
+	}
+
+	want := config.SyncIgnoreFileContent(act.Patterns)
+	path := filepath.Join(act.RepoPath, ".stignore")
+	if data, err := os.ReadFile(path); err == nil && string(data) == want {
+		return ensureGitInfoExclude(act.RepoPath, config.DefaultGitExcludePatterns...)
+	}
+	if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+		return fmt.Errorf("EnsureIgnoreFile %q: write .stignore: %w", act.RepoPath, err)
+	}
+	if err := ensureGitInfoExclude(act.RepoPath, config.DefaultGitExcludePatterns...); err != nil {
+		return fmt.Errorf("EnsureIgnoreFile %q: update git exclude: %w", act.RepoPath, err)
+	}
+	return nil
+}
+
+func ensureGitInfoExclude(repoPath string, patterns ...string) error {
+	path, ok := gitInfoExcludePath(repoPath)
+	if !ok {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	content := string(data)
+	var missing []string
+	for _, pattern := range patterns {
+		if !excludeHasPattern(content, pattern) {
+			missing = append(missing, pattern)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString(content)
+	if content != "" && !strings.HasSuffix(content, "\n") {
+		b.WriteByte('\n')
+	}
+	if !strings.Contains(content, "# dotkeeper local files") {
+		b.WriteString("# dotkeeper local files\n")
+	}
+	for _, pattern := range missing {
+		b.WriteString(pattern)
+		b.WriteByte('\n')
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(b.String()), 0o644)
+}
+
+func gitInfoExcludePath(repoPath string) (string, bool) {
+	cmd := exec.Command("git", "rev-parse", "--git-path", "info/exclude")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repoPath, path)
+	}
+	return path, true
+}
+
+func excludeHasPattern(content, pattern string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == pattern {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *RealApplier) applyAddSyncthingDevice(act AddSyncthingDevice) error {

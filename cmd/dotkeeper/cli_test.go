@@ -70,7 +70,7 @@ func TestCLIHelp(t *testing.T) {
 		t.Errorf("--help exit code = %d, want 0", code)
 	}
 
-	// Kept v0.5 subcommands should appear in help.
+	// Declarative subcommands should appear in help.
 	for _, cmd := range []string{"init", "status", "start", "version", "reconcile", "identity", "track", "untrack", "conflict", "doctor"} {
 		if !strings.Contains(output, cmd) {
 			t.Errorf("help output missing command %q", cmd)
@@ -206,7 +206,7 @@ func TestCLIDoctorJSON(t *testing.T) {
 	}
 }
 
-// TestStatusCmdShowsV5State initializes a v0.5 setup and verifies that
+// TestStatusCmdShowsV5State initializes current setup and verifies that
 // 'dotkeeper status' shows the machine name and scan roots from machine.toml.
 func TestStatusCmdShowsV5State(t *testing.T) {
 	binary := buildTestBinary(t)

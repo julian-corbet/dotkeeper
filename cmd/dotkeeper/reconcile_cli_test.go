@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/julian-corbet/dotkeeper/internal/config"
 )
 
 // TestCLIReconcileNotInitialized verifies that running 'dotkeeper reconcile'
@@ -109,7 +111,7 @@ func TestCLIIdentityDeviceIDOnly(t *testing.T) {
 }
 
 // TestCLITrackAddsPath verifies that 'dotkeeper track <path>' registers an
-// absolute git repo path in state.toml's tracked_overrides.
+// absolute git repo path and writes local-only dotkeeper metadata.
 func TestCLITrackAddsPath(t *testing.T) {
 	binary := buildTestBinary(t)
 	tmp := t.TempDir()
@@ -131,13 +133,36 @@ func TestCLITrackAddsPath(t *testing.T) {
 	if !strings.Contains(stateData, repoDir) {
 		t.Errorf("state.toml does not contain tracked path %q\nstate:\n%s", repoDir, stateData)
 	}
-	repoConfig, err := os.ReadFile(filepath.Join(repoDir, "dotkeeper.toml"))
+	repoConfig, err := os.ReadFile(config.RepoConfigPath(repoDir))
 	if err != nil {
-		t.Fatalf("track should create dotkeeper.toml: %v", err)
+		t.Fatalf("track should create .dotkeeper.toml: %v", err)
 	}
 	if !strings.Contains(string(repoConfig), "schema_version = 2") ||
 		!strings.Contains(string(repoConfig), "syncthing_folder_id = \"dk-tracked-repo-") {
-		t.Errorf("dotkeeper.toml missing bootstrap fields:\n%s", repoConfig)
+		t.Errorf(".dotkeeper.toml missing bootstrap fields:\n%s", repoConfig)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "dotkeeper.toml")); !os.IsNotExist(err) {
+		t.Fatalf("track must not write old dotkeeper.toml name; stat err = %v", err)
+	}
+
+	stignore, err := os.ReadFile(filepath.Join(repoDir, ".stignore"))
+	if err != nil {
+		t.Fatalf("track should create .stignore: %v", err)
+	}
+	for _, want := range []string{config.RepoConfigFileName, "dotkeeper.toml", ".git", ".dkfolder", ".stignore", ".syncthing.*.tmp", "*.sync-conflict-*"} {
+		if !containsExactLine(string(stignore), want) {
+			t.Errorf(".stignore missing %q:\n%s", want, stignore)
+		}
+	}
+
+	exclude, err := os.ReadFile(filepath.Join(repoDir, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatalf("track should update .git/info/exclude: %v", err)
+	}
+	for _, want := range config.DefaultGitExcludePatterns {
+		if !containsExactLine(string(exclude), want) {
+			t.Errorf(".git/info/exclude missing %q:\n%s", want, exclude)
+		}
 	}
 }
 
@@ -265,7 +290,7 @@ func TestCLIUntrackUnknown(t *testing.T) {
 	}
 }
 
-// TestCLIHelpIncludesNewSubcommands verifies that the new v0.5 subcommands
+// TestCLIHelpIncludesNewSubcommands verifies that the declarative subcommands
 // appear in the top-level help output.
 func TestCLIHelpIncludesNewSubcommands(t *testing.T) {
 	binary := buildTestBinary(t)
@@ -374,4 +399,13 @@ func mustReadStateFile(t *testing.T, tmp string) string {
 		t.Fatalf("read state.toml at %s: %v", statePath, err)
 	}
 	return string(data)
+}
+
+func containsExactLine(content, want string) bool {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.TrimSpace(line) == want {
+			return true
+		}
+	}
+	return false
 }

@@ -4,10 +4,10 @@
 // Package config handles dotkeeper configuration loading and path management.
 //
 // Two config files used in v0.5+:
-//   - machine.toml  — local identity (name, slot, scan roots). Never synced.
-//   - state.toml    — runtime state (device ID, peers, tracked repos). Never synced.
+//   - machine.toml  - local identity (name, slot, scan roots). Never synced.
+//   - state.toml    - runtime state (device ID, peers, tracked repos). Never synced.
 //
-// Per-repo: dotkeeper.toml in each managed repo (tracked in git).
+// Per-repo: .dotkeeper.toml in each managed repo copy. Never synced or committed.
 package config
 
 import (

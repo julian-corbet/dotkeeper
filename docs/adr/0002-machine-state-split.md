@@ -5,8 +5,8 @@
 
 ## Context
 
-ADR 0001 moves per-repo config out of a central file and into each repo's
-own `dotkeeper.toml`. What's left — machine identity, mesh peer directory,
+ADR 0001 moves per-repo config out of a central file and into each local repo
+copy's `.dotkeeper.toml`. What's left — machine identity, mesh peer directory,
 defaults, cached state — still needs a home. That residue is not uniform in
 how it should be written or read:
 

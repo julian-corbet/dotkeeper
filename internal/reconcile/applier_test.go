@@ -405,6 +405,85 @@ func TestRealApplierUpdateSyncthingFolderDevicesGetStatusError(t *testing.T) {
 	}
 }
 
+// --- EnsureIgnoreFile tests --------------------------------------------------
+
+func TestRealApplierEnsureIgnoreFile(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	applier := &RealApplier{}
+	act := EnsureIgnoreFile{
+		RepoPath: repo,
+		Patterns: []string{"custom-cache"},
+	}
+	if err := applier.Apply(context.Background(), act); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(repo, ".stignore"))
+	if err != nil {
+		t.Fatalf("reading .stignore: %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{".git", config.RepoConfigFileName, "dotkeeper.toml", ".stignore", ".dkfolder", ".syncthing.*.tmp", "*.sync-conflict-*", "node_modules", "dist", "custom-cache"} {
+		if !strings.Contains(content, want+"\n") {
+			t.Errorf(".stignore missing %q:\n%s", want, content)
+		}
+	}
+}
+
+func TestRealApplierEnsureIgnoreFileAddsGitInfoExclude(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	cmd := exec.Command("git", "init")
+	cmd.Dir = repo
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+
+	applier := &RealApplier{}
+	if err := applier.Apply(context.Background(), EnsureIgnoreFile{RepoPath: repo}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	data, err := os.ReadFile(filepath.Join(repo, ".git", "info", "exclude"))
+	if err != nil {
+		t.Fatalf("reading info/exclude: %v", err)
+	}
+	content := string(data)
+	for _, want := range config.DefaultGitExcludePatterns {
+		if !excludeHasPattern(content, want) {
+			t.Fatalf("info/exclude missing %q:\n%s", want, data)
+		}
+	}
+}
+
+func TestRealApplierEnsureIgnoreFileIdempotent(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	applier := &RealApplier{}
+	act := EnsureIgnoreFile{RepoPath: repo}
+	if err := applier.Apply(context.Background(), act); err != nil {
+		t.Fatalf("first Apply: %v", err)
+	}
+	info1, err := os.Stat(filepath.Join(repo, ".stignore"))
+	if err != nil {
+		t.Fatalf("stat after first apply: %v", err)
+	}
+	if err := applier.Apply(context.Background(), act); err != nil {
+		t.Fatalf("second Apply: %v", err)
+	}
+	info2, err := os.Stat(filepath.Join(repo, ".stignore"))
+	if err != nil {
+		t.Fatalf("stat after second apply: %v", err)
+	}
+	if !info1.ModTime().Equal(info2.ModTime()) {
+		t.Error("idempotent apply should not rewrite unchanged .stignore")
+	}
+}
+
 // --- GitCommitDirty tests ----------------------------------------------------
 
 func TestRealApplierGitCommitDirty(t *testing.T) {

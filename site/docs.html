@@ -86,7 +86,7 @@
     <tbody>
       <tr><td><code>machine.toml</code></td><td><code>~/.config/dotkeeper/</code></td><td>Declarative local config: name, slot, peers, defaults, scan roots</td><td>Never</td></tr>
       <tr><td><code>state.toml</code></td><td><code>~/.local/state/dotkeeper/</code></td><td>Tool-owned runtime state: Syncthing identity cache, learned peers, tracked overrides</td><td>Never</td></tr>
-      <tr><td><code>dotkeeper.toml</code></td><td>Each managed repo</td><td>Per-repo desired state</td><td>Via git</td></tr>
+      <tr><td><code>.dotkeeper.toml</code></td><td>Each local managed repo copy</td><td>Per-repo desired state</td><td>Never</td></tr>
     </tbody>
   </table>
 </div>
@@ -108,7 +108,7 @@
   <table>
     <tbody>
       <tr><td><code>dotkeeper reconcile</code></td><td>Run one reconcile pass and apply the plan.</td></tr>
-      <tr><td><code>dotkeeper track &lt;path&gt;</code></td><td>Bootstrap <code>dotkeeper.toml</code> and register a git repo outside any scan root.</td></tr>
+      <tr><td><code>dotkeeper track &lt;path&gt;</code></td><td>Bootstrap local <code>.dotkeeper.toml</code>, write local excludes, and register a git repo.</td></tr>
       <tr><td><code>dotkeeper untrack &lt;path&gt;</code></td><td>Remove an out-of-root tracked override.</td></tr>
     </tbody>
   </table>
@@ -140,8 +140,8 @@ dotkeeper reconcile</code></pre>
   <p>Each machine keeps its own <code>machine.toml</code>. Home Manager, a flake activation script, or your own bootstrap script can generate it.</p>
 
   <h3>Adding repos later</h3>
-  <pre><code># Repos under scan roots only need a committed dotkeeper.toml.
-cp dotkeeper.toml.example ~/Documents/GitHub/new-project/dotkeeper.toml
+  <pre><code># Repos under scan roots need local .dotkeeper.toml.
+dotkeeper track ~/Documents/GitHub/new-project
 
 # For repos outside scan roots:
 dotkeeper track ~/src/special-project
@@ -168,7 +168,7 @@ dotkeeper reconcile</code></pre>
 <!-- GIT TIMER -->
 <div class="docs-section">
   <h2>Git timer configuration</h2>
-  <p>The default git backup schedule is set in <code>machine.toml</code>, with per-repo overrides in <code>dotkeeper.toml</code>:</p>
+  <p>The default git backup schedule is set in <code>machine.toml</code>, with per-repo overrides in local <code>.dotkeeper.toml</code>:</p>
   <pre><code>default_git_interval = "daily"       # hourly, daily, weekly, monthly, 2h, 6h, 12h
 default_slot_offset_minutes = 5      # minutes between each machine's backup slot</code></pre>
   <p>Each machine gets a <strong>slot number</strong> (set during init). The timer fires at <code>base_time + (slot * offset)</code>. With slot offset 5 and daily interval:</p>
@@ -185,7 +185,13 @@ default_slot_offset_minutes = 5      # minutes between each machine's backup slo
   <h2>Ignore patterns</h2>
   <p>dotkeeper auto-generates <code>.stignore</code> files with sensible defaults. These are Syncthing ignore patterns &mdash; they control what Syncthing syncs, not what git tracks.</p>
   <p>Default patterns include:</p>
-  <pre><code>.git
+<pre><code>.git
+.dotkeeper.toml
+dotkeeper.toml
+.stignore
+.dkfolder
+.stfolder
+.syncthing.*.tmp
 *.sync-conflict-*
 node_modules
 __pycache__
@@ -195,7 +201,7 @@ __pycache__
 .DS_Store, Thumbs.db, desktop.ini
 target/, dist/, build/
 .idea/, .vscode/ (volatile state only)</code></pre>
-  <p>Customize per repo by editing the <code>[sync].ignore</code> list in <code>dotkeeper.toml</code>.</p>
+  <p>Customize per repo by editing the <code>[sync].ignore</code> list in local <code>.dotkeeper.toml</code>.</p>
 </div>
 
 <!-- SECURITY -->

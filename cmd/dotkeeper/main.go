@@ -32,7 +32,7 @@ import (
 // build.Version for BEP handshake purposes (see internal/stengine).
 // Injected via -ldflags="-X main.version=..." at release build time.
 var (
-	version = "0.1.1"
+	version = "0.6.0-dev"
 	commit  = "none"
 )
 
@@ -56,7 +56,7 @@ func main() {
 	root.AddCommand(startCmd())
 	root.AddCommand(conflictCmd())
 	root.AddCommand(doctorCmd())
-	// v0.5 declarative commands
+	// Declarative commands
 	root.AddCommand(reconcileCmd())
 	root.AddCommand(identityCmd())
 	root.AddCommand(peerCmd())
@@ -208,8 +208,8 @@ func initCmd() *cobra.Command {
 			fmt.Println()
 			fmt.Printf("[dotkeeper] device ID: %s\n", deviceID)
 			fmt.Println()
-			fmt.Println("[dotkeeper] to add repos, drop a dotkeeper.toml in any repo under a scan root,")
-			fmt.Println("[dotkeeper] or run: dotkeeper track <path>")
+			fmt.Println("[dotkeeper] to add repos, run: dotkeeper track <path>")
+			fmt.Println("[dotkeeper] or place a local .dotkeeper.toml in any repo under a scan root")
 			fmt.Println("[dotkeeper] then run: dotkeeper reconcile")
 		},
 	}
@@ -246,7 +246,7 @@ func ensureStateDeviceID(deviceID string) error {
 	return nil
 }
 
-// statusCmd shows the v0.5 machine status: machine name, slot, scan roots,
+// statusCmd shows the machine status: machine name, slot, scan roots,
 // peer count from state.toml, tracked override count, and Syncthing connection.
 func statusCmd() *cobra.Command {
 	return &cobra.Command{
@@ -395,7 +395,7 @@ func startCmd() *cobra.Command {
 }
 
 // startConflictWatcher starts a conflict.Watcher over every managed
-// folder discovered from v0.5 state. Returns a cleanup function that
+// folder discovered from current state. Returns a cleanup function that
 // closes the watcher. Failures are logged, never fatal — Syncthing must
 // keep running even if the watcher can't start.
 func startConflictWatcher(ctx context.Context) func() {
@@ -486,8 +486,8 @@ func handleConflictEvent(ctx context.Context, c conflict.Conflict, roots []strin
 }
 
 // managedFolderPathsV5 returns absolute, existing paths for every managed
-// folder discovered from v0.5 state: config dir + TrackedOverrides + repos
-// found by walking scan roots for dotkeeper.toml files.
+// folder discovered from current state: config dir + TrackedOverrides + repos
+// found by walking scan roots for .dotkeeper.toml files.
 //
 // ObservedRepos is intentionally NOT consulted: if a scan_root is removed
 // from machine.toml, repos under it should become invisible to the watcher,
@@ -958,6 +958,7 @@ func buildDoctorChecks() []doctor.Check {
 		doctor.PeersCheck{Client: client},
 		doctor.FoldersCheck{Client: client},
 		doctor.GitRemotesCheck{},
+		doctor.LocalMetadataCheck{},
 		doctor.ConflictsCheck{},
 	}
 }

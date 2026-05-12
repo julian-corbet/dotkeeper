@@ -7,12 +7,28 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- Per-repo config is now `<repo>/.dotkeeper.toml`, local to each machine and
+  excluded from both Git and Syncthing. `<repo>/dotkeeper.toml` is no longer
+  read as repo config.
+
+### Fixed
+
+- Enforce dotkeeper-managed `.stignore` files during reconcile so repo roots
+  never sync `.git`, `node_modules`, build outputs, Syncthing temp files, or
+  sync-conflict artifacts across peers.
+
 ### Changed
 
 - Vulnerability disclosure now goes through the [GitHub Security
   Advisories form](https://github.com/julian-corbet/dotkeeper/security/advisories/new)
   instead of email. See [SECURITY.md](SECURITY.md) for the full
   policy.
+- `dotkeeper track <path>` now bootstraps local excludes immediately after
+  writing `.dotkeeper.toml`.
+- `dotkeeper doctor` now flags dotkeeper/Syncthing local metadata that has been
+  accidentally added to Git.
 
 ### Added
 

@@ -75,7 +75,7 @@ func (c VersionCheck) Run(_ context.Context) Result {
 
 // --- 2. config --------------------------------------------------------
 
-// ConfigCheck validates the v0.5 configuration:
+// ConfigCheck validates the current configuration:
 //   - machine.toml (v2) exists and parses cleanly
 //   - state.toml exists and parses cleanly
 //   - Syncthing device ID is present in state.toml
@@ -552,7 +552,87 @@ func (c GitRemotesCheck) Run(ctx context.Context) Result {
 	}
 }
 
-// --- 8. conflicts -----------------------------------------------------
+// --- 8. local metadata ------------------------------------------------
+
+// LocalMetadataCheck verifies that local dotkeeper/Syncthing control files are
+// not tracked by Git in managed repositories.
+type LocalMetadataCheck struct {
+	FolderProvider func() []string
+	ListTracked    func(ctx context.Context, repo string, patterns []string) ([]string, error)
+}
+
+func (LocalMetadataCheck) Name() string { return "local metadata" }
+func (c LocalMetadataCheck) Run(ctx context.Context) Result {
+	folders := c.FolderProvider
+	if folders == nil {
+		folders = managedFolderPaths
+	}
+	list := c.ListTracked
+	if list == nil {
+		list = listTrackedMetadata
+	}
+
+	var checked int
+	var bad []string
+	var errors []string
+	for _, root := range folders() {
+		if root == "" || !isGitRepo(ctx, root) {
+			continue
+		}
+		checked++
+		tracked, err := list(ctx, root, config.DefaultGitExcludePatterns)
+		if err != nil {
+			errors = append(errors, filepath.Base(root))
+			continue
+		}
+		if len(tracked) > 0 {
+			bad = append(bad, fmt.Sprintf("%s: %s", filepath.Base(root), strings.Join(tracked, ", ")))
+		}
+	}
+
+	switch {
+	case len(bad) > 0:
+		return Result{
+			Name:    "local metadata",
+			Outcome: Fail,
+			Detail:  fmt.Sprintf("tracked local metadata in %d repo(s): %s", len(bad), strings.Join(bad, "; ")),
+			Hint:    "remove these files from git, then run 'dotkeeper track <path>' or 'dotkeeper reconcile'",
+		}
+	case len(errors) > 0:
+		return Result{
+			Name:    "local metadata",
+			Outcome: Warn,
+			Detail:  "could not inspect: " + strings.Join(errors, ", "),
+		}
+	case checked == 0:
+		return Result{Name: "local metadata", Outcome: OK, Detail: "no git repos to inspect"}
+	default:
+		return Result{Name: "local metadata", Outcome: OK, Detail: fmt.Sprintf("%d repo(s) clean", checked)}
+	}
+}
+
+func isGitRepo(ctx context.Context, repo string) bool {
+	cmd := exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "--is-inside-work-tree")
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) == "true"
+}
+
+func listTrackedMetadata(ctx context.Context, repo string, patterns []string) ([]string, error) {
+	args := []string{"-C", repo, "ls-files", "--"}
+	args = append(args, patterns...)
+	cmd := exec.CommandContext(ctx, "git", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("git ls-files: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 1 && lines[0] == "" {
+		return nil, nil
+	}
+	return lines, nil
+}
+
+// --- 9. conflicts -----------------------------------------------------
 
 // ConflictsCheck scans every managed folder for pending sync-conflict
 // files. OK when zero; Warn when any exist.
@@ -602,7 +682,7 @@ func (c ConflictsCheck) Run(_ context.Context) Result {
 }
 
 // managedFolderPaths returns absolute, existing paths for every managed
-// folder discoverable from v0.5 state. Delegates to the shared
+// folder discoverable from current state. Delegates to the shared
 // discovery.ManagedFolderPaths helper so the logic is not duplicated
 // between the doctor package and cmd/dotkeeper.
 func managedFolderPaths() []string {

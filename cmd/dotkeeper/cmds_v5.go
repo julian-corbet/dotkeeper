@@ -1,7 +1,7 @@
 // Copyright (C) 2026 Julian Corbet
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// cmds_v5.go wires the v0.5 declarative subcommands into the CLI:
+// cmds_v5.go wires the declarative subcommands into the CLI:
 //   - reconcile  — single synchronous reconcile pass
 //   - identity   — print machine name + Syncthing device ID
 //   - track      — register a git repo outside any scan root in state.toml
@@ -148,8 +148,8 @@ func identityCmd() *cobra.Command {
 }
 
 // trackCmd implements 'dotkeeper track <path>'.
-// Bootstraps dotkeeper.toml when needed and registers an absolute path to a
-// git repo in state.toml's tracked_overrides.
+// Bootstraps .dotkeeper.toml when needed, enforces local ignore files, and
+// registers an absolute path to a git repo in state.toml's tracked_overrides.
 func trackCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "track <path>",
@@ -167,12 +167,18 @@ func trackCmd() *cobra.Command {
 				return fmt.Errorf("%s is not a git repository (no .git directory)", absPath)
 			}
 
-			if err := ensureRepoConfig(absPath); err != nil {
+			cfg, err := ensureRepoConfig(absPath)
+			if err != nil {
 				return err
 			}
 
-			// Apply the TrackRepo action directly via RealApplier.
 			applier := &reconcile.RealApplier{Logger: slog.Default()}
+			if err := applier.Apply(cmd.Context(), reconcile.EnsureIgnoreFile{
+				RepoPath: absPath,
+				Patterns: cfg.Sync.Ignore,
+			}); err != nil {
+				return fmt.Errorf("prepare local ignores for %s: %w", absPath, err)
+			}
 			if err := applier.Apply(cmd.Context(), reconcile.TrackRepo{Path: absPath}); err != nil {
 				return fmt.Errorf("track %s: %w", absPath, err)
 			}
@@ -183,10 +189,10 @@ func trackCmd() *cobra.Command {
 	}
 }
 
-func ensureRepoConfig(repoPath string) error {
+func ensureRepoConfig(repoPath string) (*config.RepoConfigV2, error) {
 	cfg, err := config.LoadRepoConfigV2(repoPath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if cfg == nil {
 		cfg = &config.RepoConfigV2{
@@ -209,7 +215,10 @@ func ensureRepoConfig(repoPath string) error {
 		if name, err := loadMachineName(); err == nil {
 			cfg.Meta.AddedBy = name
 		}
-		return config.WriteRepoConfigV2(repoPath, cfg)
+		if err := config.WriteRepoConfigV2(repoPath, cfg); err != nil {
+			return nil, err
+		}
+		return cfg, nil
 	}
 
 	changed := false
@@ -237,9 +246,11 @@ func ensureRepoConfig(repoPath string) error {
 		changed = true
 	}
 	if changed {
-		return config.WriteRepoConfigV2(repoPath, cfg)
+		if err := config.WriteRepoConfigV2(repoPath, cfg); err != nil {
+			return nil, err
+		}
 	}
-	return nil
+	return cfg, nil
 }
 
 func folderIDForRepo(repoPath string) string {
@@ -411,7 +422,7 @@ func startReconcileDaemon(ctx context.Context, logger *slog.Logger) {
 //  2. A time.Ticker at reconcileInterval (safety net).
 //  3. fsnotify watches over every directory under each scan root, plus
 //     state.toml and machine.toml. New directories created under a scan
-//     root are added to the watch on the fly. Events on dotkeeper.toml,
+//     root are added to the watch on the fly. Events on .dotkeeper.toml,
 //     state.toml, or machine.toml fire reconcile after a 1-second debounce.
 //
 // All triggers funnel into a single buffered channel of size 1. A single
@@ -550,7 +561,7 @@ func startReconcileLoop(
 }
 
 // handleFsnotifyEvent processes one fsnotify event. It auto-watches new
-// directories created under any watched root and debounces dotkeeper.toml /
+// directories created under any watched root and debounces .dotkeeper.toml /
 // state.toml / machine.toml changes into a single reconcile request.
 func handleFsnotifyEvent(
 	ctx context.Context,
@@ -562,20 +573,20 @@ func handleFsnotifyEvent(
 ) {
 	// New directory created under a watched root → walk and watch it.
 	// This makes the daemon react when a user does `mkdir <scan-root>/new-repo`
-	// then drops a dotkeeper.toml inside it.
+	// then drops a .dotkeeper.toml inside it.
 	if event.Op&fsnotify.Create == fsnotify.Create && watcher != nil {
 		if info, err := os.Stat(event.Name); err == nil && info.IsDir() {
 			addWatchRecursive(watcher, event.Name, logger)
 			// Don't return — a new directory by itself doesn't warrant a
-			// reconcile (no dotkeeper.toml yet), but we also don't want the
+			// reconcile (no .dotkeeper.toml yet), but we also don't want the
 			// basename filter below to skip it; just fall through.
 		}
 	}
 
-	// We only reconcile in response to dotkeeper.toml / state.toml / machine.toml
+	// We only reconcile in response to .dotkeeper.toml / state.toml / machine.toml
 	// changes. Directory events and unrelated files are ignored.
 	base := filepath.Base(event.Name)
-	if base != "dotkeeper.toml" && base != "machine.toml" && base != "state.toml" {
+	if base != config.RepoConfigFileName && base != "machine.toml" && base != "state.toml" {
 		return
 	}
 

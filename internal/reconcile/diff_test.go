@@ -60,8 +60,8 @@ func TestDiff(t *testing.T) {
 			},
 			obs: Observed{},
 			check: func(t *testing.T, plan Plan) {
-				if len(plan) != 1 {
-					t.Fatalf("expected 1 action, got %d", len(plan))
+				if len(plan) != 2 {
+					t.Fatalf("expected 2 actions, got %d", len(plan))
 				}
 				a, ok := plan[0].(AddSyncthingFolder)
 				if !ok {
@@ -72,6 +72,13 @@ func TestDiff(t *testing.T) {
 				}
 				if a.Path != "/home/user/dotfiles" {
 					t.Errorf("wrong path: %q", a.Path)
+				}
+				ignore, ok := plan[1].(EnsureIgnoreFile)
+				if !ok {
+					t.Fatalf("expected EnsureIgnoreFile, got %T", plan[1])
+				}
+				if ignore.RepoPath != "/home/user/dotfiles" {
+					t.Errorf("wrong ignore path: %q", ignore.RepoPath)
 				}
 			},
 		},
@@ -115,6 +122,9 @@ func TestDiff(t *testing.T) {
 						Devices:           []string{"DEVICE-A"}, // missing DEVICE-B
 					},
 				},
+				TrackedRepos: []RepoObs{
+					{Path: "/repo", IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
+				},
 			},
 			check: func(t *testing.T, plan Plan) {
 				if len(plan) != 1 {
@@ -148,10 +158,51 @@ func TestDiff(t *testing.T) {
 						Devices:           []string{"DEVICE-A"},
 					},
 				},
+				TrackedRepos: []RepoObs{
+					{Path: "/repo", IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
+				},
 			},
 			check: func(t *testing.T, plan Plan) {
 				if len(plan) != 0 {
 					t.Fatalf("expected empty plan, got %d actions", len(plan))
+				}
+			},
+		},
+		{
+			name: "folder exists but .stignore is missing → EnsureIgnoreFile",
+			desired: Desired{
+				Repos: map[string]RepoDesired{
+					"/repo": {
+						Path:              "/repo",
+						SyncthingFolderID: "dk-repo",
+						ShareWith:         []string{"DEVICE-A"},
+						Ignore:            config.MergeSyncIgnorePatterns([]string{"custom-cache"}),
+					},
+				},
+			},
+			obs: Observed{
+				ManagedFolders: []FolderObs{
+					{
+						SyncthingFolderID: "dk-repo",
+						Path:              "/repo",
+						Devices:           []string{"DEVICE-A"},
+					},
+				},
+				TrackedRepos: []RepoObs{{Path: "/repo"}},
+			},
+			check: func(t *testing.T, plan Plan) {
+				if len(plan) != 1 {
+					t.Fatalf("expected 1 action, got %d", len(plan))
+				}
+				a, ok := plan[0].(EnsureIgnoreFile)
+				if !ok {
+					t.Fatalf("expected EnsureIgnoreFile, got %T", plan[0])
+				}
+				if a.RepoPath != "/repo" {
+					t.Errorf("wrong repo path: %q", a.RepoPath)
+				}
+				if !containsString(a.Patterns, "custom-cache") {
+					t.Errorf("custom pattern missing from action: %v", a.Patterns)
 				}
 			},
 		},
@@ -165,6 +216,9 @@ func TestDiff(t *testing.T) {
 			obs: Observed{
 				ManagedFolders: []FolderObs{
 					{SyncthingFolderID: "dk-dots", Path: "/dots", Devices: []string{"X", "Y"}},
+				},
+				TrackedRepos: []RepoObs{
+					{Path: "/dots", IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
 				},
 			},
 			check: func(t *testing.T, plan Plan) {
@@ -481,8 +535,10 @@ func TestBuildDesired(t *testing.T) {
 		if r.ShareWith[0] != "DEV-L" || r.ShareWith[1] != "DEV-S" {
 			t.Errorf("share_with names should resolve to device IDs, got %v", r.ShareWith)
 		}
-		if len(r.Ignore) != 1 || r.Ignore[0] != "*.log" {
-			t.Errorf("wrong ignore list: %v", r.Ignore)
+		for _, want := range []string{".git", "node_modules", "*.log"} {
+			if !containsString(r.Ignore, want) {
+				t.Errorf("ignore list missing %q: %v", want, r.Ignore)
+			}
 		}
 	})
 
@@ -668,4 +724,13 @@ func TestDiffIdempotentFolders(t *testing.T) {
 			t.Errorf("action[%d] differs: %q vs %q", i, plan1[i].Describe(), plan2[i].Describe())
 		}
 	}
+}
+
+func containsString(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

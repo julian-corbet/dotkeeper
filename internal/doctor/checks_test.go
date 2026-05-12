@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -142,8 +143,7 @@ func TestConfigCheckPassesWithValidV5Files(t *testing.T) {
 	}
 }
 
-// TestConfigCheckOK is an alias for TestConfigCheckPassesWithValidV5Files
-// for backward compatibility in test naming.
+// TestConfigCheckOK keeps the shorter test name pointed at the same assertion.
 func TestConfigCheckOK(t *testing.T) {
 	TestConfigCheckPassesWithValidV5Files(t)
 }
@@ -557,6 +557,63 @@ func TestGitRemotesCheckNoGitRepos(t *testing.T) {
 	}
 	if !strings.Contains(r.Detail, "no observed") {
 		t.Errorf("expected 'no observed' in detail: %q", r.Detail)
+	}
+}
+
+// --- Local metadata ---------------------------------------------------
+
+func TestLocalMetadataCheckOKWhenFilesAreUntracked(t *testing.T) {
+	repo := initDoctorGitRepo(t)
+	if err := os.WriteFile(config.RepoConfigPath(repo), []byte("schema_version = 2\n"), 0o644); err != nil {
+		t.Fatalf("write .dotkeeper.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".stignore"), []byte(".dotkeeper.toml\n"), 0o644); err != nil {
+		t.Fatalf("write .stignore: %v", err)
+	}
+
+	r := LocalMetadataCheck{
+		FolderProvider: func() []string { return []string{repo} },
+	}.Run(context.Background())
+	if r.Outcome != OK {
+		t.Fatalf("Outcome = %v, want OK; detail=%q", r.Outcome, r.Detail)
+	}
+}
+
+func TestLocalMetadataCheckFailsWhenFilesAreTracked(t *testing.T) {
+	repo := initDoctorGitRepo(t)
+	if err := os.WriteFile(config.RepoConfigPath(repo), []byte("schema_version = 2\n"), 0o644); err != nil {
+		t.Fatalf("write .dotkeeper.toml: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, ".stignore"), []byte(".dotkeeper.toml\n"), 0o644); err != nil {
+		t.Fatalf("write .stignore: %v", err)
+	}
+	runDoctorGit(t, repo, "add", ".dotkeeper.toml", ".stignore")
+
+	r := LocalMetadataCheck{
+		FolderProvider: func() []string { return []string{repo} },
+	}.Run(context.Background())
+	if r.Outcome != Fail {
+		t.Fatalf("Outcome = %v, want Fail; detail=%q", r.Outcome, r.Detail)
+	}
+	if !strings.Contains(r.Detail, ".dotkeeper.toml") || !strings.Contains(r.Detail, ".stignore") {
+		t.Fatalf("detail missing tracked metadata names: %q", r.Detail)
+	}
+}
+
+func initDoctorGitRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	runDoctorGit(t, repo, "init")
+	return repo
+}
+
+func runDoctorGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
 

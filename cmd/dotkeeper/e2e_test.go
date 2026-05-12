@@ -61,8 +61,8 @@ func TestE2EInitStatus(t *testing.T) {
 	}
 }
 
-// TestE2EReconcileWithTrackedRepo tests that 'dotkeeper reconcile' succeeds
-// on a machine initialized with a tracked repo override in state.toml.
+// TestE2EReconcileWithTrackedRepo tests that 'dotkeeper reconcile' discovers
+// a tracked override repo and plans the Syncthing folder action.
 func TestE2EReconcileWithTrackedRepo(t *testing.T) {
 	tmp := t.TempDir()
 
@@ -88,12 +88,17 @@ func TestE2EReconcileWithTrackedRepo(t *testing.T) {
 		t.Fatalf("track failed: %v\n%s", err, out)
 	}
 
-	// Reconcile should succeed (empty plan since no dotkeeper.toml in repo yet).
+	// Reconcile should plan the repo. Syncthing is not running in this test
+	// environment, so applying AddSyncthingFolder exits non-zero.
 	cmd = exec.Command(binary, "reconcile")
 	cmd.Env = envWith(tmp)
 	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("reconcile failed: %v\n%s", err, out)
+	if err == nil {
+		t.Fatalf("reconcile should fail at apply without Syncthing, but output was:\n%s", out)
+	}
+	output := string(out)
+	if !strings.Contains(output, "add Syncthing folder dk-my-repo-") || !strings.Contains(output, repoDir) {
+		t.Fatalf("reconcile did not plan tracked repo folder action:\n%s", output)
 	}
 }
 

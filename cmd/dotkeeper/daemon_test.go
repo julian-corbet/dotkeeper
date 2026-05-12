@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/reconcile"
 )
 
@@ -114,7 +115,7 @@ func TestDaemonSerializesConcurrentTriggers(t *testing.T) {
 }
 
 // TestDaemonReconcilesOnNewRepoInScanRootSubdir verifies that creating a new
-// repo subdirectory inside a scan root, then dropping a dotkeeper.toml inside
+// repo subdirectory inside a scan root, then dropping a .dotkeeper.toml inside
 // it, triggers a reconcile. fsnotify is non-recursive by default — the daemon
 // must walk the scan root and watch every directory, plus auto-watch new
 // subdirectories as they appear.
@@ -132,7 +133,7 @@ func TestDaemonReconcilesOnNewRepoInScanRootSubdir(t *testing.T) {
 	<-stub.started
 	initial := stub.Calls()
 
-	// Create a new subdir + dotkeeper.toml well after the watcher is up.
+	// Create a new subdir + .dotkeeper.toml well after the watcher is up.
 	time.Sleep(200 * time.Millisecond)
 	repoDir := filepath.Join(scanRoot, "newrepo")
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {
@@ -141,9 +142,9 @@ func TestDaemonReconcilesOnNewRepoInScanRootSubdir(t *testing.T) {
 	// Give the watcher a moment to pick up the new directory and add it.
 	time.Sleep(300 * time.Millisecond)
 
-	tomlPath := filepath.Join(repoDir, "dotkeeper.toml")
+	tomlPath := config.RepoConfigPath(repoDir)
 	if err := os.WriteFile(tomlPath, []byte("schema_version = 2\n"), 0o644); err != nil {
-		t.Fatalf("write dotkeeper.toml: %v", err)
+		t.Fatalf("write .dotkeeper.toml: %v", err)
 	}
 
 	// Wait for fsnotify (typically <100ms) + 1s debounce + processing.
@@ -154,11 +155,11 @@ func TestDaemonReconcilesOnNewRepoInScanRootSubdir(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Errorf("daemon did not reconcile after dotkeeper.toml appeared in scan-root subdir; calls=%d, initial=%d", stub.Calls(), initial)
+	t.Errorf("daemon did not reconcile after .dotkeeper.toml appeared in scan-root subdir; calls=%d, initial=%d", stub.Calls(), initial)
 }
 
 // TestDaemonReconcilesOnDotKeeperTomlInWatchedRoot verifies the simpler case:
-// dropping a dotkeeper.toml directly in the watched scan root (no subdir)
+// dropping a .dotkeeper.toml directly in the watched scan root (no subdir)
 // triggers reconcile. This is a regression guard for the basename filter.
 func TestDaemonReconcilesOnDotKeeperTomlInWatchedRoot(t *testing.T) {
 	stub := newStubReconciler()
@@ -173,7 +174,7 @@ func TestDaemonReconcilesOnDotKeeperTomlInWatchedRoot(t *testing.T) {
 	initial := stub.Calls()
 
 	time.Sleep(200 * time.Millisecond)
-	tomlPath := filepath.Join(scanRoot, "dotkeeper.toml")
+	tomlPath := config.RepoConfigPath(scanRoot)
 	if err := os.WriteFile(tomlPath, []byte("schema_version = 2\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -185,5 +186,5 @@ func TestDaemonReconcilesOnDotKeeperTomlInWatchedRoot(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Errorf("daemon did not reconcile after dotkeeper.toml appeared directly in watched root; calls=%d", stub.Calls())
+	t.Errorf("daemon did not reconcile after .dotkeeper.toml appeared directly in watched root; calls=%d", stub.Calls())
 }

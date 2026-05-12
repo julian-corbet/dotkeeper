@@ -10,7 +10,7 @@ import (
 )
 
 // DesiredProvider returns the current desired configuration for this machine.
-// Implementations typically read machine.toml and all tracked dotkeeper.toml
+// Implementations typically read machine.toml and all local .dotkeeper.toml
 // files.
 type DesiredProvider func(ctx context.Context) (Desired, error)
 

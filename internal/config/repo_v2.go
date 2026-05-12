@@ -6,20 +6,18 @@ package config
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/BurntSushi/toml"
 )
 
-// RepoConfigV2 is the v0.5 schema for the per-repo dotkeeper.toml file that
-// lives at the root of each managed repository. This file is tracked in git
-// and its presence is the opt-in signal for dotkeeper management (ADR 0001).
+// RepoConfigV2 is the v0.6 schema for the per-repo .dotkeeper.toml file that
+// lives at the root of each local managed repository copy. This file is local
+// machine state and must not be committed or synced.
 type RepoConfigV2 struct {
 	SchemaVersion int `toml:"schema_version"`
 
-	// Meta holds repo identity. The TOML key [repo] is kept for backward
-	// compatibility with the v0.4 [repo] section.
+	// Meta holds repo identity.
 	Meta RepoMeta `toml:"repo"`
 
 	// Sync holds Syncthing-level configuration for this repo.
@@ -32,8 +30,7 @@ type RepoConfigV2 struct {
 	GitBackup RepoGitBackupConfig `toml:"git_backup"`
 }
 
-// RepoMeta holds repo identity metadata, kept backward-compatible with the
-// v0.4 [repo] block.
+// RepoMeta holds repo identity metadata.
 type RepoMeta struct {
 	Name    string `toml:"name"`
 	Added   string `toml:"added"`
@@ -72,7 +69,7 @@ type RepoGitBackupConfig struct {
 	SkipSlots []uint `toml:"skip_slots"`
 }
 
-// LoadRepoConfigV2 reads dotkeeper.toml from repoRoot. Returns nil (no error)
+// LoadRepoConfigV2 reads .dotkeeper.toml from repoRoot. Returns nil (no error)
 // if the file does not exist.
 func LoadRepoConfigV2(repoRoot string) (*RepoConfigV2, error) {
 	path := RepoConfigPath(repoRoot)
@@ -96,12 +93,12 @@ func LoadRepoConfigV2(repoRoot string) (*RepoConfigV2, error) {
 	return &cfg, nil
 }
 
-// WriteRepoConfigV2 writes cfg to dotkeeper.toml in repoRoot. The file is
-// written with mode 0644 (it is tracked in git and intended to be readable).
+// WriteRepoConfigV2 writes cfg to .dotkeeper.toml in repoRoot. The file is
+// written with mode 0644 and excluded from Git/Syncthing by dotkeeper.
 func WriteRepoConfigV2(repoRoot string, cfg *RepoConfigV2) error {
 	var b strings.Builder
-	b.WriteString("# Managed by dotkeeper — https://github.com/julian-corbet/dotkeeper\n")
-	b.WriteString("# This file is tracked in git. Its presence opts this repo into dotkeeper management.\n\n")
+	b.WriteString("# Managed by dotkeeper - https://github.com/julian-corbet/dotkeeper\n")
+	b.WriteString("# Local machine state. Do not commit or sync this file.\n\n")
 
 	fmt.Fprintf(&b, "schema_version = %d\n\n", cfg.SchemaVersion)
 
@@ -138,16 +135,15 @@ func WriteRepoConfigV2(repoRoot string, cfg *RepoConfigV2) error {
 	}
 	b.WriteString("]\n")
 
-	path := filepath.Join(repoRoot, "dotkeeper.toml")
+	path := RepoConfigPath(repoRoot)
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
-// DetectRepoConfigVersion inspects dotkeeper.toml in repoRoot and returns the
+// DetectRepoConfigVersion inspects .dotkeeper.toml in repoRoot and returns the
 // schema version it appears to be:
 //
 //   - 2 if schema_version = 2 is present
-//   - 1 if the file exists but has no schema_version field (legacy v0.4 format)
-//   - 0 if the file does not exist or cannot be decoded
+//   - 0 if the file does not exist, has no schema_version, or cannot be decoded
 func DetectRepoConfigVersion(repoRoot string) int {
 	path := RepoConfigPath(repoRoot)
 	data, err := os.ReadFile(path)
@@ -162,10 +158,5 @@ func DetectRepoConfigVersion(repoRoot string) int {
 	if _, err := toml.Decode(string(data), &probe); err != nil {
 		return 0
 	}
-	if probe.SchemaVersion >= 2 {
-		return probe.SchemaVersion
-	}
-
-	// File exists and decoded, but no schema_version — treat as v1.
-	return 1
+	return probe.SchemaVersion
 }

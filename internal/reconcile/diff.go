@@ -7,6 +7,8 @@ package reconcile
 import (
 	"sort"
 	"time"
+
+	"github.com/julian-corbet/dotkeeper/internal/config"
 )
 
 // Diff computes the Plan needed to move observed state towards desired state.
@@ -83,13 +85,19 @@ func Diff(desired Desired, observed Observed) Plan {
 				Path:     df.path,
 				Devices:  df.devices,
 			})
-			continue
-		}
-		// Check if device lists differ.
-		if !stringSlicesEqual(sortedCopy(obs.Devices), sortedCopy(df.devices)) {
+		} else if !stringSlicesEqual(sortedCopy(obs.Devices), sortedCopy(df.devices)) {
 			plan = append(plan, UpdateSyncthingFolderDevices{
 				FolderID: df.folderID,
 				Devices:  df.devices,
+			})
+		}
+		repoDesired := desired.Repos[df.path]
+		repoObs := observedRepoByPath(observed.TrackedRepos, df.path)
+		wantIgnore := config.SyncIgnoreFileContent(repoDesired.Ignore)
+		if repoObs.IgnoreFileContent != wantIgnore {
+			plan = append(plan, EnsureIgnoreFile{
+				RepoPath: df.path,
+				Patterns: repoDesired.Ignore,
 			})
 		}
 	}
@@ -144,6 +152,15 @@ func Diff(desired Desired, observed Observed) Plan {
 	}
 
 	return plan
+}
+
+func observedRepoByPath(repos []RepoObs, path string) RepoObs {
+	for _, repo := range repos {
+		if repo.Path == path {
+			return repo
+		}
+	}
+	return RepoObs{Path: path}
 }
 
 func repoBackupDue(desired RepoDesired, observed RepoObs, now time.Time) bool {

@@ -16,13 +16,13 @@ import (
 )
 
 // WalkScanRoot recursively walks root up to maxDepth directory levels looking
-// for directories that contain a dotkeeper.toml file. When a directory with
-// dotkeeper.toml is found, fn is called with its absolute path.
+// for directories that contain a .dotkeeper.toml file. When such a directory
+// is found, fn is called with its absolute path.
 //
 // Canonical behaviour: the walk stops descending into any directory that
-// itself contains a dotkeeper.toml. This is intentional — that directory is a
+// itself contains a .dotkeeper.toml. This is intentional - that directory is a
 // managed repo root, and walking into it would be wasteful (nested repos are
-// not supported; any dotkeeper.toml deeper than the root is the repo's own
+// not supported; any .dotkeeper.toml deeper than the root is the repo's own
 // config, not a new managed repo).
 //
 // Hidden directories (names beginning with ".") are skipped.
@@ -37,7 +37,7 @@ func WalkScanRoot(root string, depth, maxDepth int, fn func(string)) error {
 
 	// Check whether this directory is itself a managed repo root.
 	for _, e := range entries {
-		if !e.IsDir() && e.Name() == "dotkeeper.toml" {
+		if !e.IsDir() && e.Name() == config.RepoConfigFileName {
 			fn(root)
 			return nil // do not descend into a managed repo
 		}
@@ -53,7 +53,7 @@ func WalkScanRoot(root string, depth, maxDepth int, fn func(string)) error {
 }
 
 // ManagedFolderPaths returns absolute, existing paths for every managed folder
-// discoverable from v0.5 state: the config directory, TrackedOverrides from
+// discoverable from current state: the config directory, TrackedOverrides from
 // state.toml, and any repo roots found by walking scan_roots in machine.toml.
 //
 // ObservedRepos is intentionally NOT consulted: if a scan_root is removed from
@@ -92,7 +92,7 @@ func ManagedFolderPaths() []string {
 		}
 	}
 
-	// Walk scan roots to find repos with dotkeeper.toml.
+	// Walk scan roots to find repos with .dotkeeper.toml.
 	if machine, err := config.LoadMachineConfigV2(); err == nil && machine != nil {
 		for _, root := range machine.Discovery.ScanRoots {
 			expanded := config.ExpandPath(root)

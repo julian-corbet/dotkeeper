@@ -57,7 +57,7 @@ scan_depth = %d
 	return path
 }
 
-// writeDotkeeperToml writes a minimal dotkeeper.toml into repoDir.
+// writeDotkeeperToml writes a minimal .dotkeeper.toml into repoDir.
 func writeDotkeeperToml(t *testing.T, repoDir, folderID string) {
 	t.Helper()
 	content := fmt.Sprintf(`schema_version = 2
@@ -81,9 +81,9 @@ interval = ""
 skip_slots = []
 `, filepath.Base(repoDir), folderID)
 
-	path := filepath.Join(repoDir, "dotkeeper.toml")
+	path := config.RepoConfigPath(repoDir)
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("writing dotkeeper.toml in %s: %v", repoDir, err)
+		t.Fatalf("writing .dotkeeper.toml in %s: %v", repoDir, err)
 	}
 }
 
@@ -179,6 +179,58 @@ func TestDesiredProvider_DiscoversSingleRepo(t *testing.T) {
 	}
 	if rd.SyncthingFolderID != "dk-myrepo" {
 		t.Errorf("wrong folder ID: %q", rd.SyncthingFolderID)
+	}
+}
+
+func TestDesiredProvider_LoadsTrackedOverrideRepoConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	repoDir := filepath.Join(dir, "outside-scan-root")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeDotkeeperToml(t, repoDir, "dk-outside")
+
+	machineFile := writeMachineToml(t, dir, []string{}, nil, 3)
+	stateFile := filepath.Join(dir, "state.toml")
+	writeStateToml(t, stateFile, []string{repoDir})
+
+	provider := NewDesiredProvider(machineFile, stateFile)
+	desired, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	repo, ok := desired.Repos[repoDir]
+	if !ok {
+		t.Fatalf("tracked override repo missing from desired: %#v", desired.Repos)
+	}
+	if repo.SyncthingFolderID != "dk-outside" {
+		t.Fatalf("folder ID = %q, want dk-outside", repo.SyncthingFolderID)
+	}
+}
+
+func TestDesiredProvider_IgnoresOldRepoConfigName(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	scanRoot := filepath.Join(dir, "repos")
+	repoDir := filepath.Join(scanRoot, "old-marker")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoDir, "dotkeeper.toml"), []byte("schema_version = 2\n"), 0o600); err != nil {
+		t.Fatalf("write old config name: %v", err)
+	}
+
+	machineFile := writeMachineToml(t, dir, []string{scanRoot}, nil, 3)
+	provider := NewDesiredProvider(machineFile, filepath.Join(dir, "state.toml"))
+	desired, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(desired.Repos) != 0 {
+		t.Fatalf("old dotkeeper.toml must not be discovered; got %v", desired.Repos)
 	}
 }
 
@@ -298,7 +350,7 @@ func TestDesiredProvider_RepoAtScanRootItself(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Place dotkeeper.toml directly in the scan root.
+	// Place .dotkeeper.toml directly in the scan root.
 	writeDotkeeperToml(t, scanRoot, "dk-root")
 
 	machineFile := writeMachineToml(t, dir, []string{scanRoot}, nil, 3)
@@ -469,6 +521,7 @@ type stubQuerier struct {
 	cfg   map[string]any
 	conns *stclient.Connections
 	err   error
+	myID  string
 }
 
 func (s *stubQuerier) GetConfig() (map[string]any, error) {
@@ -483,6 +536,17 @@ func (s *stubQuerier) GetConnections() (*stclient.Connections, error) {
 		return nil, s.err
 	}
 	return s.conns, nil
+}
+
+func (s *stubQuerier) GetStatus() (*stclient.SystemStatus, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	myID := s.myID
+	if myID == "" {
+		myID = "LOCAL-DEVICE"
+	}
+	return &stclient.SystemStatus{MyID: myID}, nil
 }
 
 func TestObservedProvider_NilClient(t *testing.T) {
@@ -529,12 +593,14 @@ func TestObservedProvider_FoldersAndPeers(t *testing.T) {
 	statePath := filepath.Join(dir, "state.toml")
 
 	q := &stubQuerier{
+		myID: "LOCAL-DEVICE",
 		cfg: map[string]any{
 			"folders": []any{
 				map[string]any{
 					"id":   "dk-dotfiles",
 					"path": "/home/user/dotfiles",
 					"devices": []any{
+						map[string]any{"deviceID": "LOCAL-DEVICE"},
 						map[string]any{"deviceID": "DEVICE-A"},
 						map[string]any{"deviceID": "DEVICE-B"},
 					},
@@ -693,6 +759,37 @@ func TestObservedProvider_TrackedOverridesLoadedFromState(t *testing.T) {
 	}
 	if obs.TrackedRepos[0].Path != fakeRepo {
 		t.Errorf("expected path %s, got %s", fakeRepo, obs.TrackedRepos[0].Path)
+	}
+}
+
+func TestObservedProvider_ReadsIgnoreFileForTrackedRepo(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	statePath := filepath.Join(dir, "state.toml")
+	fakeRepo := filepath.Join(dir, "repo")
+	if err := os.Mkdir(fakeRepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(fakeRepo, ".stignore"), []byte("node_modules\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	writeStateToml(t, statePath, []string{fakeRepo})
+
+	q := &stubQuerier{
+		cfg:   map[string]any{"folders": []any{}},
+		conns: &stclient.Connections{Connections: map[string]stclient.Connection{}},
+	}
+	provider := newObservedProvider(q, statePath)
+	obs, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(obs.TrackedRepos) != 1 {
+		t.Fatalf("expected 1 TrackedRepo, got %d", len(obs.TrackedRepos))
+	}
+	if obs.TrackedRepos[0].IgnoreFileContent != "node_modules\n" {
+		t.Errorf("IgnoreFileContent = %q", obs.TrackedRepos[0].IgnoreFileContent)
 	}
 }
 

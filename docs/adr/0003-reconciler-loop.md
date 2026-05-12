@@ -27,7 +27,7 @@ The core of dotkeeper becomes a reconcile loop:
 
 ```
 reconcile():
-    desired  = read_config()     # machine.toml + every tracked dotkeeper.toml
+    desired  = read_config()     # machine.toml + local .dotkeeper.toml files
     observed = query_state()     # Syncthing REST API + git + filesystem
     actions  = diff(desired, observed)
     for action in actions:
@@ -43,7 +43,7 @@ is idempotent per action (applying the same action twice is a no-op).
 Four ways to invoke reconcile:
 
 1. **inotify watcher** on `machine.toml`, on every tracked repo's
-   `dotkeeper.toml`, and on `.git/HEAD` / `.git/refs/` of every tracked
+   `.dotkeeper.toml`, and on `.git/HEAD` / `.git/refs/` of every tracked
    repo. Changes trigger reconcile in milliseconds.
 2. **Periodic timer** (`machine.reconcile_interval`, default 5 min) — a
    safety net in case an inotify event is missed or a remote change arrived
@@ -68,7 +68,7 @@ Shrinks dramatically. What remains:
 - `dotkeeper doctor` — health checks
 
 Removed: `add`, `remove`, `join`, `pair`, `install-timer`, `stop`, `sync`.
-Their jobs are now either (a) edit a file and commit, or (b) what the
+Their jobs are now either (a) edit/generate local config, or (b) what the
 reconciler does continuously.
 
 ## Rationale
@@ -111,9 +111,8 @@ watchers per tracked repo, local HTTP server for webhooks. Not dramatic —
 dotkeeper is Go, memory footprint stays small — but worth naming.
 
 **Mutation CLI's removal is a breaking change.** Users with scripts that
-call `dotkeeper add` have to migrate. Version this as v0.5 with a
-migration note in the changelog; document the file-based replacement for
-every removed command.
+call `dotkeeper add` have to migrate. Document the replacement path for every
+removed command.
 
 ## Alternatives considered
 
@@ -123,8 +122,7 @@ double the testing and bug surface.
 
 **Turn dotkeeper into a pull-from-git-URL tool** (like Flux CD — controller
 pulls a single manifest from a remote git URL). Rejected: per ADR 0001,
-the config is per-repo and distributed across the mesh via Syncthing,
-not centralized in one git URL.
+the config is per-repo local state, not centralized in one git URL.
 
 **Event-sourced state with an append-only log.** Rejected: overkill for
 this use case; the authoritative state is already in git, which is itself

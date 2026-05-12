@@ -11,10 +11,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/julian-corbet/dotkeeper/internal/config"
 )
 
 // TestE2EReconcileAddsRepoToSyncthing verifies the end-to-end reconcile path:
-// given a dotkeeper.toml in a scan root, reconcile plans and attempts to add
+// given a .dotkeeper.toml in a scan root, reconcile plans and attempts to add
 // the folder to Syncthing. The Syncthing API call will fail (not running in
 // tests) but the plan itself must contain an AddSyncthingFolder action for
 // the discovered repo — that is the contract the test name promises.
@@ -28,7 +30,7 @@ func TestE2EReconcileAddsRepoToSyncthing(t *testing.T) {
 	mustMkdir(t, repoDir)
 	mustGitInit(t, repoDir)
 
-	// Write dotkeeper.toml into the repo so discovery picks it up.
+	// Write .dotkeeper.toml into the repo so discovery picks it up.
 	writeDotKeeperToml(t, repoDir, "myrepo")
 
 	// Write machine.toml pointing at scanRoot.
@@ -76,7 +78,7 @@ func TestE2EReconcileIsIdempotent(t *testing.T) {
 }
 
 // TestE2EStartTriggersReconcileOnFileChange starts the daemon with a very
-// short reconcile interval, drops a new dotkeeper.toml into a scan root,
+// short reconcile interval, drops a new .dotkeeper.toml into a scan root,
 // and verifies the reconcile runs without crashing the daemon.
 //
 // This test is gated behind -tags integration because it starts a real
@@ -112,7 +114,7 @@ func TestE2EStartTriggersReconcileOnFileChange(t *testing.T) {
 	// Give the daemon a moment to start.
 	time.Sleep(2 * time.Second)
 
-	// Drop a dotkeeper.toml in the scan root — should trigger reconcile.
+	// Drop a .dotkeeper.toml in the scan root; it should trigger reconcile.
 	repoDir := filepath.Join(scanRoot, "newrepo")
 	mustMkdir(t, repoDir)
 	mustGitInit(t, repoDir)
@@ -140,7 +142,7 @@ func TestE2EStartTriggersReconcileOnFileChange(t *testing.T) {
 
 // --- helpers for E2E reconcile tests ---
 
-// writeDotKeeperToml writes a minimal dotkeeper.toml into repoDir.
+// writeDotKeeperToml writes a minimal .dotkeeper.toml into repoDir.
 func writeDotKeeperToml(t *testing.T, repoDir, repoName string) {
 	t.Helper()
 	content := `schema_version = 2
@@ -149,7 +151,7 @@ repo_name = "` + repoName + `"
 [sync]
 syncthing_folder_id = "dk-` + repoName + `"
 `
-	p := filepath.Join(repoDir, "dotkeeper.toml")
+	p := config.RepoConfigPath(repoDir)
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", p, err)
 	}

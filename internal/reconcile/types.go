@@ -145,7 +145,7 @@ func BuildDesired(machine *config.MachineConfigV2, repos map[string]*config.Repo
 			shareWith = append([]string(nil), machine.DefaultShareWith...)
 		}
 		shareWith = resolveShareWith(shareWith, d.Peers, peersByName)
-		ignore := append([]string(nil), r.Sync.Ignore...)
+		ignore := config.MergeSyncIgnorePatterns(r.Sync.Ignore)
 		commitPolicy := r.Commit.Policy
 		if commitPolicy == "" {
 			commitPolicy = defaultCommitPolicy
@@ -238,6 +238,10 @@ type RepoObs struct {
 	// LastChangeAt is the newest modification time among dirty working-tree
 	// files. It is zero when the repo is clean or the timestamp is unknown.
 	LastChangeAt time.Time
+
+	// IgnoreFileContent is the current .stignore content for the repo root.
+	// Empty means the file is absent or unreadable.
+	IgnoreFileContent string
 }
 
 // LivePeer is the observed connection state of a single Syncthing device.
@@ -302,6 +306,17 @@ type UpdateSyncthingFolderDevices struct {
 
 func (a UpdateSyncthingFolderDevices) Describe() string {
 	return "update devices for Syncthing folder " + a.FolderID
+}
+
+// EnsureIgnoreFile is emitted when a repo root is missing dotkeeper's
+// canonical .stignore file or the content has drifted.
+type EnsureIgnoreFile struct {
+	RepoPath string
+	Patterns []string
+}
+
+func (a EnsureIgnoreFile) Describe() string {
+	return "ensure Syncthing ignores for " + a.RepoPath
 }
 
 // AddSyncthingDevice is emitted when a desired peer is missing from the

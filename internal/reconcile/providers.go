@@ -27,7 +27,7 @@ import (
 )
 
 // NewDesiredProvider returns a DesiredProvider that reads machine.toml from
-// machineConfigPath, walks each declared scan root for dotkeeper.toml files,
+// machineConfigPath, walks each declared scan root for .dotkeeper.toml files,
 // loads state.toml from stateConfigPath for the peer roster, and assembles a
 // Desired via BuildDesired.
 //
@@ -53,13 +53,41 @@ func NewDesiredProvider(machineConfigPath, stateConfigPath string) DesiredProvid
 		// peer roster and the reconciler would then plan to *remove* every
 		// known Syncthing peer. Distinguish "absent" (safe) from "broken"
 		// (catastrophic) here.
-		state, _, err := loadStateFromPath(stateConfigPath)
+		state, trackedPaths, err := loadStateFromPath(stateConfigPath)
 		if err != nil {
 			return Desired{}, fmt.Errorf("loading state from %s: %w", stateConfigPath, err)
+		}
+		if err := mergeTrackedOverrideRepos(repos, trackedPaths); err != nil {
+			return Desired{}, err
 		}
 
 		return BuildDesired(machine, repos, state), nil
 	}
+}
+
+func mergeTrackedOverrideRepos(repos map[string]*config.RepoConfigV2, trackedPaths []string) error {
+	for _, rawPath := range trackedPaths {
+		expanded, err := expandTilde(rawPath)
+		if err != nil {
+			return fmt.Errorf("resolving tracked repo path %q: %w", rawPath, err)
+		}
+		absPath, err := filepath.Abs(expanded)
+		if err != nil {
+			return fmt.Errorf("resolving tracked repo path %q: %w", rawPath, err)
+		}
+		if _, exists := repos[absPath]; exists {
+			continue
+		}
+		repoCfg, err := config.LoadRepoConfigV2(absPath)
+		if err != nil {
+			return fmt.Errorf("loading tracked repo config %s: %w", absPath, err)
+		}
+		if repoCfg == nil {
+			continue
+		}
+		repos[absPath] = repoCfg
+	}
+	return nil
 }
 
 // loadMachineConfigFromPath reads machine.toml from path and applies defaults.
@@ -120,7 +148,7 @@ func applyMachineV2DefaultsLocal(cfg *config.MachineConfigV2) {
 
 // discoverRepos walks each scan root declared in machine.Discovery and returns
 // a map of absolute repo path → RepoConfigV2 for every directory that contains
-// a dotkeeper.toml file within the configured depth.
+// a .dotkeeper.toml file within the configured depth.
 func discoverRepos(machine *config.MachineConfigV2) (map[string]*config.RepoConfigV2, error) {
 	repos := make(map[string]*config.RepoConfigV2)
 
@@ -154,7 +182,7 @@ func discoverRepos(machine *config.MachineConfigV2) (map[string]*config.RepoConf
 }
 
 // walkScanRoot recursively walks dir up to maxDepth levels deep and adds any
-// directory containing a dotkeeper.toml to repos.
+// directory containing a .dotkeeper.toml to repos.
 func walkScanRoot(
 	dir string,
 	excludeSet map[string]struct{},
@@ -175,8 +203,8 @@ func walkDir(
 		return nil
 	}
 
-	// Check if dotkeeper.toml exists at this level.
-	markerPath := filepath.Join(dir, "dotkeeper.toml")
+	// Check if .dotkeeper.toml exists at this level.
+	markerPath := config.RepoConfigPath(dir)
 	if _, err := os.Stat(markerPath); err == nil {
 		repoCfg, err := config.LoadRepoConfigV2(dir)
 		if err != nil {
@@ -235,6 +263,7 @@ func expandTilde(path string) (string, error) {
 type SyncthingQuerier interface {
 	GetConfig() (map[string]any, error)
 	GetConnections() (*stclient.Connections, error)
+	GetStatus() (*stclient.SystemStatus, error)
 }
 
 // NewObservedProvider returns an ObservedProvider that queries the live
@@ -295,6 +324,11 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 		return nil, nil, fmt.Errorf("GetConfig: %w", err)
 	}
 
+	status, err := q.GetStatus()
+	if err != nil {
+		return nil, nil, fmt.Errorf("GetStatus: %w", err)
+	}
+
 	conns, err := q.GetConnections()
 	if err != nil {
 		return nil, nil, fmt.Errorf("GetConnections: %w", err)
@@ -321,7 +355,7 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 					if !ok {
 						continue
 					}
-					if did, ok := dm["deviceID"].(string); ok && did != "" {
+					if did, ok := dm["deviceID"].(string); ok && did != "" && did != status.MyID {
 						devices = append(devices, did)
 					}
 				}
@@ -411,6 +445,7 @@ func queryRepoGitState(repoPath string, state *config.StateV2) RepoObs {
 
 	obs.HeadCommit = gitHeadCommit(repoPath)
 	obs.IsDirty = gitIsDirty(repoPath)
+	obs.IgnoreFileContent = readIgnoreFile(repoPath)
 	if obs.IsDirty {
 		obs.LastChangeAt = gitLastChange(repoPath)
 	}
@@ -422,6 +457,14 @@ func queryRepoGitState(repoPath string, state *config.StateV2) RepoObs {
 	}
 
 	return obs
+}
+
+func readIgnoreFile(repoPath string) string {
+	data, err := os.ReadFile(filepath.Join(repoPath, ".stignore"))
+	if err != nil {
+		return ""
+	}
+	return string(data)
 }
 
 func gitLastChange(repoPath string) time.Time {
