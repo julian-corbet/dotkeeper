@@ -315,10 +315,11 @@ func statusCmd() *cobra.Command {
 			}
 
 			if state != nil {
-				if len(state.Peers) > 0 {
-					fmt.Printf("\n=== Peers (%d) ===\n", len(state.Peers))
-					for _, p := range state.Peers {
-						fmt.Printf("  %s: %s\n", p.Name, truncateID(p.DeviceID))
+				peers := mergedPeersForDisplay()
+				if len(peers) > 0 {
+					fmt.Printf("\n=== Peers (%d) ===\n", len(peers))
+					for _, p := range peers {
+						fmt.Printf("  %s: %s (%s)\n", p.Name, truncateID(p.DeviceID), p.Source)
 					}
 				} else {
 					fmt.Println("\n=== Peers ===")
@@ -955,7 +956,11 @@ func buildDoctorChecks() []doctor.Check {
 		doctor.ConfigCheck{},
 		doctor.ServiceCheck{Manager: mgr},
 		doctor.SyncthingAPICheck{Client: client},
-		doctor.PeersCheck{Client: client},
+		doctor.PeersCheck{
+			Client:      client,
+			LoadMachine: config.LoadMachineConfigV2,
+			LoadState:   config.LoadStateV2,
+		},
 		doctor.FoldersCheck{Client: client},
 		doctor.GitRemotesCheck{},
 		doctor.LocalMetadataCheck{},

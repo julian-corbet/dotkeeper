@@ -158,8 +158,31 @@ func (c ConfigCheck) Run(_ context.Context) Result {
 		Name:    "config",
 		Outcome: OK,
 		Detail: fmt.Sprintf("machine %q (slot %d), %d scan root(s), %d peer(s)",
-			m.Name, m.Slot, len(m.Discovery.ScanRoots), len(s.Peers)),
+			m.Name, m.Slot, len(m.Discovery.ScanRoots), len(mergedPeerEntries(m, s))),
 	}
+}
+
+func mergedPeerEntries(machine *config.MachineConfigV2, state *config.StateV2) []config.PeerEntry {
+	var peers []config.PeerEntry
+	seen := make(map[string]bool)
+	addPeer := func(p config.PeerEntry) {
+		if p.DeviceID == "" || seen[p.DeviceID] {
+			return
+		}
+		seen[p.DeviceID] = true
+		peers = append(peers, p)
+	}
+	if machine != nil {
+		for _, p := range machine.Peers {
+			addPeer(p)
+		}
+	}
+	if state != nil {
+		for _, p := range state.Peers {
+			addPeer(p)
+		}
+	}
+	return peers
 }
 
 // --- 3. service -------------------------------------------------------
@@ -283,8 +306,9 @@ func (c SyncthingAPICheck) Run(_ context.Context) Result {
 // configured peer is connected; Warn when any are offline — peers
 // can legitimately be offline; Fail only when the API call itself fails.
 type PeersCheck struct {
-	Client    STClient
-	LoadState func() (*config.StateV2, error)
+	Client      STClient
+	LoadMachine func() (*config.MachineConfigV2, error)
+	LoadState   func() (*config.StateV2, error)
 }
 
 func (PeersCheck) Name() string { return "peers" }
@@ -296,9 +320,20 @@ func (c PeersCheck) Run(_ context.Context) Result {
 	if loadS == nil {
 		loadS = config.LoadStateV2
 	}
+	var machine *config.MachineConfigV2
+	if c.LoadMachine != nil {
+		var err error
+		machine, err = c.LoadMachine()
+		if err != nil {
+			return Result{Name: "peers", Outcome: Warn, Detail: "machine.toml unavailable; cannot list expected peers"}
+		}
+	}
 	state, err := loadS()
-	if err != nil || state == nil {
+	if err != nil {
 		return Result{Name: "peers", Outcome: Warn, Detail: "state.toml unavailable; cannot list expected peers"}
+	}
+	if machine == nil && state == nil {
+		return Result{Name: "peers", Outcome: Warn, Detail: "machine.toml/state.toml unavailable; cannot list expected peers"}
 	}
 
 	status, err := c.Client.GetStatus()
@@ -317,7 +352,7 @@ func (c PeersCheck) Run(_ context.Context) Result {
 		name, id string
 	}
 	var expected []peer
-	for _, p := range state.Peers {
+	for _, p := range mergedPeerEntries(machine, state) {
 		if p.DeviceID == "" || p.DeviceID == myID {
 			continue
 		}

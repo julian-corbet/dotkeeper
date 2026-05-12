@@ -148,6 +148,38 @@ func TestConfigCheckOK(t *testing.T) {
 	TestConfigCheckPassesWithValidV5Files(t)
 }
 
+func TestConfigCheckCountsDeclarativeMachinePeers(t *testing.T) {
+	c := ConfigCheck{
+		LoadMachineV2: func() (*config.MachineConfigV2, error) {
+			return &config.MachineConfigV2{
+				SchemaVersion: 2,
+				Name:          "test-machine",
+				Slot:          0,
+				Peers: []config.PeerEntry{
+					{Name: "laptop", DeviceID: "LAPTOP-ID"},
+				},
+				Discovery: config.DiscoveryConfig{
+					ScanRoots: []string{"~/Documents"},
+				},
+			}, nil
+		},
+		LoadStateV2: func() (*config.StateV2, error) {
+			return &config.StateV2{
+				SchemaVersion:     2,
+				SyncthingDeviceID: "ME-ID",
+				Peers:             []config.PeerEntry{},
+			}, nil
+		},
+	}
+	r := c.Run(context.Background())
+	if r.Outcome != OK {
+		t.Fatalf("Outcome = %v, Detail=%q, want OK", r.Outcome, r.Detail)
+	}
+	if !strings.Contains(r.Detail, "1 peer(s)") {
+		t.Errorf("Detail should count machine.toml peers, got %q", r.Detail)
+	}
+}
+
 // TestConfigCheckMissingMachine verifies that a missing machine.toml yields Fail.
 func TestConfigCheckMissingMachine(t *testing.T) {
 	c := ConfigCheck{
@@ -329,6 +361,38 @@ func TestPeersCheckAllConnected(t *testing.T) {
 	r := PeersCheck{Client: st, LoadState: func() (*config.StateV2, error) { return state, nil }}.Run(context.Background())
 	if r.Outcome != OK {
 		t.Errorf("Outcome = %v, want OK; detail=%q", r.Outcome, r.Detail)
+	}
+}
+
+func TestPeersCheckUsesDeclarativeMachinePeers(t *testing.T) {
+	machine := &config.MachineConfigV2{
+		SchemaVersion: 2,
+		Name:          "me",
+		Peers: []config.PeerEntry{
+			{Name: "other", DeviceID: "OTHER-ID"},
+		},
+	}
+	state := &config.StateV2{
+		SchemaVersion:     2,
+		SyncthingDeviceID: "ME-ID",
+		Peers:             []config.PeerEntry{},
+	}
+	st := &fakeST{
+		status: &stclient.SystemStatus{MyID: "ME-ID"},
+		conns: &stclient.Connections{Connections: map[string]stclient.Connection{
+			"OTHER-ID": {Connected: true},
+		}},
+	}
+	r := PeersCheck{
+		Client:      st,
+		LoadMachine: func() (*config.MachineConfigV2, error) { return machine, nil },
+		LoadState:   func() (*config.StateV2, error) { return state, nil },
+	}.Run(context.Background())
+	if r.Outcome != OK {
+		t.Errorf("Outcome = %v, want OK; detail=%q", r.Outcome, r.Detail)
+	}
+	if !strings.Contains(r.Detail, "other") {
+		t.Errorf("Detail should include declarative peer, got %q", r.Detail)
 	}
 }
 
