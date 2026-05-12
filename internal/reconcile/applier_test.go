@@ -190,10 +190,11 @@ func TestRealApplierAddSyncthingFolder(t *testing.T) {
 
 	fake := newFakeST()
 	applier := &RealApplier{ST: fake}
+	repo := t.TempDir()
 
 	act := AddSyncthingFolder{
 		FolderID: "dk-dotfiles",
-		Path:     "/home/user/dotfiles",
+		Path:     repo,
 		Devices:  []string{"PEER-X"},
 	}
 	if err := applier.Apply(context.Background(), act); err != nil {
@@ -207,8 +208,11 @@ func TestRealApplierAddSyncthingFolder(t *testing.T) {
 	if folders[0]["id"] != "dk-dotfiles" {
 		t.Errorf("id = %v", folders[0]["id"])
 	}
-	if folders[0]["path"] != "/home/user/dotfiles" {
+	if folders[0]["path"] != repo {
 		t.Errorf("path = %v", folders[0]["path"])
+	}
+	if _, err := os.Stat(filepath.Join(repo, stclient.FolderMarkerName)); err != nil {
+		t.Fatalf("marker not created: %v", err)
 	}
 }
 
@@ -218,13 +222,34 @@ func TestRealApplierAddSyncthingFolderError(t *testing.T) {
 	fake := newFakeST()
 	fake.ErrAdd = errors.New("syncthing unavailable")
 	applier := &RealApplier{ST: fake}
+	repo := t.TempDir()
 
-	err := applier.Apply(context.Background(), AddSyncthingFolder{FolderID: "x", Path: "/x"})
+	err := applier.Apply(context.Background(), AddSyncthingFolder{FolderID: "x", Path: repo})
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	if !strings.Contains(err.Error(), "syncthing unavailable") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// --- EnsureFolderMarker tests ----------------------------------------------
+
+func TestRealApplierEnsureFolderMarker(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	applier := &RealApplier{}
+	if err := applier.Apply(context.Background(), EnsureFolderMarker{RepoPath: repo}); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if info, err := os.Stat(filepath.Join(repo, stclient.FolderMarkerName)); err != nil {
+		t.Fatalf("stat marker: %v", err)
+	} else if !info.IsDir() {
+		t.Fatal("marker is not a directory")
+	}
+	if err := applier.Apply(context.Background(), EnsureFolderMarker{RepoPath: repo}); err != nil {
+		t.Fatalf("second Apply: %v", err)
 	}
 }
 

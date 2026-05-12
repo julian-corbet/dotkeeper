@@ -668,6 +668,54 @@ func TestObservedProvider_FoldersAndPeers(t *testing.T) {
 	}
 }
 
+func TestObservedProvider_DetectsMissingFolderMarker(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	repoDir := filepath.Join(dir, "repo")
+	if err := os.Mkdir(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(dir, "state.toml")
+
+	q := &stubQuerier{
+		cfg: map[string]any{
+			"folders": []any{
+				map[string]any{
+					"id":         "dk-repo",
+					"path":       repoDir,
+					"markerName": stclient.FolderMarkerName,
+					"devices":    []any{},
+				},
+			},
+		},
+		conns: &stclient.Connections{Connections: map[string]stclient.Connection{}},
+	}
+
+	provider := newObservedProvider(q, statePath)
+	obs, err := provider(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(obs.ManagedFolders) != 1 {
+		t.Fatalf("expected 1 folder, got %d", len(obs.ManagedFolders))
+	}
+	if !obs.ManagedFolders[0].MarkerDirMissing {
+		t.Fatal("expected marker to be reported missing")
+	}
+
+	if err := os.Mkdir(filepath.Join(repoDir, stclient.FolderMarkerName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	obs, err = provider(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error after marker create: %v", err)
+	}
+	if obs.ManagedFolders[0].MarkerDirMissing {
+		t.Fatal("marker should no longer be reported missing")
+	}
+}
+
 func TestObservedProvider_FolderWithoutID_Skipped(t *testing.T) {
 	t.Parallel()
 

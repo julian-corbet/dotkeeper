@@ -91,6 +91,9 @@ func Diff(desired Desired, observed Observed) Plan {
 				Devices:  df.devices,
 			})
 		}
+		if exists && obs.MarkerDirMissing {
+			plan = append(plan, EnsureFolderMarker{RepoPath: df.path})
+		}
 		repoDesired := desired.Repos[df.path]
 		repoObs := observedRepoByPath(observed.TrackedRepos, df.path)
 		wantIgnore := config.SyncIgnoreFileContent(repoDesired.Ignore)

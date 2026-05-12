@@ -219,6 +219,11 @@ type FolderObs struct {
 
 	// Devices is the list of device IDs this folder is shared with.
 	Devices []string
+
+	// MarkerDirMissing reports that Syncthing's configured folder marker
+	// directory is absent from Path. A missing marker leaves the folder
+	// configured but unusable, so reconcile must repair it.
+	MarkerDirMissing bool
 }
 
 // RepoObs is the observed state of a single tracked git repository.
@@ -317,6 +322,16 @@ type EnsureIgnoreFile struct {
 
 func (a EnsureIgnoreFile) Describe() string {
 	return "ensure Syncthing ignores for " + a.RepoPath
+}
+
+// EnsureFolderMarker is emitted when a configured Syncthing folder is missing
+// dotkeeper's local marker directory.
+type EnsureFolderMarker struct {
+	RepoPath string
+}
+
+func (a EnsureFolderMarker) Describe() string {
+	return "ensure Syncthing folder marker for " + a.RepoPath
 }
 
 // AddSyncthingDevice is emitted when a desired peer is missing from the

@@ -347,6 +347,10 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 			if folderID == "" {
 				continue
 			}
+			markerName, _ := fm["markerName"].(string)
+			if markerName == "" {
+				markerName = stclient.FolderMarkerName
+			}
 
 			var devices []string
 			if rawDevices, ok := fm["devices"].([]any); ok {
@@ -365,6 +369,7 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 				SyncthingFolderID: folderID,
 				Path:              folderPath,
 				Devices:           devices,
+				MarkerDirMissing:  folderMarkerMissing(folderPath, markerName),
 			})
 		}
 	}
@@ -404,6 +409,17 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 	})
 
 	return folders, peers, nil
+}
+
+func folderMarkerMissing(folderPath, markerName string) bool {
+	if folderPath == "" || markerName == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(folderPath, markerName))
+	if err != nil {
+		return true
+	}
+	return !info.IsDir()
 }
 
 // loadStateFromPath reads state.toml from path. Returns (nil, nil, nil) when

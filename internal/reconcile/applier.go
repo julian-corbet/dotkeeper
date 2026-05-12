@@ -65,6 +65,8 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 		return a.applyAddSyncthingDevice(act)
 	case EnsureIgnoreFile:
 		return applyEnsureIgnoreFile(act)
+	case EnsureFolderMarker:
+		return applyEnsureFolderMarker(act)
 	case GitCommitDirty:
 		return applyGitCommitDirty(act)
 	case GitPushRepo:
@@ -76,6 +78,31 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 	default:
 		return fmt.Errorf("unknown action type: %T", action)
 	}
+}
+
+func applyEnsureFolderMarker(act EnsureFolderMarker) error {
+	if act.RepoPath == "" {
+		return fmt.Errorf("EnsureFolderMarker: empty repo path")
+	}
+	if info, err := os.Stat(act.RepoPath); err != nil {
+		return fmt.Errorf("EnsureFolderMarker %q: stat repo: %w", act.RepoPath, err)
+	} else if !info.IsDir() {
+		return fmt.Errorf("EnsureFolderMarker %q: not a directory", act.RepoPath)
+	}
+
+	markerPath := filepath.Join(act.RepoPath, stclient.FolderMarkerName)
+	if info, err := os.Stat(markerPath); err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("EnsureFolderMarker %q: marker exists but is not a directory", act.RepoPath)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("EnsureFolderMarker %q: stat marker: %w", act.RepoPath, err)
+	}
+	if err := os.Mkdir(markerPath, 0o755); err != nil {
+		return fmt.Errorf("EnsureFolderMarker %q: create marker: %w", act.RepoPath, err)
+	}
+	return nil
 }
 
 func applyEnsureIgnoreFile(act EnsureIgnoreFile) error {
@@ -181,6 +208,9 @@ func (a *RealApplier) applyAddSyncthingDevice(act AddSyncthingDevice) error {
 func (a *RealApplier) applyAddSyncthingFolder(act AddSyncthingFolder) error {
 	if a.ST == nil {
 		return fmt.Errorf("AddSyncthingFolder %q: Syncthing client not available (is Syncthing running?)", act.FolderID)
+	}
+	if err := applyEnsureFolderMarker(EnsureFolderMarker{RepoPath: act.Path}); err != nil {
+		return fmt.Errorf("AddSyncthingFolder %q: %w", act.FolderID, err)
 	}
 	// Use folder ID as label so the Syncthing UI shows something meaningful.
 	if err := a.ST.AddOrUpdateFolder(act.FolderID, act.FolderID, act.Path, act.Devices); err != nil {

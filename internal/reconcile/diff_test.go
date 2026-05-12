@@ -207,6 +207,43 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
+			name: "folder exists but marker is missing → EnsureFolderMarker",
+			desired: Desired{
+				Repos: map[string]RepoDesired{
+					"/repo": {
+						Path:              "/repo",
+						SyncthingFolderID: "dk-repo",
+						ShareWith:         []string{"DEVICE-A"},
+					},
+				},
+			},
+			obs: Observed{
+				ManagedFolders: []FolderObs{
+					{
+						SyncthingFolderID: "dk-repo",
+						Path:              "/repo",
+						Devices:           []string{"DEVICE-A"},
+						MarkerDirMissing:  true,
+					},
+				},
+				TrackedRepos: []RepoObs{
+					{Path: "/repo", IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
+				},
+			},
+			check: func(t *testing.T, plan Plan) {
+				if len(plan) != 1 {
+					t.Fatalf("expected 1 action, got %d", len(plan))
+				}
+				a, ok := plan[0].(EnsureFolderMarker)
+				if !ok {
+					t.Fatalf("expected EnsureFolderMarker, got %T", plan[0])
+				}
+				if a.RepoPath != "/repo" {
+					t.Errorf("wrong repo path: %q", a.RepoPath)
+				}
+			},
+		},
+		{
 			name: "idempotency: applying diff on already-consistent state is a no-op",
 			desired: Desired{
 				Repos: map[string]RepoDesired{
