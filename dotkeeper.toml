@@ -1,7 +1,13 @@
 # Managed by dotkeeper — https://github.com/julian-corbet/dotkeeper
 # This file is tracked in git for resilience.
 
+schema_version = 2
+
 [repo]
 name = "dotkeeper"
 added = "2026-04-14T21:35:36Z"
 added_by = "maintainer"
+
+[sync]
+syncthing_folder_id = "dk-dotkeeper-fe9c08"
+# share_with omitted — inherits default_share_with from machine.toml
