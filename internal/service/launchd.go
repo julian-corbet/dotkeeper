@@ -27,7 +27,7 @@ func (l *Launchd) agentDir() string {
 }
 
 func (l *Launchd) writePlist(label, content string) error {
-	dir := l.local-notesDir()
+	dir := l.agentDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -64,7 +64,7 @@ func (l *Launchd) InstallSyncthing(binaryPath string) error {
 	}
 	// bootstrap is the modern replacement for the deprecated 'load'
 	uid := fmt.Sprintf("gui/%d", os.Getuid())
-	plistPath := filepath.Join(l.local-notesDir(), syncthingLabel+".plist")
+	plistPath := filepath.Join(l.agentDir(), syncthingLabel+".plist")
 	if err := exec.Command("launchctl", "bootstrap", uid, plistPath).Run(); err != nil {
 		// Fall back to deprecated 'load' for older macOS
 		return exec.Command("launchctl", "load", plistPath).Run()

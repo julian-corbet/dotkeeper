@@ -7,6 +7,13 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-13
+
+### Fixed
+
+- Fixed the macOS launchd service manager build so release artifacts compile
+  across the full supported platform matrix.
+
 ## [0.6.0] - 2026-05-13
 
 ### Breaking
@@ -145,7 +152,8 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - CI: bumped `actions/upload-artifact`, `actions/download-artifact`, and
   `actions/setup-go` to current stable versions.
 
-[Unreleased]: https://github.com/julian-corbet/dotkeeper/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/julian-corbet/dotkeeper/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/julian-corbet/dotkeeper/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/julian-corbet/dotkeeper/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/julian-corbet/dotkeeper/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/julian-corbet/dotkeeper/compare/v0.3.0...v0.4.0

@@ -227,7 +227,7 @@ for a full generic activation sketch.
 
 ## Status
 
-v0.6.0 is the current hotfix release. It keeps the reconciler model and makes dotkeeper repo metadata local-only by default. See [CHANGELOG.md](CHANGELOG.md) for the full release notes.
+v0.6.1 is the current hotfix release. It keeps the reconciler model and makes dotkeeper repo metadata local-only by default. See [CHANGELOG.md](CHANGELOG.md) for the full release notes.
 
 ## Port isolation
 
