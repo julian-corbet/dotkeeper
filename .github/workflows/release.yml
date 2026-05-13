@@ -102,7 +102,9 @@ jobs:
         run: |
           NAME=dotkeeper_${GITHUB_REF#refs/tags/v}_${{ matrix.suffix }}
           mkdir -p "${NAME}"
-          cp dotkeeper${{ matrix.ext }} LICENSE README.md dotkeeper.toml.example "${NAME}/"
+          cp dotkeeper${{ matrix.ext }} LICENSE README.md "${NAME}/"
+          cp docs/examples/repo-config.toml "${NAME}/repo-config.toml"
+          cp docs/examples/home-manager-denylist.nix "${NAME}/home-manager-denylist.nix"
           if [ "${{ matrix.goos }}" = "windows" ]; then
             zip "${NAME}.zip" -r "${NAME}"
           else

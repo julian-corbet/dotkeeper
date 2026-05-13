@@ -125,7 +125,8 @@ jobs:
             def install
               bin.install "dotkeeper"
               doc.install "README.md"
-              doc.install "dotkeeper.toml.example"
+              doc.install "repo-config.toml"
+              doc.install "home-manager-denylist.nix"
             end
 
             test do
