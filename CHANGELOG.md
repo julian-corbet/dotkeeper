@@ -18,6 +18,9 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Enforce dotkeeper-managed `.stignore` files during reconcile so repo roots
   never sync `.git`, `node_modules`, build outputs, Syncthing temp files, or
   sync-conflict artifacts across peers.
+- Repair missing Syncthing folder marker directories during reconcile. If a
+  managed folder loses its `.dkfolder` marker, dotkeeper now recreates it
+  instead of leaving Syncthing in a folder-marker error state.
 
 ### Changed
 
@@ -29,6 +32,8 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   writing `.dotkeeper.toml`.
 - `dotkeeper doctor` now flags dotkeeper/Syncthing local metadata that has been
   accidentally added to Git.
+- Documentation now shows a denylist-first Nix/Home Manager pattern for keeping
+  private repo topology outside public dotkeeper history.
 
 ### Added
 

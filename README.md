@@ -164,6 +164,40 @@ dotkeeper reconcile
 
 Because `.dotkeeper.toml` is intentionally not synced, each machine needs its own local copy. Nix/Home Manager is the intended low-friction path for repeatable personal topology; `dotkeeper track` is the portable manual path.
 
+### Nix / Home Manager topology
+
+For declarative setups, keep the public dotkeeper program generic and put your
+private sync topology in your own flake. A practical pattern is denylist-first:
+scan a small set of roots for Git repos, generate local `.dotkeeper.toml` files
+for everything discovered, and list only the exceptions.
+
+```nix
+{
+  scanRoots = [
+    "~/Documents/GitHub"
+    "~/.config"
+  ];
+
+  dontSync = {
+    all = [
+      "~/Documents/GitHub/dotkeeper"
+      "~/Documents/GitHub/archive"
+      "~/Documents/GitHub/example-rag/workspace"
+    ];
+
+    laptop = [
+      "~/Documents/GitHub/video-renderer"
+    ];
+  };
+}
+```
+
+Whole denied repos are left unmanaged on that machine. Denied paths inside a
+managed repo should be emitted as `[sync].ignore` patterns, so generated data can
+stay local while the repo itself still syncs. See
+[`docs/examples/home-manager-denylist.nix`](docs/examples/home-manager-denylist.nix)
+for a full generic activation sketch.
+
 ## Commands
 
 | Command | Purpose |

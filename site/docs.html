@@ -146,6 +146,28 @@ dotkeeper track ~/Documents/GitHub/new-project
 # For repos outside scan roots:
 dotkeeper track ~/src/special-project
 dotkeeper reconcile</code></pre>
+
+  <h3>Nix / Home Manager denylist</h3>
+  <p>For declarative setups, keep dotkeeper generic and put private topology in your own flake. Scan a few roots, generate local <code>.dotkeeper.toml</code> files for discovered Git repos, and list only the paths that must not sync.</p>
+  <pre><code>{
+  scanRoots = [
+    "~/Documents/GitHub"
+    "~/.config"
+  ];
+
+  dontSync = {
+    all = [
+      "~/Documents/GitHub/dotkeeper"
+      "~/Documents/GitHub/archive"
+      "~/Documents/GitHub/example-rag/workspace"
+    ];
+
+    laptop = [
+      "~/Documents/GitHub/video-renderer"
+    ];
+  };
+}</code></pre>
+  <p>Whole denied repos stay unmanaged on that machine. Denied paths inside a managed repo become <code>[sync].ignore</code> patterns, so generated data can stay local while the repo itself still syncs.</p>
 </div>
 
 <!-- PLATFORMS -->
