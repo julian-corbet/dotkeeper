@@ -38,6 +38,7 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   accidentally added to Git.
 - Documentation now shows a denylist-first Nix/Home Manager pattern for keeping
   private repo topology outside public dotkeeper history.
+- Public release metadata now compares directly from v0.5.0 to v0.6.1.
 
 ### Added
 
