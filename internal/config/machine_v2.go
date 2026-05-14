@@ -172,5 +172,5 @@ func WriteMachineConfigV2(cfg *MachineConfigV2) error {
 	fmt.Fprintf(&b, "scan_interval = %q\n", cfg.Discovery.ScanInterval)
 	fmt.Fprintf(&b, "scan_depth = %d\n", cfg.Discovery.ScanDepth)
 
-	return os.WriteFile(MachineConfigPath(), []byte(b.String()), 0o600)
+	return WriteFileAtomic(MachineConfigPath(), []byte(b.String()), 0o600)
 }

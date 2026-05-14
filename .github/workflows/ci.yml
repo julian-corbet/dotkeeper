@@ -31,9 +31,13 @@ jobs:
       - name: Build
         run: go build -tags noassets ./cmd/dotkeeper
 
-      - name: Test with coverage
+      - name: Test with coverage (race-enabled)
+        # -race runs the Go data-race detector. Cheap on a single-package CI
+        # run and surfaces concurrent-write bugs before they hit production —
+        # the state.toml race fixed in PR #7 was exactly the class of bug
+        # `-race` catches when properly exercised by tests.
         run: |
-          go test -tags noassets -coverprofile=coverage.out -covermode=atomic ./...
+          go test -tags noassets -race -coverprofile=coverage.out -covermode=atomic ./...
           echo "### Coverage summary" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           go tool cover -func=coverage.out | tail -40 >> $GITHUB_STEP_SUMMARY
