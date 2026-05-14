@@ -18,7 +18,14 @@ import (
 // half-written intermediate.
 //
 // On any failure during write/sync/close, the temp file is removed so a
-// crash never leaves a `<path>.tmp.*` orphan around.
+// crash never leaves an orphan around.
+//
+// Temp naming: `<path>.<pid>.<rand>.tmp`. The trailing `.tmp` is deliberate
+// — it matches dotkeeper's default Syncthing ignore pattern (`*.tmp`) so a
+// transient temp file created inside a Syncthing-managed folder does not
+// get propagated to peers before the rename completes. Earlier versions
+// used `<path>.tmp.<pid>.<rand>` which does NOT match `*.tmp` (only names
+// *ending* in `.tmp` match).
 //
 // Race semantics: two concurrent atomic writes still have last-writer-wins
 // for the file contents. Callers that need lost-update safety (read, mutate,
@@ -29,7 +36,7 @@ func WriteFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return fmt.Errorf("WriteFileAtomic: rand: %w", err)
 	}
-	tmp := fmt.Sprintf("%s.tmp.%d.%s", path, os.Getpid(), hex.EncodeToString(nonce[:]))
+	tmp := fmt.Sprintf("%s.%d.%s.tmp", path, os.Getpid(), hex.EncodeToString(nonce[:]))
 	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 	if err != nil {
 		return fmt.Errorf("WriteFileAtomic: create temp: %w", err)
