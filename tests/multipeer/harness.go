@@ -37,6 +37,10 @@ type fixture struct {
 	repoRoot string // absolute path to dotkeeper repo root (build context)
 }
 
+// dkStartTimeout is the outer Go-side cap on `dkStart`'s shell loop. The loop
+// itself polls REST for 90s; the Go context gives it a small buffer.
+const dkStartTimeout = 120 * time.Second
+
 // newFixture brings up peer-a and peer-b on a fresh compose project and
 // registers cleanup. Returns once both containers are running. The harness
 // does NOT auto-init or auto-pair the peers — each scenario controls that
@@ -269,20 +273,38 @@ func (f *fixture) dkTrack(peer, path string) {
 // REST API to respond. Returns once the peer is ready to accept connections.
 func (f *fixture) dkStart(peer string) {
 	f.t.Helper()
-	f.mustExec(peer,
+	// dotkeeper's embedded Syncthing binds REST to 127.0.0.1:18384 (not the
+	// upstream default 8384) — see internal/stclient/client.go: APIAddress.
+	// The daemon also needs auth, but /rest/noauth/health is unauthenticated
+	// and sufficient for a liveness probe.
+	//
+	// 90 iterations × 1s gives 90s — generous because cold-start on the
+	// runner sometimes spends several seconds on first-time identity scrub.
+	// The outer Go-side timeout is bumped to 120s via dkStartTimeout below.
+	out, err := f.exec(peer,
 		`nohup dotkeeper start >/tmp/dotkeeper.log 2>&1 &
 		echo $! > /tmp/dotkeeper.pid
-		# Wait for Syncthing REST to come up.
-		for i in $(seq 1 60); do
-			if curl -sf -o /dev/null http://127.0.0.1:8384/rest/system/ping 2>/dev/null; then
+		for i in $(seq 1 90); do
+			if curl -sf -o /dev/null http://127.0.0.1:18384/rest/noauth/health 2>/dev/null \
+				|| curl -sf -o /dev/null http://127.0.0.1:18384/rest/system/ping 2>/dev/null; then
 				exit 0
+			fi
+			# Bail early if dotkeeper itself exited (otherwise we waste 90s).
+			if ! kill -0 "$(cat /tmp/dotkeeper.pid)" 2>/dev/null; then
+				echo "dotkeeper exited before REST came up; full log:"
+				cat /tmp/dotkeeper.log
+				exit 2
 			fi
 			sleep 1
 		done
-		echo "Syncthing REST never came up; last log:"
-		tail -50 /tmp/dotkeeper.log
+		echo "Syncthing REST never came up after 90s; last log:"
+		tail -80 /tmp/dotkeeper.log
 		exit 1`,
+		dkStartTimeout,
 	)
+	if err != nil {
+		f.t.Fatalf("dkStart on %s failed: %v\n%s", peer, err, out)
+	}
 }
 
 // dkStop ends the daemon. Used by offline/online scenarios.
