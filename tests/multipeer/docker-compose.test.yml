@@ -1,0 +1,103 @@
+# Two-peer Syncthing topology for multipeer e2e tests.
+#
+# Both peers idle on tini; the test harness drives `dotkeeper` via `docker exec`
+# so each scenario controls init/peer-add/track/reconcile/start timing.
+#
+# Each peer:
+#   - Distinct hostname on a Docker-managed private bridge
+#   - Its own named volumes for $XDG_CONFIG_HOME, $XDG_STATE_HOME, and the
+#     /repos/shared tree
+#   - Identical /repos/shared path string so dotkeeper computes the same
+#     folder ID (dk-shared-<sha256-of-path[:8]>) on both peers
+#
+# Docker assigns the subnet per compose project (no hard-coded 10.x range).
+# Adversarial scenarios resolve peer IPs at runtime via `docker inspect` to
+# inject iptables rules — see harness.peerIP().
+
+services:
+  peer-a:
+    build:
+      context: ../..
+      dockerfile: tests/multipeer/Dockerfile.test
+    image: dotkeeper-multipeer-test:local
+    container_name: ${COMPOSE_PROJECT_NAME:-dkmp}-peer-a
+    hostname: peer-a
+    networks: [dkmpnet]
+    environment:
+      HOME: /home/dk
+      XDG_CONFIG_HOME: /home/dk/.config
+      XDG_STATE_HOME: /home/dk/.local/state
+      XDG_DATA_HOME: /home/dk/.local/share
+      TZ: UTC
+      DK_PEER_NAME: peer-a
+    # Note: no static IPs. Docker assigns a subnet per compose project, which
+    # the test harness resolves at runtime via `docker inspect` for iptables
+    # rules in adversarial scenarios. Hard-coding a subnet caused IPAM
+    # conflicts across sequential test compose projects.
+    volumes:
+      - peer-a-home:/home/dk
+      - peer-a-repo:/repos/shared
+    cap_add:
+      - NET_ADMIN      # iptables for partition scenarios
+      - SYS_TIME       # libfaketime envvar suffices, but cap helps if we ever
+                       # use real `date -s` for clock-skew tests
+
+  peer-b:
+    build:
+      context: ../..
+      dockerfile: tests/multipeer/Dockerfile.test
+    image: dotkeeper-multipeer-test:local
+    container_name: ${COMPOSE_PROJECT_NAME:-dkmp}-peer-b
+    hostname: peer-b
+    networks: [dkmpnet]
+    environment:
+      HOME: /home/dk
+      XDG_CONFIG_HOME: /home/dk/.config
+      XDG_STATE_HOME: /home/dk/.local/state
+      XDG_DATA_HOME: /home/dk/.local/share
+      TZ: UTC
+      DK_PEER_NAME: peer-b
+    volumes:
+      - peer-b-home:/home/dk
+      - peer-b-repo:/repos/shared
+    cap_add:
+      - NET_ADMIN
+      - SYS_TIME
+
+  # Optional third peer for the three-way conflict adversarial scenario.
+  # Started on-demand via `docker compose up peer-c` from inside the test.
+  peer-c:
+    profiles: ["three-way"]
+    build:
+      context: ../..
+      dockerfile: tests/multipeer/Dockerfile.test
+    image: dotkeeper-multipeer-test:local
+    container_name: ${COMPOSE_PROJECT_NAME:-dkmp}-peer-c
+    hostname: peer-c
+    networks: [dkmpnet]
+    environment:
+      HOME: /home/dk
+      XDG_CONFIG_HOME: /home/dk/.config
+      XDG_STATE_HOME: /home/dk/.local/state
+      XDG_DATA_HOME: /home/dk/.local/share
+      TZ: UTC
+      DK_PEER_NAME: peer-c
+    volumes:
+      - peer-c-home:/home/dk
+      - peer-c-repo:/repos/shared
+    cap_add:
+      - NET_ADMIN
+      - SYS_TIME
+
+networks:
+  dkmpnet:
+    driver: bridge
+    # No explicit IPAM config — Docker picks a free subnet per compose project.
+
+volumes:
+  peer-a-home:
+  peer-a-repo:
+  peer-b-home:
+  peer-b-repo:
+  peer-c-home:
+  peer-c-repo:

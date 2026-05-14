@@ -221,29 +221,10 @@ func initCmd() *cobra.Command {
 }
 
 func ensureStateDeviceID(deviceID string) error {
-	state, err := config.LoadStateV2()
-	if err != nil {
-		return fmt.Errorf("loading state.toml: %w", err)
-	}
-	if state == nil {
-		state = &config.StateV2{
-			SchemaVersion:     2,
-			SyncthingDeviceID: deviceID,
-			Peers:             []config.PeerEntry{},
-			TrackedOverrides:  []string{},
-			ObservedRepos:     make(map[string]config.ObservedRepo),
-			LastSeenPeers:     make(map[string]time.Time),
-		}
-		return config.WriteStateV2(state)
-	}
-	if state.SchemaVersion == 0 {
-		state.SchemaVersion = 2
-	}
-	if state.SyncthingDeviceID != deviceID {
+	return config.MutateStateV2(func(state *config.StateV2) error {
 		state.SyncthingDeviceID = deviceID
-		return config.WriteStateV2(state)
-	}
-	return nil
+		return nil
+	})
 }
 
 // statusCmd shows the machine status: machine name, slot, scan roots,

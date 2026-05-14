@@ -763,18 +763,19 @@ func TestRealApplierUntrackRepoWriteError(t *testing.T) {
 		t.Fatalf("track: %v", err)
 	}
 
-	// Make the state file itself read-only to force a write error.
-	// (Revoking write on the directory only prevents new file creation, not
-	//  updates to existing files when the caller already holds the path.)
-	statePath := filepath.Join(dir, "dotkeeper", "state.toml")
-	if err := os.Chmod(statePath, 0o400); err != nil {
+	// state.toml is now written via temp-file + os.Rename (see
+	// internal/config/state_v2.go: writeFileAtomic), so revoking write on
+	// the *file* no longer surfaces as an error — rename only needs write
+	// permission on the containing *directory*. Revoke that instead.
+	stateDir := filepath.Join(dir, "dotkeeper")
+	if err := os.Chmod(stateDir, 0o500); err != nil {
 		t.Skipf("chmod not supported on this platform: %v", err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(statePath, 0o600) })
+	t.Cleanup(func() { _ = os.Chmod(stateDir, 0o700) })
 
 	err := applier.Apply(context.Background(), UntrackRepo{Path: "/to-remove"})
 	if err == nil {
-		t.Fatal("expected error when state file is not writable")
+		t.Fatal("expected error when state directory is not writable")
 	}
 }
 
