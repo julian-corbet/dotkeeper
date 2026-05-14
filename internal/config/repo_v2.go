@@ -136,7 +136,7 @@ func WriteRepoConfigV2(repoRoot string, cfg *RepoConfigV2) error {
 	b.WriteString("]\n")
 
 	path := RepoConfigPath(repoRoot)
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	return WriteFileAtomic(path, []byte(b.String()), 0o644)
 }
 
 // DetectRepoConfigVersion inspects .dotkeeper.toml in repoRoot and returns the
