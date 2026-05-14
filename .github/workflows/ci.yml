@@ -31,6 +31,18 @@ jobs:
       - name: Build
         run: go build -tags noassets ./cmd/dotkeeper
 
+      - name: Cross-compile sanity (windows/darwin)
+        # dotkeeper supports Linux, macOS, and Windows. The host-arch build
+        # above proves linux/amd64; this step proves the file-locking shim
+        # and other platform-specific code compiles for darwin and windows.
+        # CGO is off so we don't need the Apple/Windows cross toolchains.
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          GOOS=darwin  GOARCH=amd64 go build -tags noassets ./cmd/dotkeeper
+          GOOS=darwin  GOARCH=arm64 go build -tags noassets ./cmd/dotkeeper
+          GOOS=windows GOARCH=amd64 go build -tags noassets ./cmd/dotkeeper
+
       - name: Test with coverage (race-enabled)
         # -race runs the Go data-race detector. Cheap on a single-package CI
         # run and surfaces concurrent-write bugs before they hit production —
