@@ -101,11 +101,15 @@ func (c ConfigCheck) Run(_ context.Context) Result {
 
 	m, err := loadM()
 	if err != nil {
+		// machine.toml is user-authored (or Home-Manager generated). DO NOT
+		// suggest deleting it — they'd lose declared peers, scan roots, etc.
+		// Recovery is fix-by-hand or restore from VCS.
 		return Result{
 			Name:    "config",
 			Outcome: Fail,
 			Detail:  "machine.toml: " + err.Error(),
-			Hint:    "check file contents at " + config.MachineConfigPath(),
+			Hint: "edit or restore " + config.MachineConfigPath() +
+				" — machine.toml is user-authored; do not delete (you would lose declared peers and scan roots)",
 		}
 	}
 	if m == nil {
@@ -119,11 +123,16 @@ func (c ConfigCheck) Run(_ context.Context) Result {
 
 	s, err := loadS()
 	if err != nil {
+		// state.toml is tool-owned. Safe recovery: back it up and remove it;
+		// `dotkeeper init` regenerates the Syncthing identity. Imperative
+		// peer entries (added via `dotkeeper peer add`) are LOST in that
+		// path, so back up first if any are present.
 		return Result{
 			Name:    "config",
 			Outcome: Fail,
 			Detail:  "state.toml: " + err.Error(),
-			Hint:    "check file contents at " + config.StateV2Path(),
+			Hint: "state.toml is tool-owned — back it up (cp " + config.StateV2Path() +
+				" /tmp/state.toml.bak) then remove and run 'dotkeeper init' to regenerate",
 		}
 	}
 	if s == nil {
