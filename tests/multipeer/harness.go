@@ -340,9 +340,12 @@ func (f *fixture) writeFile(peer, relpath, contents string) {
 
 // waitForFile polls for a file's existence on the given peer with given
 // expected contents. Returns nil on match, error on timeout or mismatch.
+// Trailing newline differences are normalized away on both sides so callers
+// don't have to think about whether their fixture writer emitted a final \n.
 func (f *fixture) waitForFile(peer, relpath, expectContents string, timeout time.Duration) error {
 	f.t.Helper()
 	deadline := time.Now().Add(timeout)
+	want := strings.TrimRight(expectContents, "\n")
 	var lastSeen string
 	for time.Now().Before(deadline) {
 		out, err := f.execAllowFail(peer, fmt.Sprintf(
@@ -351,14 +354,14 @@ func (f *fixture) waitForFile(peer, relpath, expectContents string, timeout time
 		))
 		if err == nil {
 			lastSeen = strings.TrimRight(out, "\n")
-			if lastSeen == expectContents {
+			if lastSeen == want {
 				return nil
 			}
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("timeout waiting for %s on %s; last seen: %q (want %q)",
-		relpath, peer, lastSeen, expectContents)
+		relpath, peer, lastSeen, want)
 }
 
 // pair runs the full init + cross-peer add + reconcile + start dance for
