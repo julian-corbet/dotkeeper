@@ -281,8 +281,13 @@ func (f *fixture) dkStart(peer string) {
 	// 90 iterations × 1s gives 90s — generous because cold-start on the
 	// runner sometimes spends several seconds on first-time identity scrub.
 	// The outer Go-side timeout is bumped to 120s via dkStartTimeout below.
+	// Source /etc/profile.d/*.sh so adversarial scenarios that drop a script
+	// there (e.g. TestClockSkew's libfaketime injection) get their env vars
+	// applied to the dotkeeper process. `docker exec sh -c` is non-interactive
+	// and doesn't source profile.d by default.
 	out, err := f.exec(peer,
-		`nohup dotkeeper start >/tmp/dotkeeper.log 2>&1 &
+		`for s in /etc/profile.d/*.sh; do [ -r "$s" ] && . "$s"; done
+		nohup env dotkeeper start >/tmp/dotkeeper.log 2>&1 &
 		echo $! > /tmp/dotkeeper.pid
 		for i in $(seq 1 90); do
 			if curl -sf -o /dev/null http://127.0.0.1:18384/rest/noauth/health 2>/dev/null \
@@ -330,11 +335,15 @@ func (f *fixture) dkReconcile(peer string) string {
 }
 
 // writeFile creates a file inside the shared repo on the given peer.
+// Both the relative path and the contents are single-quoted so spaces,
+// emoji, and other shell-active characters in the path don't break the
+// command (TestPathologicalFilenames depends on this).
 func (f *fixture) writeFile(peer, relpath, contents string) {
 	f.t.Helper()
+	abs := "/repos/shared/" + relpath
 	f.mustExec(peer, fmt.Sprintf(
-		`mkdir -p "$(dirname /repos/shared/%[1]s)" && printf '%%s' %[2]s > /repos/shared/%[1]s`,
-		relpath, shellQuote(contents),
+		`mkdir -p "$(dirname %[1]s)" && printf '%%s' %[2]s > %[1]s`,
+		shellQuote(abs), shellQuote(contents),
 	))
 }
 
@@ -342,15 +351,17 @@ func (f *fixture) writeFile(peer, relpath, contents string) {
 // expected contents. Returns nil on match, error on timeout or mismatch.
 // Trailing newline differences are normalized away on both sides so callers
 // don't have to think about whether their fixture writer emitted a final \n.
+// Path is shell-quoted so spaces/emoji/etc. in relpath are safe.
 func (f *fixture) waitForFile(peer, relpath, expectContents string, timeout time.Duration) error {
 	f.t.Helper()
 	deadline := time.Now().Add(timeout)
 	want := strings.TrimRight(expectContents, "\n")
+	abs := shellQuote("/repos/shared/" + relpath)
 	var lastSeen string
 	for time.Now().Before(deadline) {
 		out, err := f.execAllowFail(peer, fmt.Sprintf(
-			`if [ -f /repos/shared/%[1]s ]; then cat /repos/shared/%[1]s; else echo __ABSENT__; fi`,
-			relpath,
+			`if [ -f %[1]s ]; then cat %[1]s; else echo __ABSENT__; fi`,
+			abs,
 		))
 		if err == nil {
 			lastSeen = strings.TrimRight(out, "\n")

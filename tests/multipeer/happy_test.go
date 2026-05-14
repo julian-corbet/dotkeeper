@@ -87,9 +87,10 @@ func TestConflictRoundTrip(t *testing.T) {
 	}
 	t.Logf("conflict marker observed on %s", found)
 
-	// `dotkeeper conflict accept` should resolve the conflict on that side
-	// by promoting the variant content to the canonical path.
-	out := f.mustExec(found, "dotkeeper conflict resolve-all --strategy=accept-newest 2>&1 || dotkeeper conflict list")
+	// `dotkeeper conflict resolve-all` walks managed folders and applies the
+	// hash-identical dedup + git-merge-file 3-way resolvers. No flags — what
+	// can't be auto-resolved is left for manual review.
+	out := f.mustExec(found, "dotkeeper conflict resolve-all 2>&1; dotkeeper conflict list 2>&1 || true")
 	t.Logf("post-resolve output on %s:\n%s", found, out)
 
 	// Final assertion: no .sync-conflict-* files remain on the resolving peer.
