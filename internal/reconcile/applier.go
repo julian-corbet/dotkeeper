@@ -120,7 +120,7 @@ func applyEnsureIgnoreFile(act EnsureIgnoreFile) error {
 	if data, err := os.ReadFile(path); err == nil && string(data) == want {
 		return ensureGitInfoExclude(act.RepoPath, config.DefaultGitExcludePatterns...)
 	}
-	if err := os.WriteFile(path, []byte(want), 0o644); err != nil {
+	if err := config.WriteFileAtomic(path, []byte(want), 0o644); err != nil {
 		return fmt.Errorf("EnsureIgnoreFile %q: write .stignore: %w", act.RepoPath, err)
 	}
 	if err := ensureGitInfoExclude(act.RepoPath, config.DefaultGitExcludePatterns...); err != nil {
@@ -163,7 +163,7 @@ func ensureGitInfoExclude(repoPath string, patterns ...string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
+	return config.WriteFileAtomic(path, []byte(b.String()), 0o644)
 }
 
 func gitInfoExcludePath(repoPath string) (string, bool) {

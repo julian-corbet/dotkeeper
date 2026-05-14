@@ -4,8 +4,6 @@
 package config
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -139,47 +137,7 @@ func WriteStateV2(s *StateV2) error {
 		}
 	}
 
-	return writeFileAtomic(StateV2Path(), []byte(b.String()), 0o600)
-}
-
-// writeFileAtomic writes data to a sibling temp file in the same directory and
-// renames it into place. Rename is atomic on Linux/Unix within a single
-// filesystem, which is always true here since the temp file is created next to
-// the target. This guarantees a reader either sees the old file or the new
-// one — never a half-written one — even if two writers race.
-//
-// Race semantics: two concurrent atomic writes still have last-writer-wins, so
-// callers that need lost-update safety must wrap their read-modify-write cycle
-// with MutateStateV2 (which holds an exclusive flock for the duration).
-func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	var nonce [8]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		return fmt.Errorf("writeFileAtomic: rand: %w", err)
-	}
-	tmp := fmt.Sprintf("%s.tmp.%d.%s", path, os.Getpid(), hex.EncodeToString(nonce[:]))
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
-	if err != nil {
-		return fmt.Errorf("writeFileAtomic: create temp: %w", err)
-	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("writeFileAtomic: write temp: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("writeFileAtomic: fsync temp: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("writeFileAtomic: close temp: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("writeFileAtomic: rename: %w", err)
-	}
-	return nil
+	return WriteFileAtomic(StateV2Path(), []byte(b.String()), 0o600)
 }
 
 // MutateStateV2 is the safe way to update state.toml. It acquires an exclusive
