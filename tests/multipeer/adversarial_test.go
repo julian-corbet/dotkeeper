@@ -189,18 +189,14 @@ func TestManyFilesBurst(t *testing.T) {
 }
 
 // TestConcurrentTrackUntrack hammers `dotkeeper track` and `untrack` against
-// the same path from a single peer. Surfaces any race in state.toml writes or
-// reconcile decisions about a churning repo.
+// the same path from a single peer. 20 racing pairs of invocations must not
+// corrupt state.toml — the fix landed alongside this test (atomic write via
+// temp+rename, plus an exclusive flock around the read-modify-write cycle in
+// internal/config.MutateStateV2). Final reconcile must succeed.
 //
-// ADVERSARIAL FINDING (2026-05-14, observed on dotkeeper v0.6.1 + this branch):
-// 20 concurrent track/untrack invocations against /repos/churn produce
-// interleaved writes to ~/.local/state/dotkeeper/state.toml that leave the
-// file as invalid TOML, e.g. `toml: line 8: expected '.' or '=', but got '"'`.
-// Subsequent `dotkeeper reconcile` then refuses to load state.
-//
-// Until dotkeeper serializes state.toml writes (flock or write-temp+rename
-// with a mutex), this test logs the finding rather than failing CI. Promote
-// to t.Fatalf once the underlying bug is fixed so we don't regress.
+// Earlier history of this test: it was the reproducer that first surfaced
+// the corruption bug; the assertion was a soft t.Logf for one PR-iteration
+// while the fix was being written.
 func TestConcurrentTrackUntrack(t *testing.T) {
 	f := newFixture(t)
 	f.pair()
@@ -217,22 +213,19 @@ func TestConcurrentTrackUntrack(t *testing.T) {
 			dotkeeper untrack /repos/churn &
 		done
 		wait
-		# Final state should be deterministic; final reconcile must succeed.
+		# Final state must load cleanly; reconcile must succeed.
 		dotkeeper reconcile`,
 		120*time.Second,
 	)
 	if err != nil {
-		// Distinguish TOML corruption (known weakness) from other failures
-		// (which would be new findings worth hard-failing on).
-		if strings.Contains(out, "toml: line") && strings.Contains(out, "state.toml") {
-			t.Logf("ADVERSARIAL FINDING: concurrent track/untrack corrupts state.toml.\n"+
-				"Symptom: invalid TOML after concurrent writes. Fix: serialize state.toml\n"+
-				"writes (flock or temp+rename with mutex). Test output:\n%s", out)
-			return
-		}
-		t.Fatalf("unexpected failure mode in track/untrack churn: %v\n%s", err, out)
+		t.Fatalf("concurrent track/untrack left state corrupt or reconcile broken: %v\n%s", err, out)
 	}
-	t.Logf("track/untrack churn survived; final reconcile output:\n%s", out)
+	// Defensive: even if reconcile succeeded, scan its output for the TOML
+	// parse-error string that originally surfaced this bug.
+	if strings.Contains(out, "toml: line") && strings.Contains(out, "state.toml") {
+		t.Fatalf("state.toml parse error in reconcile output — fix regressed:\n%s", out)
+	}
+	t.Logf("track/untrack churn survived cleanly; final reconcile output:\n%s", out)
 }
 
 // TestThreeWayConflict brings up the optional peer-c, pairs it with both

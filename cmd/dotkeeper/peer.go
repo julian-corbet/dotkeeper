@@ -34,27 +34,27 @@ func peerAddCmd() *cobra.Command {
 		Short: "Add or update a peer in state.toml",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			state, err := loadOrCreateCLIState()
-			if err != nil {
-				return err
-			}
 			name, deviceID := args[0], args[1]
 			now := time.Now().UTC()
-			for i, p := range state.Peers {
-				if p.Name == name || p.DeviceID == deviceID {
-					state.Peers[i] = config.PeerEntry{Name: name, DeviceID: deviceID, LearnedAt: now}
-					if err := config.WriteStateV2(state); err != nil {
-						return err
+			updated := false
+			if err := config.MutateStateV2(func(state *config.StateV2) error {
+				for i, p := range state.Peers {
+					if p.Name == name || p.DeviceID == deviceID {
+						state.Peers[i] = config.PeerEntry{Name: name, DeviceID: deviceID, LearnedAt: now}
+						updated = true
+						return nil
 					}
-					fmt.Printf("[dotkeeper] peer updated: %s\n", name)
-					return nil
 				}
-			}
-			state.Peers = append(state.Peers, config.PeerEntry{Name: name, DeviceID: deviceID, LearnedAt: now})
-			if err := config.WriteStateV2(state); err != nil {
+				state.Peers = append(state.Peers, config.PeerEntry{Name: name, DeviceID: deviceID, LearnedAt: now})
+				return nil
+			}); err != nil {
 				return err
 			}
-			fmt.Printf("[dotkeeper] peer added: %s\n", name)
+			if updated {
+				fmt.Printf("[dotkeeper] peer updated: %s\n", name)
+			} else {
+				fmt.Printf("[dotkeeper] peer added: %s\n", name)
+			}
 			return nil
 		},
 	}
@@ -93,19 +93,17 @@ func peerRemoveCmd() *cobra.Command {
 		Short: "Remove an imperative peer from state.toml",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			state, err := loadOrCreateCLIState()
-			if err != nil {
-				return err
-			}
 			key := args[0]
-			filtered := make([]config.PeerEntry, 0, len(state.Peers))
-			for _, p := range state.Peers {
-				if p.Name != key && p.DeviceID != key {
-					filtered = append(filtered, p)
+			if err := config.MutateStateV2(func(state *config.StateV2) error {
+				filtered := make([]config.PeerEntry, 0, len(state.Peers))
+				for _, p := range state.Peers {
+					if p.Name != key && p.DeviceID != key {
+						filtered = append(filtered, p)
+					}
 				}
-			}
-			state.Peers = filtered
-			if err := config.WriteStateV2(state); err != nil {
+				state.Peers = filtered
+				return nil
+			}); err != nil {
 				return err
 			}
 			fmt.Printf("[dotkeeper] peer removed from state.toml: %s\n", key)
