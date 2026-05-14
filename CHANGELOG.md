@@ -7,6 +7,59 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- All config-file writes are now atomic (write-temp + `fsync` + `rename`),
+  so concurrent readers never see a half-written file and a crash mid-write
+  cannot leave a torn file on disk. Applies to `state.toml`, `machine.toml`,
+  `.dotkeeper.toml`, `.stignore`, `.git/info/exclude`, and merged conflict
+  files.
+- Concurrent `dotkeeper track`, `untrack`, and `peer add` invocations no
+  longer race on `state.toml`. The read-modify-write cycle now runs under
+  an exclusive advisory file lock (`flock(LOCK_EX)` on Linux/macOS,
+  `LockFileEx` on Windows), serialising concurrent writers and preventing
+  lost updates. Internal API: `config.MutateStateV2(func(*StateV2) error)`.
+- Atomic-write temp files now end in `.tmp` so dotkeeper's default
+  Syncthing ignore pattern (`*.tmp`) catches them before Syncthing can
+  propagate the transient to peers.
+- GitHub Dependabot vulnerability alerts and automated security fixes are
+  now enabled on the public repository.
+
+### Fixed
+
+- `state.toml` could become invalid TOML when multiple `dotkeeper`
+  invocations raced — now guarded by the new locking layer.
+- Build on Windows is restored — the locking primitive previously used
+  POSIX-only `golang.org/x/sys/unix` directly.
+- `dotkeeper doctor` recovery hints for corrupt `state.toml` and
+  `machine.toml` now give actionable instructions (back-up-then-remove
+  for tool-owned `state.toml`, edit-or-restore for user-authored
+  `machine.toml` — never delete).
+- `internal/conflict` now fsyncs merged conflict files before rename
+  (was missing — possible empty-file outcome on a power loss between
+  write and rename on certain filesystems).
+
+### Added
+
+- New `tests/multipeer/` end-to-end suite: 13 scenarios — 5 happy-path
+  (propagate A→B, propagate B→A, conflict round-trip, offline catch-up,
+  track-after-pair) plus 8 adversarial (clock skew, mid-sync network
+  partition, SIGKILL during reconcile, pathological filenames including
+  emoji and 200-char names, 2000-file burst, concurrent track/untrack,
+  three-way conflict, peer-flap × 5). Drives two real Syncthing peers
+  across a Docker bridge.
+- CI gate `multipeer-e2e` runs the suite on every pull request with the
+  Go data-race detector enabled.
+- CI gate `fuzz-smoke` runs every declared Go fuzz target for 20 seconds
+  per pull request. Surfaces new crashes that randomised input finds but
+  seed corpora miss.
+- CI build step now cross-compiles to `darwin/amd64`, `darwin/arm64`, and
+  `windows/amd64` to catch platform-specific imports.
+- Standard test step now runs with `go test -race`.
+- Branch protection on `main` requires the new gates before merge.
+- Coverage at 100% for `parseGitInterval` and `repoBackupDue` (was 22%
+  and 38% respectively).
+
 ## [0.6.1] - 2026-05-13
 
 ### Breaking
