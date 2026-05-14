@@ -88,14 +88,88 @@ func TestWriteFileAtomic_NoOrphanTempOnError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error writing into missing parent directory")
 	}
-	// Walk the temp dir to ensure no .tmp.* file slipped through.
+	// Walk the temp dir to ensure no *.tmp orphan slipped through.
+	// (The temp pattern is `<path>.<pid>.<rand>.tmp`, ending in `.tmp`.)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("read dir: %v", err)
 	}
 	for _, e := range entries {
-		if strings.Contains(e.Name(), ".tmp.") {
+		if strings.HasSuffix(e.Name(), ".tmp") {
 			t.Errorf("orphan temp file: %s", e.Name())
+		}
+	}
+}
+
+// TestWriteFileAtomic_TempNameMatchesSyncthingIgnore is a regression gate for
+// the temp-file naming convention. The temp file must end in `.tmp` so
+// dotkeeper's default Syncthing ignore pattern (`*.tmp` in
+// internal/config/ignore.go: DefaultSyncIgnorePatterns) catches it before
+// Syncthing tries to propagate the transient. Earlier versions named the
+// temp `<path>.tmp.<pid>.<rand>` which violated this contract.
+func TestWriteFileAtomic_TempNameMatchesSyncthingIgnore(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "myfile.txt")
+
+	// Race a writer against a fast-scanning watcher and capture any temp
+	// names we see along the way. WaitGroup ensures the scanner has
+	// observed the stop signal before we close the result channel —
+	// without it, `close(seenTemps)` could fire while the scanner is
+	// still mid-iteration and trying to send, producing a `send on
+	// closed channel` panic under -race.
+	stop := make(chan struct{})
+	seenTemps := make(chan string, 1024)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				return
+			}
+			for _, e := range entries {
+				name := e.Name()
+				if name == "myfile.txt" {
+					continue
+				}
+				select {
+				case seenTemps <- name:
+				default:
+				}
+			}
+		}
+	}()
+
+	for i := 0; i < 100; i++ {
+		if err := WriteFileAtomic(path, []byte("data"), 0o600); err != nil {
+			t.Fatalf("WriteFileAtomic: %v", err)
+		}
+	}
+	close(stop)
+	wg.Wait()
+	close(seenTemps)
+
+	uniqueSeen := map[string]bool{}
+	for n := range seenTemps {
+		uniqueSeen[n] = true
+	}
+	if len(uniqueSeen) == 0 {
+		// The watcher didn't catch any in-flight temps — rename is too
+		// fast on this host. Test is informational in that case; skip
+		// the suffix check rather than fail.
+		t.Skip("scanner did not observe any in-flight temp files")
+	}
+	for name := range uniqueSeen {
+		if !strings.HasSuffix(name, ".tmp") {
+			t.Errorf("temp file name %q does not end in .tmp; default Syncthing ignore (*.tmp) won't catch it", name)
 		}
 	}
 }
