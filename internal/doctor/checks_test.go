@@ -217,6 +217,56 @@ func TestConfigCheckMissingShared(t *testing.T) {
 	TestConfigCheckFailsOnMissingState(t)
 }
 
+// TestConfigCheckCorruptStateHintsRecovery pins the user-facing hint for a
+// corrupt state.toml — it must tell the user how to recover (back up + remove
+// + re-init), not just gesture at the path. This is the upgrade path for
+// users coming from pre-atomic-write dotkeeper that may have a corrupted
+// state.toml from a prior race.
+func TestConfigCheckCorruptStateHintsRecovery(t *testing.T) {
+	c := ConfigCheck{
+		LoadMachineV2: func() (*config.MachineConfigV2, error) {
+			return &config.MachineConfigV2{
+				SchemaVersion: 2,
+				Name:          "h",
+				Discovery:     config.DiscoveryConfig{ScanRoots: []string{"~/Documents"}},
+			}, nil
+		},
+		LoadStateV2: func() (*config.StateV2, error) {
+			return nil, errors.New(`toml: line 8: expected '.' or '=', but got '"' instead`)
+		},
+	}
+	r := c.Run(context.Background())
+	if r.Outcome != Fail {
+		t.Fatalf("Outcome = %v, want Fail", r.Outcome)
+	}
+	for _, want := range []string{"tool-owned", "back it up", "dotkeeper init"} {
+		if !strings.Contains(r.Hint, want) {
+			t.Errorf("Hint = %q, missing %q", r.Hint, want)
+		}
+	}
+}
+
+// TestConfigCheckCorruptMachineHintsNoDelete pins that a corrupt machine.toml
+// hint does NOT suggest deletion — machine.toml is user-authored and deleting
+// it would lose declared peers, scan roots, etc.
+func TestConfigCheckCorruptMachineHintsNoDelete(t *testing.T) {
+	c := ConfigCheck{
+		LoadMachineV2: func() (*config.MachineConfigV2, error) {
+			return nil, errors.New(`toml: line 3: invalid syntax`)
+		},
+	}
+	r := c.Run(context.Background())
+	if r.Outcome != Fail {
+		t.Fatalf("Outcome = %v, want Fail", r.Outcome)
+	}
+	if !strings.Contains(r.Hint, "do not delete") {
+		t.Errorf("Hint should warn against deletion; got: %q", r.Hint)
+	}
+	if !strings.Contains(r.Hint, "user-authored") {
+		t.Errorf("Hint should explain machine.toml is user-authored; got: %q", r.Hint)
+	}
+}
+
 // TestConfigCheckWarnOnUnregisteredMachine verifies that a machine with no
 // scan roots configured yields Warn (advisory, not Fail).
 func TestConfigCheckWarnOnUnregisteredMachine(t *testing.T) {
