@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/julian-corbet/dotkeeper/internal/config"
 )
 
 // textDetectionWindow is the number of leading bytes scanned for NUL to
@@ -237,32 +239,11 @@ func applyCleanMerge(ctx context.Context, c Conflict, local, relPathGit, repoRoo
 	return ActionMerged, nil
 }
 
-// writeAtomic writes data to dst via a same-directory tempfile + rename.
-// On POSIX this is atomic, so a crash mid-write cannot leave the local
-// file half-merged — either old or new, never torn.
+// writeAtomic is a thin wrapper around config.WriteFileAtomic kept for the
+// internal callers in this package. The shared implementation in
+// internal/config adds fsync(2) (durable across power loss, which a merged
+// conflict file deserves) and a stricter O_EXCL temp-create — both missing
+// from the previous local implementation.
 func writeAtomic(dst string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(dst)
-	f, err := os.CreateTemp(dir, ".dotkeeper-merge-*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	// Best-effort cleanup if we bail out before the rename.
-	defer func() {
-		if _, statErr := os.Stat(tmp); statErr == nil {
-			_ = os.Remove(tmp)
-		}
-	}()
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Chmod(mode); err != nil {
-		_ = f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, dst)
+	return config.WriteFileAtomic(dst, data, mode)
 }
