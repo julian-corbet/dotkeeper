@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"golang.org/x/sys/unix"
 )
 
 // StateV2 is the v0.5 schema for $XDG_STATE_HOME/dotkeeper/state.toml.
@@ -162,10 +161,13 @@ func MutateStateV2(mutate func(*StateV2) error) error {
 		return fmt.Errorf("MutateStateV2: open lock: %w", err)
 	}
 	defer func() { _ = lf.Close() }()
-	if err := unix.Flock(int(lf.Fd()), unix.LOCK_EX); err != nil {
-		return fmt.Errorf("MutateStateV2: flock: %w", err)
+	if err := lockFileExclusive(lf); err != nil {
+		return fmt.Errorf("MutateStateV2: lock: %w", err)
 	}
-	// Note: closing lf releases the flock, which the deferred Close handles.
+	// Note: closing lf releases the OS-level lock, which the deferred Close
+	// handles. The shim is platform-specific — flock(2) on Unix, LockFileEx
+	// on Windows — but the semantics are the same: exclusive, blocking
+	// acquisition; released on close.
 
 	state, err := LoadStateV2()
 	if err != nil {
