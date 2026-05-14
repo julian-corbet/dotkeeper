@@ -4,13 +4,15 @@
 # so each scenario controls init/peer-add/track/reconcile/start timing.
 #
 # Each peer:
-#   - Distinct hostname and IP on the private bridge (10.42.0.0/24)
-#   - Its own anonymous volumes for $XDG_CONFIG_HOME and $XDG_STATE_HOME
-#   - A shared bind for /repos/shared so both peers track the SAME path string
-#     (folder ID = dk-shared-<sha256-of-path[:8]>, matches on both sides)
+#   - Distinct hostname on a Docker-managed private bridge
+#   - Its own named volumes for $XDG_CONFIG_HOME, $XDG_STATE_HOME, and the
+#     /repos/shared tree
+#   - Identical /repos/shared path string so dotkeeper computes the same
+#     folder ID (dk-shared-<sha256-of-path[:8]>) on both peers
 #
-# Network: discovery is OFF (--discovery=false in dotkeeper start args inside
-# scenarios). Peers find each other by static address embedded in machine.toml.
+# Docker assigns the subnet per compose project (no hard-coded 10.x range).
+# Adversarial scenarios resolve peer IPs at runtime via `docker inspect` to
+# inject iptables rules — see harness.peerIP().
 
 services:
   peer-a:
@@ -20,9 +22,7 @@ services:
     image: dotkeeper-multipeer-test:local
     container_name: ${COMPOSE_PROJECT_NAME:-dkmp}-peer-a
     hostname: peer-a
-    networks:
-      dkmpnet:
-        ipv4_address: 10.42.0.10
+    networks: [dkmpnet]
     environment:
       HOME: /home/dk
       XDG_CONFIG_HOME: /home/dk/.config
@@ -30,6 +30,10 @@ services:
       XDG_DATA_HOME: /home/dk/.local/share
       TZ: UTC
       DK_PEER_NAME: peer-a
+    # Note: no static IPs. Docker assigns a subnet per compose project, which
+    # the test harness resolves at runtime via `docker inspect` for iptables
+    # rules in adversarial scenarios. Hard-coding a subnet caused IPAM
+    # conflicts across sequential test compose projects.
     volumes:
       - peer-a-home:/home/dk
       - peer-a-repo:/repos/shared
@@ -45,9 +49,7 @@ services:
     image: dotkeeper-multipeer-test:local
     container_name: ${COMPOSE_PROJECT_NAME:-dkmp}-peer-b
     hostname: peer-b
-    networks:
-      dkmpnet:
-        ipv4_address: 10.42.0.11
+    networks: [dkmpnet]
     environment:
       HOME: /home/dk
       XDG_CONFIG_HOME: /home/dk/.config
@@ -72,9 +74,7 @@ services:
     image: dotkeeper-multipeer-test:local
     container_name: ${COMPOSE_PROJECT_NAME:-dkmp}-peer-c
     hostname: peer-c
-    networks:
-      dkmpnet:
-        ipv4_address: 10.42.0.12
+    networks: [dkmpnet]
     environment:
       HOME: /home/dk
       XDG_CONFIG_HOME: /home/dk/.config
@@ -92,9 +92,7 @@ services:
 networks:
   dkmpnet:
     driver: bridge
-    ipam:
-      config:
-        - subnet: 10.42.0.0/24
+    # No explicit IPAM config — Docker picks a free subnet per compose project.
 
 volumes:
   peer-a-home:

@@ -41,6 +41,11 @@ type fixture struct {
 // registers cleanup. Returns once both containers are running. The harness
 // does NOT auto-init or auto-pair the peers — each scenario controls that
 // to keep failure modes visible.
+//
+// Cleanup is registered BEFORE composeUp so that a partial bring-up failure
+// (network created, services failed to start) still tears down via t.Cleanup.
+// Without this, a failed test would leak its docker network and Docker's IPAM
+// would refuse to allocate the next test's subnet.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{
@@ -48,8 +53,8 @@ func newFixture(t *testing.T) *fixture {
 		project:  uniqueProject(t),
 		repoRoot: repoRoot(t),
 	}
-	f.composeUp("peer-a", "peer-b")
 	t.Cleanup(f.tearDown)
+	f.composeUp("peer-a", "peer-b")
 	return f
 }
 
@@ -353,6 +358,30 @@ func (f *fixture) pair() (aID, bID string) {
 	f.dkReconcile("peer-a")
 	f.dkReconcile("peer-b")
 	return aID, bID
+}
+
+// peerIP resolves the IP address Docker assigned to the given peer on this
+// fixture's bridge network. Used by adversarial scenarios that need iptables
+// rules targeting specific peers (we can no longer hard-code 10.42.0.10/.11
+// because each compose project gets a Docker-assigned subnet).
+func (f *fixture) peerIP(peer string) string {
+	f.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// `{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}` works because
+	// each container is attached to exactly one network in our compose setup.
+	out, err := exec.CommandContext(ctx, "docker", "inspect",
+		"-f", "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+		f.project+"-"+peer,
+	).CombinedOutput()
+	if err != nil {
+		f.t.Fatalf("docker inspect %s: %v\n%s", peer, err, out)
+	}
+	ip := strings.TrimSpace(string(out))
+	if ip == "" {
+		f.t.Fatalf("docker inspect %s returned no IP", peer)
+	}
+	return ip
 }
 
 // shellQuote returns a single-quoted shell literal. Used for paths and names

@@ -51,10 +51,11 @@ func TestConflictRoundTrip(t *testing.T) {
 		t.Fatalf("baseline propagation failed: %v", err)
 	}
 
-	// Split: drop traffic between the two peer subnets so each side can
-	// independently mutate the file.
-	f.mustExec("peer-a", "iptables -A OUTPUT -d 10.42.0.11 -j DROP")
-	f.mustExec("peer-b", "iptables -A OUTPUT -d 10.42.0.10 -j DROP")
+	// Split: drop traffic between the two peers so each side can independently
+	// mutate the file. IPs resolved at runtime since Docker assigns the subnet.
+	ipA, ipB := f.peerIP("peer-a"), f.peerIP("peer-b")
+	f.mustExec("peer-a", "iptables -A OUTPUT -d "+ipB+" -j DROP")
+	f.mustExec("peer-b", "iptables -A OUTPUT -d "+ipA+" -j DROP")
 
 	f.writeFile("peer-a", "notes.md", "from-a\n")
 	f.writeFile("peer-b", "notes.md", "from-b\n")

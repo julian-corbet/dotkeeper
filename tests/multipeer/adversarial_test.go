@@ -44,8 +44,9 @@ func TestClockSkew(t *testing.T) {
 	// Race: both write at "the same time" by wall clock, but peer-b's wall
 	// clock thinks it's an hour earlier. Modtime ordering should put peer-a
 	// later → peer-a wins.
-	f.mustExec("peer-a", "iptables -A OUTPUT -d 10.42.0.11 -j DROP")
-	f.mustExec("peer-b", "iptables -A OUTPUT -d 10.42.0.10 -j DROP")
+	ipA, ipB := f.peerIP("peer-a"), f.peerIP("peer-b")
+	f.mustExec("peer-a", "iptables -A OUTPUT -d "+ipB+" -j DROP")
+	f.mustExec("peer-b", "iptables -A OUTPUT -d "+ipA+" -j DROP")
 	f.writeFile("peer-a", "skewed.txt", "from-a-rewrite\n")
 	f.writeFile("peer-b", "skewed.txt", "from-b-rewrite\n")
 	time.Sleep(3 * time.Second)
@@ -74,8 +75,9 @@ func TestNetworkPartitionMidSync(t *testing.T) {
 
 	// Partition almost immediately, then heal 3s later.
 	time.Sleep(500 * time.Millisecond)
-	f.mustExec("peer-a", "iptables -A OUTPUT -d 10.42.0.11 -j DROP")
-	f.mustExec("peer-b", "iptables -A OUTPUT -d 10.42.0.10 -j DROP")
+	ipA, ipB := f.peerIP("peer-a"), f.peerIP("peer-b")
+	f.mustExec("peer-a", "iptables -A OUTPUT -d "+ipB+" -j DROP")
+	f.mustExec("peer-b", "iptables -A OUTPUT -d "+ipA+" -j DROP")
 	time.Sleep(3 * time.Second)
 	f.mustExec("peer-a", "iptables -F OUTPUT")
 	f.mustExec("peer-b", "iptables -F OUTPUT")
@@ -255,9 +257,14 @@ func TestThreeWayConflict(t *testing.T) {
 		t.Fatalf("baseline to peer-c: %v", err)
 	}
 
-	// Three-way partition.
+	// Three-way partition. Resolve IPs at runtime.
+	ips := map[string]string{
+		"peer-a": f.peerIP("peer-a"),
+		"peer-b": f.peerIP("peer-b"),
+		"peer-c": f.peerIP("peer-c"),
+	}
 	for _, p := range []string{"peer-a", "peer-b", "peer-c"} {
-		for _, dst := range []string{"10.42.0.10", "10.42.0.11", "10.42.0.12"} {
+		for _, dst := range ips {
 			f.mustExec(p, "iptables -A OUTPUT -d "+dst+" -j DROP || true")
 		}
 	}
