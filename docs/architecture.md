@@ -164,4 +164,5 @@ focused tests.
 - [ADR 0002](adr/0002-machine-state-split.md) - Machine-local state split
 - [ADR 0003](adr/0003-reconciler-loop.md) - Reconciler model
 - [ADR 0004](adr/0004-scan-root-discovery.md) - Scan-root discovery
+- [ADR 0005](adr/0005-state-toml-locking.md) - Atomic writes and exclusive flock for `state.toml`
 - [README](../README.md) - Quick start, install, commands
