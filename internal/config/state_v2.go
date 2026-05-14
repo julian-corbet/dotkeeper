@@ -4,12 +4,16 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"golang.org/x/sys/unix"
 )
 
 // StateV2 is the v0.5 schema for $XDG_STATE_HOME/dotkeeper/state.toml.
@@ -135,5 +139,94 @@ func WriteStateV2(s *StateV2) error {
 		}
 	}
 
-	return os.WriteFile(StateV2Path(), []byte(b.String()), 0o600)
+	return writeFileAtomic(StateV2Path(), []byte(b.String()), 0o600)
+}
+
+// writeFileAtomic writes data to a sibling temp file in the same directory and
+// renames it into place. Rename is atomic on Linux/Unix within a single
+// filesystem, which is always true here since the temp file is created next to
+// the target. This guarantees a reader either sees the old file or the new
+// one — never a half-written one — even if two writers race.
+//
+// Race semantics: two concurrent atomic writes still have last-writer-wins, so
+// callers that need lost-update safety must wrap their read-modify-write cycle
+// with MutateStateV2 (which holds an exclusive flock for the duration).
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return fmt.Errorf("writeFileAtomic: rand: %w", err)
+	}
+	tmp := fmt.Sprintf("%s.tmp.%d.%s", path, os.Getpid(), hex.EncodeToString(nonce[:]))
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return fmt.Errorf("writeFileAtomic: create temp: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("writeFileAtomic: write temp: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("writeFileAtomic: fsync temp: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("writeFileAtomic: close temp: %w", err)
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("writeFileAtomic: rename: %w", err)
+	}
+	return nil
+}
+
+// MutateStateV2 is the safe way to update state.toml. It acquires an exclusive
+// advisory lock on a sibling lock file, reads the current state (initialising
+// a fresh schema-v2 zero value if state.toml does not yet exist), runs the
+// caller's mutation, and writes the result atomically before releasing the
+// lock. This protects against both byte-level interleaving (atomic write) and
+// lost-update races (lock-around-RMW) when multiple `dotkeeper` invocations
+// touch state.toml concurrently — e.g. parallel `dotkeeper track` /
+// `dotkeeper untrack` from the same shell.
+//
+// The lock file is `<state-dir>/state.toml.lock`. It is created on demand and
+// is never deleted, so all processes lock against the same inode.
+func MutateStateV2(mutate func(*StateV2) error) error {
+	dir := StateDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("MutateStateV2: mkdir state dir: %w", err)
+	}
+	lockPath := filepath.Join(dir, "state.toml.lock")
+	lf, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("MutateStateV2: open lock: %w", err)
+	}
+	defer func() { _ = lf.Close() }()
+	if err := unix.Flock(int(lf.Fd()), unix.LOCK_EX); err != nil {
+		return fmt.Errorf("MutateStateV2: flock: %w", err)
+	}
+	// Note: closing lf releases the flock, which the deferred Close handles.
+
+	state, err := LoadStateV2()
+	if err != nil {
+		return fmt.Errorf("MutateStateV2: load: %w", err)
+	}
+	if state == nil {
+		state = &StateV2{
+			SchemaVersion:    2,
+			Peers:            []PeerEntry{},
+			TrackedOverrides: []string{},
+			ObservedRepos:    make(map[string]ObservedRepo),
+			LastSeenPeers:    make(map[string]time.Time),
+		}
+	}
+	if state.SchemaVersion == 0 {
+		state.SchemaVersion = 2
+	}
+	if err := mutate(state); err != nil {
+		return fmt.Errorf("MutateStateV2: mutate: %w", err)
+	}
+	return WriteStateV2(state)
 }

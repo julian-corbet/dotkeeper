@@ -394,39 +394,34 @@ func markRepoPushed(repoPath string) error {
 	if head == "" {
 		return nil
 	}
-	state, err := loadOrInitState()
-	if err != nil {
-		return err
-	}
-	if state.ObservedRepos == nil {
-		state.ObservedRepos = make(map[string]config.ObservedRepo)
-	}
-	state.ObservedRepos[repoPath] = config.ObservedRepo{
-		LastReconciledCommit: head,
-		LastPushedCommit:     head,
-		LastBackupAt:         time.Now().UTC(),
-	}
-	return config.WriteStateV2(state)
+	return config.MutateStateV2(func(state *config.StateV2) error {
+		if state.ObservedRepos == nil {
+			state.ObservedRepos = make(map[string]config.ObservedRepo)
+		}
+		state.ObservedRepos[repoPath] = config.ObservedRepo{
+			LastReconciledCommit: head,
+			LastPushedCommit:     head,
+			LastBackupAt:         time.Now().UTC(),
+		}
+		return nil
+	})
 }
 
 // applyTrackRepo appends the path to state.toml's tracked_overrides if not
-// already present. Loads and writes the state file on every call; track/untrack
-// are infrequent so the I/O cost is acceptable.
+// already present. The read-modify-write cycle runs under MutateStateV2's
+// exclusive flock so concurrent `dotkeeper track` invocations cannot lose
+// each other's updates or corrupt the file.
 func applyTrackRepo(act TrackRepo) error {
-	state, err := loadOrInitState()
-	if err != nil {
-		return fmt.Errorf("TrackRepo %q: load state: %w", act.Path, err)
-	}
-
-	for _, p := range state.TrackedOverrides {
-		if p == act.Path {
-			return nil // already tracked — idempotent no-op
+	if err := config.MutateStateV2(func(state *config.StateV2) error {
+		for _, p := range state.TrackedOverrides {
+			if p == act.Path {
+				return nil // already tracked — idempotent no-op
+			}
 		}
-	}
-	state.TrackedOverrides = append(state.TrackedOverrides, act.Path)
-
-	if err := config.WriteStateV2(state); err != nil {
-		return fmt.Errorf("TrackRepo %q: write state: %w", act.Path, err)
+		state.TrackedOverrides = append(state.TrackedOverrides, act.Path)
+		return nil
+	}); err != nil {
+		return fmt.Errorf("TrackRepo %q: %w", act.Path, err)
 	}
 	return nil
 }
@@ -434,24 +429,17 @@ func applyTrackRepo(act TrackRepo) error {
 // applyUntrackRepo removes the path from state.toml's tracked_overrides.
 // If the path is not present the function is a no-op (idempotent).
 func applyUntrackRepo(act UntrackRepo) error {
-	state, err := loadOrInitState()
-	if err != nil {
-		return fmt.Errorf("UntrackRepo %q: load state: %w", act.Path, err)
-	}
-
-	filtered := make([]string, 0, len(state.TrackedOverrides))
-	for _, p := range state.TrackedOverrides {
-		if p != act.Path {
-			filtered = append(filtered, p)
+	if err := config.MutateStateV2(func(state *config.StateV2) error {
+		filtered := make([]string, 0, len(state.TrackedOverrides))
+		for _, p := range state.TrackedOverrides {
+			if p != act.Path {
+				filtered = append(filtered, p)
+			}
 		}
-	}
-	if len(filtered) == len(state.TrackedOverrides) {
-		return nil // path was not present — idempotent no-op
-	}
-	state.TrackedOverrides = filtered
-
-	if err := config.WriteStateV2(state); err != nil {
-		return fmt.Errorf("UntrackRepo %q: write state: %w", act.Path, err)
+		state.TrackedOverrides = filtered
+		return nil
+	}); err != nil {
+		return fmt.Errorf("UntrackRepo %q: %w", act.Path, err)
 	}
 	return nil
 }
