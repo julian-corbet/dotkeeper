@@ -210,10 +210,15 @@ func (f *fixture) runDocker(timeout time.Duration, args ...string) {
 // The init command prints a line like:
 //
 //	Syncthing device ID: ABCDEFG-...
+//
+// --no-service is passed so init doesn't try to install a systemd/cron entry.
+// Without it, init's service installer can leave a background Syncthing
+// process holding the database lock, which then races with our explicit
+// dkStart and produces "opening database: resource temporarily unavailable".
 func (f *fixture) dkInit(peer, name string, slot int) string {
 	f.t.Helper()
 	out := f.mustExec(peer, fmt.Sprintf(
-		"mkdir -p /home/dk/.config /home/dk/.local/state && dotkeeper init --name %s --slot %d",
+		"mkdir -p /home/dk/.config /home/dk/.local/state && dotkeeper init --no-service --name %s --slot %d",
 		shellQuote(name), slot,
 	))
 	id := parseDeviceID(out)

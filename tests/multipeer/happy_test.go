@@ -6,6 +6,7 @@
 package multipeer
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -87,14 +88,23 @@ func TestConflictRoundTrip(t *testing.T) {
 	}
 	t.Logf("conflict marker observed on %s", found)
 
-	// `dotkeeper conflict resolve-all` walks managed folders and applies the
-	// hash-identical dedup + git-merge-file 3-way resolvers. No flags — what
-	// can't be auto-resolved is left for manual review.
-	out := f.mustExec(found, "dotkeeper conflict resolve-all 2>&1; dotkeeper conflict list 2>&1 || true")
+	// Two-step resolution:
+	//   1. `conflict resolve-all` clears trivially-resolvable conflicts (byte-
+	//      identical duplicates, 3-way mergeable text).
+	//   2. `conflict accept --all` promotes any remaining variants to canonical
+	//      (the "human chose the peer side" path).
+	// In our scenario the two writes ("from-a", "from-b") aren't mergeable, so
+	// resolve-all leaves it as 'kept' and accept --all finishes the job.
+	out := f.mustExec(found,
+		`dotkeeper conflict resolve-all 2>&1 || true
+		dotkeeper conflict accept --all 2>&1 || true
+		echo "--- final list ---"
+		dotkeeper conflict list 2>&1 || true`,
+	)
 	t.Logf("post-resolve output on %s:\n%s", found, out)
 
 	// Final assertion: no .sync-conflict-* files remain on the resolving peer.
-	if remaining, _ := f.execAllowFail(found, `ls /repos/shared 2>/dev/null | grep 'sync-conflict' || true`); len(remaining) > 0 {
+	if remaining, _ := f.execAllowFail(found, `ls /repos/shared 2>/dev/null | grep 'sync-conflict' || true`); len(strings.TrimSpace(remaining)) > 0 {
 		t.Errorf("unresolved conflict files remain on %s:\n%s", found, remaining)
 	}
 }
