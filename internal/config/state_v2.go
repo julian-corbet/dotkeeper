@@ -162,21 +162,21 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return fmt.Errorf("writeFileAtomic: create temp: %w", err)
 	}
 	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(tmp)
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return fmt.Errorf("writeFileAtomic: write temp: %w", err)
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(tmp)
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return fmt.Errorf("writeFileAtomic: fsync temp: %w", err)
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("writeFileAtomic: close temp: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp)
+		_ = os.Remove(tmp)
 		return fmt.Errorf("writeFileAtomic: rename: %w", err)
 	}
 	return nil
@@ -203,7 +203,7 @@ func MutateStateV2(mutate func(*StateV2) error) error {
 	if err != nil {
 		return fmt.Errorf("MutateStateV2: open lock: %w", err)
 	}
-	defer lf.Close()
+	defer func() { _ = lf.Close() }()
 	if err := unix.Flock(int(lf.Fd()), unix.LOCK_EX); err != nil {
 		return fmt.Errorf("MutateStateV2: flock: %w", err)
 	}

@@ -142,22 +142,3 @@ func mergedPeersForDisplay() []peerDisplay {
 	return out
 }
 
-func loadOrCreateCLIState() (*config.StateV2, error) {
-	state, err := config.LoadStateV2()
-	if err != nil {
-		return nil, err
-	}
-	if state != nil {
-		if state.SchemaVersion == 0 {
-			state.SchemaVersion = 2
-		}
-		return state, nil
-	}
-	return &config.StateV2{
-		SchemaVersion:    2,
-		Peers:            []config.PeerEntry{},
-		TrackedOverrides: []string{},
-		ObservedRepos:    make(map[string]config.ObservedRepo),
-		LastSeenPeers:    make(map[string]time.Time),
-	}, nil
-}
