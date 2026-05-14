@@ -114,10 +114,17 @@ func TestWriteFileAtomic_TempNameMatchesSyncthingIgnore(t *testing.T) {
 	path := filepath.Join(dir, "myfile.txt")
 
 	// Race a writer against a fast-scanning watcher and capture any temp
-	// names we see along the way.
+	// names we see along the way. WaitGroup ensures the scanner has
+	// observed the stop signal before we close the result channel —
+	// without it, `close(seenTemps)` could fire while the scanner is
+	// still mid-iteration and trying to send, producing a `send on
+	// closed channel` panic under -race.
 	stop := make(chan struct{})
-	seenTemps := make(chan string, 64)
+	seenTemps := make(chan string, 1024)
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		for {
 			select {
 			case <-stop:
@@ -147,6 +154,7 @@ func TestWriteFileAtomic_TempNameMatchesSyncthingIgnore(t *testing.T) {
 		}
 	}
 	close(stop)
+	wg.Wait()
 	close(seenTemps)
 
 	uniqueSeen := map[string]bool{}
