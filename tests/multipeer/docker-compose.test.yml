@@ -1,0 +1,105 @@
+# Two-peer Syncthing topology for multipeer e2e tests.
+#
+# Both peers idle on tini; the test harness drives `dotkeeper` via `docker exec`
+# so each scenario controls init/peer-add/track/reconcile/start timing.
+#
+# Each peer:
+#   - Distinct hostname and IP on the private bridge (10.42.0.0/24)
+#   - Its own anonymous volumes for $XDG_CONFIG_HOME and $XDG_STATE_HOME
+#   - A shared bind for /repos/shared so both peers track the SAME path string
+#     (folder ID = dk-shared-<sha256-of-path[:8]>, matches on both sides)
+#
+# Network: discovery is OFF (--discovery=false in dotkeeper start args inside
+# scenarios). Peers find each other by static address embedded in machine.toml.
+
+services:
+  peer-a:
+    build:
+      context: ../..
+      dockerfile: tests/multipeer/Dockerfile.test
+    image: dotkeeper-multipeer-test:local
+    container_name: ${COMPOSE_PROJECT_NAME:-dkmp}-peer-a
+    hostname: peer-a
+    networks:
+      dkmpnet:
+        ipv4_address: 10.42.0.10
+    environment:
+      HOME: /home/dk
+      XDG_CONFIG_HOME: /home/dk/.config
+      XDG_STATE_HOME: /home/dk/.local/state
+      XDG_DATA_HOME: /home/dk/.local/share
+      TZ: UTC
+      DK_PEER_NAME: peer-a
+    volumes:
+      - peer-a-home:/home/dk
+      - peer-a-repo:/repos/shared
+    cap_add:
+      - NET_ADMIN      # iptables for partition scenarios
+      - SYS_TIME       # libfaketime envvar suffices, but cap helps if we ever
+                       # use real `date -s` for clock-skew tests
+
+  peer-b:
+    build:
+      context: ../..
+      dockerfile: tests/multipeer/Dockerfile.test
+    image: dotkeeper-multipeer-test:local
+    container_name: ${COMPOSE_PROJECT_NAME:-dkmp}-peer-b
+    hostname: peer-b
+    networks:
+      dkmpnet:
+        ipv4_address: 10.42.0.11
+    environment:
+      HOME: /home/dk
+      XDG_CONFIG_HOME: /home/dk/.config
+      XDG_STATE_HOME: /home/dk/.local/state
+      XDG_DATA_HOME: /home/dk/.local/share
+      TZ: UTC
+      DK_PEER_NAME: peer-b
+    volumes:
+      - peer-b-home:/home/dk
+      - peer-b-repo:/repos/shared
+    cap_add:
+      - NET_ADMIN
+      - SYS_TIME
+
+  # Optional third peer for the three-way conflict adversarial scenario.
+  # Started on-demand via `docker compose up peer-c` from inside the test.
+  peer-c:
+    profiles: ["three-way"]
+    build:
+      context: ../..
+      dockerfile: tests/multipeer/Dockerfile.test
+    image: dotkeeper-multipeer-test:local
+    container_name: ${COMPOSE_PROJECT_NAME:-dkmp}-peer-c
+    hostname: peer-c
+    networks:
+      dkmpnet:
+        ipv4_address: 10.42.0.12
+    environment:
+      HOME: /home/dk
+      XDG_CONFIG_HOME: /home/dk/.config
+      XDG_STATE_HOME: /home/dk/.local/state
+      XDG_DATA_HOME: /home/dk/.local/share
+      TZ: UTC
+      DK_PEER_NAME: peer-c
+    volumes:
+      - peer-c-home:/home/dk
+      - peer-c-repo:/repos/shared
+    cap_add:
+      - NET_ADMIN
+      - SYS_TIME
+
+networks:
+  dkmpnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.42.0.0/24
+
+volumes:
+  peer-a-home:
+  peer-a-repo:
+  peer-b-home:
+  peer-b-repo:
+  peer-c-home:
+  peer-c-repo:
