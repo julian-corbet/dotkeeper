@@ -201,8 +201,22 @@ jobs:
     needs: [build, package]
     runs-on: ubuntu-latest
     # Creates the GitHub Release and uploads artifacts to it.
-    permissions:
-      contents: write
+    #
+    # Uses the PACKAGES_TOKEN PAT (same one homebrew.yml uses) instead
+    # of GITHUB_TOKEN. The reason is event propagation: `gh release
+    # create` invoked with the built-in GITHUB_TOKEN does not fire
+    # `release: published` for downstream workflows.
+    # https://docs.github.com/en/actions/security-guides/automatic-token-authentication#using-the-github_token-in-a-workflow
+    # The Docker workflow listens on `release: published`, so with
+    # GITHUB_TOKEN the v0.8.0 + v0.8.1 releases produced no Docker
+    # image — each one had to be manually re-published via a user PAT
+    # to kick docker.yml. PACKAGES_TOKEN is a classic PAT with only
+    # `public_repo` scope; using it makes the release event
+    # indistinguishable from a human-created one, so docker.yml runs
+    # automatically.
+    #
+    # No `permissions:` block — PACKAGES_TOKEN is a user PAT and
+    # doesn't read the workflow-permission scoping.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -218,8 +232,12 @@ jobs:
 
       - name: Create release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
         run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::error::PACKAGES_TOKEN secret is not set. Add a classic PAT with 'public_repo' scope as the repository secret 'PACKAGES_TOKEN'."
+            exit 1
+          fi
           VERSION=${GITHUB_REF#refs/tags/}
           gh release create "${VERSION}" \
             --title "dotkeeper ${VERSION}" \
