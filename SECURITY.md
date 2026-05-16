@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.5.x   | Yes       |
-| < 0.5   | No        |
+| 0.8.x   | Yes       |
+| < 0.8   | No        |
 
 ## Reporting a Vulnerability
 
@@ -43,17 +43,17 @@ dotkeeper embeds Syncthing and manages git repositories. Security-relevant areas
 
 dotkeeper tracks known vulnerabilities in its dependency tree via `govulncheck`. The embedded Syncthing library is the largest dependency surface. We update to the latest Syncthing release with each dotkeeper release.
 
-### Known unresolved advisories
+### Cleared advisories
 
-As of v0.5.0, `govulncheck -tags noassets ./...` reports outstanding advisories in `github.com/quic-go/quic-go`:
+**v0.8.0 (2026-05)** bumped the embedded Syncthing to v2.1.0, which brings quic-go v0.59.0 and clears the two long-standing advisories that v0.5–0.7 documented as unresolved:
 
-| Advisory | Status | Notes |
-|----------|--------|-------|
-| [GO-2025-4017](https://pkg.go.dev/vuln/GO-2025-4017) | **Called** (reachable) | Tracked; see below |
-| [GO-2025-4233](https://pkg.go.dev/vuln/GO-2025-4233) | Module-only (not reached by dotkeeper code paths) | Tracked |
+| Advisory | Resolution |
+|----------|------------|
+| [GO-2025-4017](https://pkg.go.dev/vuln/GO-2025-4017) | Fixed upstream in quic-go v0.54.1; reached via Syncthing v2.1.0. |
+| [GO-2025-4233](https://pkg.go.dev/vuln/GO-2025-4233) | Fixed upstream in quic-go v0.57.0; reached via Syncthing v2.1.0. |
 
-**Why not fixed:** Upstream fixes exist in quic-go v0.54.1 / v0.57.0, but Syncthing v1.30.0 (the version dotkeeper embeds) has API incompatibilities with those quic-go versions — `quic-go/logging` was removed, and `quic.Connection` / `quic.Stream` changed from value types to pointer types. Bumping quic-go without a matching Syncthing release breaks the build.
+QUIC remains disabled by default in dotkeeper's generated `config.xml` (TCP-only listen on `:12000`). The CVE-mitigation rationale is now historical — re-enabling QUIC for users who explicitly want it is tracked for a future release.
 
-**Tracking plan:** monitor the [Syncthing release feed](https://github.com/syncthing/syncthing/releases) for a version that bumps quic-go past v0.54.1. At that point, a dotkeeper patch release will clear both advisories.
+### Current known advisories
 
-**Impact assessment for dotkeeper operators:** both advisories are in `quic-go`, which is only reached when the QUIC listener is enabled. **dotkeeper v0.4.0+ disables QUIC by default** and listens only on TCP at `:12000`, making both advisories unreachable code on a default install. (The disable also sidesteps a quic-go v0.52.0 startup-panic bug that produced a systemd restart loop on some systems.) If you had an older dotkeeper install with QUIC enabled, you can either upgrade or manually remove the `quic://` entry from your `~/.local/share/dotkeeper/syncthing/config.xml`.
+`govulncheck` on a fresh v0.8 build reports stdlib advisories (`net`, `net/http`, `net/mail`, `html/template`, …) that are fixed in Go 1.26.3 and will clear when CI's pinned Go toolchain version is bumped. None of these are introduced by dotkeeper or Syncthing.

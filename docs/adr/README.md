@@ -28,6 +28,7 @@ Files are named `NNNN-kebab-case-title.md` with zero-padded sequence numbers.
 | [0003](0003-reconciler-loop.md) | Reconciler model: pure function over observed+desired | Accepted |
 | [0004](0004-scan-root-discovery.md) | Scan-root–based repo discovery | Accepted |
 | [0005](0005-state-toml-locking.md) | Atomic writes and exclusive flock for `state.toml` | Accepted |
+| [0006](0006-syncthing-v2-migration.md) | Syncthing v2 migration | Accepted |
 
 ## Status values
 

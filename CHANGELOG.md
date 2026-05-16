@@ -7,6 +7,41 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-05-16
+
+### Changed
+
+- **Embedded Syncthing is now v2.1.0** (was v1.30.0). This is the first
+  dotkeeper release on the Syncthing v2 line. ADR 0006 records the full
+  rationale and migration mechanics.
+- Syncthing's per-folder database backend is now SQLite (was LevelDB). On
+  first launch, dotkeeper migrates the existing LevelDB database to SQLite
+  via Syncthing's `TryMigrateDatabase`. The migration is a one-shot
+  operation; subsequent launches go straight to SQLite. dotkeeper uses
+  the pure-Go SQLite driver (`modernc.org/sqlite`); release binaries
+  remain `CGO_ENABLED=0` and platform coverage is unchanged.
+- Syncthing log lines in `~/.local/state/dotkeeper/syncthing.log` now use
+  Syncthing v2's structured `slog` format — `2026-05-16 12:34:56 INFO …`
+  instead of the v1.x prefix-less plain text. Anyone post-processing
+  this file with a grep / awk pipeline should re-check the parser.
+- Deleted-item retention in the embedded Syncthing database is configured
+  as "no auto-prune" (`retention=0`), preserving the v1.x "kept forever"
+  behaviour. Syncthing v2's stock default of ~15 months would silently
+  expire deletion records on long-disconnected peers — surprising for
+  dotkeeper's small fleets.
+
+### Security
+
+- `govulncheck` no longer reports the long-standing `quic-go` advisories
+  GO-2025-4017 (was reachable) and GO-2025-4233 (module-only). Both were
+  fixed in `quic-go` v0.54.1 and v0.57.0 respectively, and reach dotkeeper
+  via the bump to Syncthing v2.1.0 / quic-go v0.59.0.
+
+### Fixed
+
+- The dependabot security PR that previously blocked on the v1.30 quic-go
+  pin (#17) is now obsolete and was closed in favour of this release.
+
 ## [0.7.0] - 2026-05-15
 
 ### Security
