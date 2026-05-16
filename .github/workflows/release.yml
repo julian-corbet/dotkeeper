@@ -70,12 +70,12 @@ jobs:
           - goos: openbsd
             goarch: arm64
             suffix: openbsd_arm64
-          - goos: netbsd
-            goarch: amd64
-            suffix: netbsd_amd64
-          - goos: netbsd
-            goarch: arm64
-            suffix: netbsd_arm64
+          # netbsd is intentionally dropped from v0.8.0 onward. The embedded
+          # Syncthing v2 uses modernc.org/sqlite (pure-Go) for the database,
+          # and modernc.org/libc has no netbsd port — every libc subpackage
+          # excludes all .go files for GOOS=netbsd via build constraints.
+          # See syncthing v2.0.0 release notes, which dropped netbsd builds
+          # upstream for the same reason.
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
