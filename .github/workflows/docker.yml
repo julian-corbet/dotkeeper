@@ -3,7 +3,7 @@ name: Docker
 on:
   release:
     types: [published]
-  # Build on pushes to main as a Dockerfile smoke test.
+  # Build on pushes to main as a Dockerfile smoke test (no push to registry).
   push:
     branches: [main]
     paths:
@@ -13,6 +13,16 @@ on:
       - 'go.sum'
       - 'Dockerfile'
       - '.github/workflows/docker.yml'
+  # Manual trigger — used to backfill a missed release event (e.g. when the
+  # release was created by another workflow's GITHUB_TOKEN, which cannot
+  # propagate `release: published` to downstream workflows). Pass the tag
+  # (vX.Y.Z) you want to build + push.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to check out (tag or branch). Empty = default branch.'
+        required: false
+        default: ''
 
 # Least privilege at workflow level.
 permissions: read-all
@@ -20,20 +30,33 @@ permissions: read-all
 jobs:
   build:
     runs-on: ubuntu-latest
-    # GHCR publishing needs package-level ownership/linkage outside this repo.
-    # Keep this workflow build-only until that registry access is explicit.
+    # release / workflow_dispatch: build AND push to GHCR.
+    # push-to-main: build only (smoke-test the Dockerfile without bumping
+    # :latest off every commit — :latest tracks the most recent release,
+    # not the most recent code change).
     permissions:
       contents: read
+      packages: write
     # Skip auto-sync commits
     if: "!startsWith(github.event.head_commit.message, 'auto:')"
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Set up QEMU (multi-arch)
         uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+
+      - name: Log in to GHCR
+        if: github.event_name != 'push'
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker metadata
         id: meta
@@ -43,12 +66,15 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
 
       - name: Set build args
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_ENV
+          REF="${{ github.event.inputs.ref || github.ref }}"
+          if [[ "$REF" == refs/tags/v* ]]; then
+            echo "VERSION=${REF#refs/tags/v}" >> $GITHUB_ENV
+          elif [[ "$REF" == v* ]]; then
+            echo "VERSION=${REF#v}" >> $GITHUB_ENV
           else
             echo "VERSION=dev" >> $GITHUB_ENV
           fi
@@ -59,7 +85,7 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: false
+          push: ${{ github.event_name != 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
