@@ -52,11 +52,17 @@ jobs:
 
       - name: Log in to GHCR
         if: github.event_name != 'push'
+        # PACKAGES_TOKEN is a classic PAT owned by julian-corbet with
+        # write:packages scope. Needed instead of GITHUB_TOKEN because the
+        # default workflow token cannot CREATE a new package under a user
+        # namespace — it can only push to packages already linked to the
+        # repo. This is the first publish of ghcr.io/julian-corbet/dotkeeper
+        # so the PAT is required. Same secret homebrew.yml uses.
         uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # v3.5.0
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: julian-corbet
+          password: ${{ secrets.PACKAGES_TOKEN }}
 
       - name: Docker metadata
         id: meta
