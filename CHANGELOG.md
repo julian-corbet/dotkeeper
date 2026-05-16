@@ -7,6 +7,19 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-16
+
+### Fixed
+
+- `dotkeeper start` now routes its `slog` output to stdout instead of
+  stderr, so the dup2 in `engine.Start` captures it alongside Syncthing's
+  output in `~/.local/state/dotkeeper/syncthing.log`. v0.8.0 silently
+  regressed this: because Syncthing v2 also uses `log/slog` and our
+  `slog.SetDefault` intercepts it, all log output went to stderr → the
+  systemd journal, and the file stopped growing. The journal still
+  captured everything in v0.8.0, but anyone tailing `syncthing.log`
+  saw nothing after the upgrade.
+
 ## [0.8.0] - 2026-05-16
 
 ### Changed
