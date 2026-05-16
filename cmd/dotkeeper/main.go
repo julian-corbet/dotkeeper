@@ -345,12 +345,19 @@ func startCmd() *cobra.Command {
 			// cmd.Context() already cancels on signal. No need to redo it.
 			ctx := cmd.Context()
 
-			// Configure slog handler.
+			// Configure slog handler. Writes to os.Stdout because
+			// engine.Start later dup2's fd 1 to ~/.local/state/dotkeeper/
+			// syncthing.log, and we want our slog output to land in the
+			// same file as Syncthing's. Using os.Stderr would route to
+			// fd 2 (the systemd journal socket), bypassing the file.
+			// This matters more on v0.8+ because Syncthing v2 also uses
+			// log/slog (via the default handler), so anything we install
+			// here intercepts Syncthing's output too.
 			logLevel := slog.LevelInfo
 			if debug {
 				logLevel = slog.LevelDebug
 			}
-			logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 				Level: logLevel,
 			}))
 			slog.SetDefault(logger)
