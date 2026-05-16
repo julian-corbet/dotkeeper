@@ -20,8 +20,6 @@ import (
 	"github.com/syncthing/syncthing/lib/svcutil"
 	stlib "github.com/syncthing/syncthing/lib/syncthing"
 
-	"github.com/syncthing/syncthing/lib/logger"
-
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 
 	suture "github.com/thejerf/suture/v4"
@@ -117,6 +115,9 @@ func (e *Engine) Start(ctx context.Context) error {
 
 	// Route Syncthing's stdout-bound log output to a file. Must happen
 	// before any syncthing code runs (stlib.LoadConfigAtStartup, etc.).
+	// Syncthing v2 still writes its slog output to os.Stdout by default
+	// (see internal/slogutil/sloginit.go), so the fd-level dup2 below
+	// keeps redirecting it without needing slog-specific hooks.
 	ourStdout, err := redirectSyncthingLogs()
 	if err != nil {
 		// Non-fatal: fall through and let syncthing log to wherever.
@@ -124,25 +125,29 @@ func (e *Engine) Start(ctx context.Context) error {
 		ourStdout = os.Stdout
 	}
 
-	// Strip date/time prefix from syncthing log lines — systemd/journal
-	// add their own timestamps, and the log file is append-only.
-	logger.DefaultLogger.SetFlags(0)
-
 	evLogger := events.NewLogger()
-	spec := svcutil.SpecWithDebugLogger(logger.DefaultLogger)
+	spec := svcutil.SpecWithDebugLogger()
 	earlySvc := suture.New("early", spec)
 	earlyCtx, earlyCancel := context.WithCancel(ctx)
 	defer earlyCancel()
 	earlySvc.ServeBackground(earlyCtx)
 	earlySvc.Add(evLogger)
 
-	cfgWrapper, err := stlib.LoadConfigAtStartup(configFile, cert, evLogger, false, true, false)
+	cfgWrapper, err := stlib.LoadConfigAtStartup(configFile, cert, evLogger, false, true)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 	earlySvc.Add(cfgWrapper)
 
-	ldb, err := stlib.OpenDBBackend(dbFile, cfgWrapper.Options().DatabaseTuning)
+	// Migrate any legacy LevelDB database left over from dotkeeper ≤ v0.7
+	// (syncthing v1.x). No-op when there is no legacy database to migrate.
+	// deleteRetention=0 preserves all deleted-item history (no auto-prune),
+	// matching v1.x behaviour.
+	if err := stlib.TryMigrateDatabase(ctx, 0); err != nil {
+		return fmt.Errorf("migrating legacy database: %w", err)
+	}
+
+	sdb, err := stlib.OpenDatabase(dbFile, 0)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
@@ -151,7 +156,7 @@ func (e *Engine) Start(ctx context.Context) error {
 		NoUpgrade: true,
 	}
 
-	app, err := stlib.New(cfgWrapper, ldb, evLogger, cert, opts)
+	app, err := stlib.New(cfgWrapper, sdb, evLogger, cert, opts)
 	if err != nil {
 		return fmt.Errorf("creating syncthing app: %w", err)
 	}
@@ -225,15 +230,13 @@ func (e *Engine) generateConfig(configFile, certFile, keyFile string) error {
 	cfg.GUI.RawAddress = GUIAddress
 	cfg.GUI.Enabled = true
 
-	// Listen addresses
-	// TCP-only. QUIC is deliberately disabled:
-	//   1. quic-go v0.52.0 (which Syncthing v1.30.0 pins) panics with
-	//      "crypto/tls bug: where's my session ticket?" at startup under
-	//      certain peer-state conditions, producing a restart loop.
-	//   2. Both outstanding CVEs tracked in SECURITY.md (GO-2025-4017,
-	//      GO-2025-4233) are in quic-go. Not listening on QUIC makes
-	//      them unreachable code.
-	// When Syncthing upstream bumps past quic-go v0.54.1 we can revisit.
+	// Listen addresses — TCP-only.
+	// Historically this avoided a startup panic in quic-go v0.52.0 and
+	// kept the two CVEs tracked in SECURITY.md (GO-2025-4017,
+	// GO-2025-4233) out of reachable code. Both were resolved by the
+	// Syncthing v2 jump in dotkeeper v0.8.0; staying TCP-only is now
+	// just the conservative default. Re-enabling QUIC is a deliberate
+	// future choice with firewall implications, not a forced posture.
 	cfg.Options.RawListenAddresses = []string{ListenTCP}
 
 	// Discovery + connectivity — use Syncthing's full network stack
