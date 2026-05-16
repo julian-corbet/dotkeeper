@@ -7,6 +7,33 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-05-17
+
+### Security
+
+- `govulncheck` now reports "No vulnerabilities found." against a fresh
+  build, clearing the stdlib advisories v0.8.0 + v0.8.1 carried
+  (`GO-2026-4971`, `4918`, `4981`, `4986`, `4982`, `4980`, `4977`,
+  `4976` — all `net`, `net/http`, `net/mail`, `html/template`). Driven
+  by bumping the `go` directive in `go.mod` from `1.26.2` to `1.26.3`.
+
+### Fixed
+
+- `release.yml` now uses `PACKAGES_TOKEN` instead of `GITHUB_TOKEN` when
+  invoking `gh release create`. GitHub deliberately does not propagate
+  events triggered by the built-in `GITHUB_TOKEN` to downstream
+  workflows, which meant `release: published` never fired for
+  `docker.yml` and v0.8.0 / v0.8.1 needed a manual draft-toggle to
+  ship their Docker image. v0.8.2 is the first release that propagates
+  end-to-end on its own.
+- `docker.yml` workflow_dispatch path now produces proper `vX.Y.Z` and
+  `X.Y` tags. Previously `type=semver` in the metadata-action only
+  inspected `github.ref` (which stays at `refs/heads/main` on a manual
+  dispatch from main), so a manual rebuild emitted only the `latest`
+  tag and silently dropped the versioned tags. A new "Resolve version
+  from ref" step normalises `inputs.ref || github.ref` into explicit
+  `type=raw` tag inputs.
+
 ## [0.8.1] - 2026-05-16
 
 ### Fixed

@@ -13,10 +13,9 @@ on:
       - 'go.sum'
       - 'Dockerfile'
       - '.github/workflows/docker.yml'
-  # Manual trigger — used to backfill a missed release event (e.g. when the
-  # release was created by another workflow's GITHUB_TOKEN, which cannot
-  # propagate `release: published` to downstream workflows). Pass the tag
-  # (vX.Y.Z) you want to build + push.
+  # Manual trigger — emergency rebuild path. Normal releases propagate
+  # automatically via `release: published` now that release.yml uses
+  # PACKAGES_TOKEN. Pass the tag (vX.Y.Z) you want to build + push.
   workflow_dispatch:
     inputs:
       ref:
@@ -64,27 +63,42 @@ jobs:
           username: julian-corbet
           password: ${{ secrets.PACKAGES_TOKEN }}
 
+      - name: Resolve version from ref
+        id: version
+        # Normalises the ref (release tag, workflow_dispatch input, or
+        # plain push) into VERSION + MAJOR_MINOR outputs we feed into
+        # the Docker tags below. Done as a separate step (instead of
+        # letting metadata-action's type=semver compute the tags) so
+        # the workflow_dispatch path also produces proper version tags
+        # — type=semver only inspects github.ref, which stays at
+        # refs/heads/main on a manual dispatch even if `inputs.ref` is
+        # a tag, so the semver patterns previously emitted nothing.
+        run: |
+          REF="${{ github.event.inputs.ref || github.ref }}"
+          if [[ "$REF" == refs/tags/v* ]]; then
+            VERSION="${REF#refs/tags/v}"
+          elif [[ "$REF" == v* ]]; then
+            VERSION="${REF#v}"
+          else
+            VERSION=""
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          if [[ -n "$VERSION" ]]; then
+            echo "major_minor=${VERSION%.*}" >> $GITHUB_OUTPUT
+          fi
+          # Build-args still need a VERSION even for the dev path.
+          echo "VERSION=${VERSION:-dev}" >> $GITHUB_ENV
+          echo "COMMIT=${GITHUB_SHA::8}" >> $GITHUB_ENV
+
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: ghcr.io/julian-corbet/dotkeeper
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ steps.version.outputs.version }},enable=${{ steps.version.outputs.version != '' }}
+            type=raw,value=${{ steps.version.outputs.major_minor }},enable=${{ steps.version.outputs.major_minor != '' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' }}
-
-      - name: Set build args
-        run: |
-          REF="${{ github.event.inputs.ref || github.ref }}"
-          if [[ "$REF" == refs/tags/v* ]]; then
-            echo "VERSION=${REF#refs/tags/v}" >> $GITHUB_ENV
-          elif [[ "$REF" == v* ]]; then
-            echo "VERSION=${REF#v}" >> $GITHUB_ENV
-          else
-            echo "VERSION=dev" >> $GITHUB_ENV
-          fi
-          echo "COMMIT=${GITHUB_SHA::8}" >> $GITHUB_ENV
 
       - name: Build and push
         uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
