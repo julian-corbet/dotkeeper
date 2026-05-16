@@ -56,4 +56,7 @@ QUIC remains disabled by default in dotkeeper's generated `config.xml` (TCP-only
 
 ### Current known advisories
 
-`govulncheck` on a fresh v0.8 build reports stdlib advisories (`net`, `net/http`, `net/mail`, `html/template`, …) that are fixed in Go 1.26.3 and will clear when CI's pinned Go toolchain version is bumped. None of these are introduced by dotkeeper or Syncthing.
+**None.** `govulncheck -tags noassets ./...` against v0.8.2 reports
+"No vulnerabilities found." The stdlib advisories that v0.8.0 carried
+(`net`, `net/http`, `net/mail`, `html/template`, …) cleared with the
+Go 1.26.3 toolchain bump in v0.8.2.
