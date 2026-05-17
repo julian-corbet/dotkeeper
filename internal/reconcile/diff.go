@@ -196,9 +196,9 @@ func repoBackupDue(desired RepoDesired, observed RepoObs, now time.Time) bool {
 
 func parseGitInterval(raw string) time.Duration {
 	switch raw {
-	case "", "hourly":
+	case "hourly":
 		return time.Hour
-	case "daily":
+	case "", "daily":
 		return 24 * time.Hour
 	case "weekly":
 		return 7 * 24 * time.Hour

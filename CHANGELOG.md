@@ -7,6 +7,72 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-17
+
+### Changed
+
+- **Default git backup interval is now `daily`, not `hourly`.** Hourly
+  pushes concentrated CPU and disk work too often on weak hardware,
+  especially when other tools (browser sessions, language servers,
+  swap-warm processes) were already contending for the system. Slot
+  staggering still applies — three machines run at offsets within the
+  24 h window — so backups are spread out, not clustered. Existing
+  `machine.toml` files that explicitly set `default_git_interval =
+  "hourly"` keep the old behaviour; only the unset/default case
+  changes. Per-repo `interval = "..."` overrides are unaffected.
+
+### Added
+
+- **Aggressive resource de-prioritisation, end to end.** dotkeeper must
+  never cause user-visible stutter on a client system, even on weak
+  hardware under load. Two new layers cooperate to enforce this:
+  - A new system-wide systemd user unit at
+    `/usr/lib/systemd/user/dotkeeper.service` (shipped by the deb/rpm
+    packages) runs the daemon under `Nice=10`, `IOSchedulingClass=idle`,
+    `CPUWeight=10`, `IOWeight=10`, `MemoryHigh=512M`, `MemoryMax=1G`.
+    Users on systemd hosts can `systemctl --user enable --now dotkeeper`.
+  - Every git subprocess dotkeeper spawns (in `gitsync`, `reconcile`,
+    and `doctor`) is funnelled through a new `internal/procnice`
+    package that prepends `nice`/`ionice` wrappers to the command,
+    so CPU and I/O priority are established before `exec(2)` replaces
+    them with the real binary — race-free, applied at the child's very
+    first instruction. A post-`Start()` syscall fallback covers the
+    rare case where the wrapper binaries aren't on PATH. No-op on
+    non-Linux.
+
+  Slot timing is **not** affected. dotkeeper still fires each machine's
+  backup at its scheduled offset; the kernel scheduler simply yields
+  the daemon's work whenever user processes want the CPU or disk.
+
+### Performance
+
+These changes are silent: same behaviour, fewer cycles per reconcile.
+
+- **Triple `git` call collapsed to one in `queryRepoGitState`.** The
+  observed-state collector used to invoke `git rev-parse HEAD`,
+  `git status --porcelain`, and (when dirty) `git status --porcelain
+  -z` — three subprocesses per tracked repo per reconcile. v0.9 issues
+  a single `git status --porcelain=v2 --branch` and reads HEAD oid,
+  dirty flag, and per-file mtimes from one process. Drops 2N git
+  fork+execs per reconcile tick for N tracked repos.
+- **mtime-cache for TOML config reads.** `NewDesiredProvider` no
+  longer reparses `machine.toml`, `state.toml`, and every
+  `.dotkeeper.toml` under the scan roots on each reconcile. A new
+  `configCache` keyed by `(mtime, size)` returns the previously-parsed
+  value when the file hasn't changed. Skips one stat + read + TOML
+  parse per tracked repo per tick on the steady-state path.
+- **`stclient` memoises hot endpoints.** `GetStatus` is cached for the
+  client's lifetime (MyID is immutable while Syncthing is running);
+  `GetConfig` caches the raw response and invalidates on `SetConfig`,
+  so a reconcile that adds a device and a folder goes from 3 GETs to
+  1; `GetConnections` is cached with a 30 s TTL to smooth bursts of
+  fsnotify-driven reconciles without ever masking a real peer-loss
+  event for more than half the reconcile interval.
+- **`applyGitCommitDirty` short-circuits when `git add -A` produces an
+  empty index.** Skips the second `stagedDeletionsApplier` call (one
+  `git diff --cached`) for repos where the dirty signal was a
+  timestamp-only change.
+
 ## [0.8.2] - 2026-05-17
 
 ### Security

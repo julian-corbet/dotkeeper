@@ -10,6 +10,7 @@
 package reconcile
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
+	"github.com/julian-corbet/dotkeeper/internal/procnice"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 )
 
@@ -36,13 +38,14 @@ import (
 // error — peers will simply be empty until the user pairs with a peer
 // (correct first-run behaviour).
 func NewDesiredProvider(machineConfigPath, stateConfigPath string) DesiredProvider {
+	cache := &configCache{}
 	return func(_ context.Context) (Desired, error) {
-		machine, err := loadMachineConfigFromPath(machineConfigPath)
+		machine, err := cache.loadMachine(machineConfigPath)
 		if err != nil {
 			return Desired{}, err
 		}
 
-		repos, err := discoverRepos(machine)
+		repos, err := discoverRepos(machine, cache.loadRepo)
 		if err != nil {
 			return Desired{}, fmt.Errorf("repo discovery failed: %w", err)
 		}
@@ -53,11 +56,11 @@ func NewDesiredProvider(machineConfigPath, stateConfigPath string) DesiredProvid
 		// peer roster and the reconciler would then plan to *remove* every
 		// known Syncthing peer. Distinguish "absent" (safe) from "broken"
 		// (catastrophic) here.
-		state, trackedPaths, err := loadStateFromPath(stateConfigPath)
+		state, trackedPaths, err := cache.loadState(stateConfigPath)
 		if err != nil {
 			return Desired{}, fmt.Errorf("loading state from %s: %w", stateConfigPath, err)
 		}
-		if err := mergeTrackedOverrideRepos(repos, trackedPaths); err != nil {
+		if err := mergeTrackedOverrideRepos(repos, trackedPaths, cache.loadRepo); err != nil {
 			return Desired{}, err
 		}
 
@@ -65,7 +68,10 @@ func NewDesiredProvider(machineConfigPath, stateConfigPath string) DesiredProvid
 	}
 }
 
-func mergeTrackedOverrideRepos(repos map[string]*config.RepoConfigV2, trackedPaths []string) error {
+func mergeTrackedOverrideRepos(repos map[string]*config.RepoConfigV2, trackedPaths []string, loadRepo repoLoader) error {
+	if loadRepo == nil {
+		loadRepo = defaultRepoLoader
+	}
 	for _, rawPath := range trackedPaths {
 		expanded, err := expandTilde(rawPath)
 		if err != nil {
@@ -78,7 +84,7 @@ func mergeTrackedOverrideRepos(repos map[string]*config.RepoConfigV2, trackedPat
 		if _, exists := repos[absPath]; exists {
 			continue
 		}
-		repoCfg, err := config.LoadRepoConfigV2(absPath)
+		repoCfg, err := loadRepo(absPath)
 		if err != nil {
 			return fmt.Errorf("loading tracked repo config %s: %w", absPath, err)
 		}
@@ -118,7 +124,7 @@ func applyMachineV2DefaultsLocal(cfg *config.MachineConfigV2) {
 		cfg.DefaultCommitPolicy = "manual"
 	}
 	if cfg.DefaultGitInterval == "" {
-		cfg.DefaultGitInterval = "hourly"
+		cfg.DefaultGitInterval = "daily"
 	}
 	if cfg.DefaultSlotOffsetMinutes == 0 {
 		cfg.DefaultSlotOffsetMinutes = 5
@@ -146,10 +152,23 @@ func applyMachineV2DefaultsLocal(cfg *config.MachineConfigV2) {
 	}
 }
 
+// repoLoader is the per-directory loader used during a scan. A nil loader
+// means "use config.LoadRepoConfigV2 directly"; production code passes the
+// mtime-aware cache from configCache.loadRepo so repeated reconciles of
+// unchanged repos pay no TOML-parse cost.
+type repoLoader func(repoDir string) (*config.RepoConfigV2, error)
+
+func defaultRepoLoader(repoDir string) (*config.RepoConfigV2, error) {
+	return config.LoadRepoConfigV2(repoDir)
+}
+
 // discoverRepos walks each scan root declared in machine.Discovery and returns
 // a map of absolute repo path → RepoConfigV2 for every directory that contains
 // a .dotkeeper.toml file within the configured depth.
-func discoverRepos(machine *config.MachineConfigV2) (map[string]*config.RepoConfigV2, error) {
+func discoverRepos(machine *config.MachineConfigV2, loadRepo repoLoader) (map[string]*config.RepoConfigV2, error) {
+	if loadRepo == nil {
+		loadRepo = defaultRepoLoader
+	}
 	repos := make(map[string]*config.RepoConfigV2)
 
 	excludeSet := make(map[string]struct{}, len(machine.Discovery.Exclude))
@@ -173,7 +192,7 @@ func discoverRepos(machine *config.MachineConfigV2) (map[string]*config.RepoConf
 			continue
 		}
 
-		if err := walkScanRoot(absRoot, excludeSet, depth, repos); err != nil {
+		if err := walkScanRoot(absRoot, excludeSet, depth, loadRepo, repos); err != nil {
 			return nil, fmt.Errorf("walking scan root %s: %w", absRoot, err)
 		}
 	}
@@ -187,9 +206,13 @@ func walkScanRoot(
 	dir string,
 	excludeSet map[string]struct{},
 	maxDepth int,
+	loadRepo repoLoader,
 	repos map[string]*config.RepoConfigV2,
 ) error {
-	return walkDir(dir, excludeSet, 0, maxDepth, repos)
+	if loadRepo == nil {
+		loadRepo = defaultRepoLoader
+	}
+	return walkDir(dir, excludeSet, 0, maxDepth, loadRepo, repos)
 }
 
 // walkDir is the recursive core of walkScanRoot.
@@ -197,6 +220,7 @@ func walkDir(
 	dir string,
 	excludeSet map[string]struct{},
 	currentDepth, maxDepth int,
+	loadRepo repoLoader,
 	repos map[string]*config.RepoConfigV2,
 ) error {
 	if _, excluded := excludeSet[dir]; excluded {
@@ -206,7 +230,7 @@ func walkDir(
 	// Check if .dotkeeper.toml exists at this level.
 	markerPath := config.RepoConfigPath(dir)
 	if _, err := os.Stat(markerPath); err == nil {
-		repoCfg, err := config.LoadRepoConfigV2(dir)
+		repoCfg, err := loadRepo(dir)
 		if err != nil {
 			// Non-fatal: record the path with a nil config so the caller can
 			// see the repo was discovered even if its config is malformed.
@@ -234,7 +258,7 @@ func walkDir(
 			continue
 		}
 		child := filepath.Join(dir, entry.Name())
-		if err := walkDir(child, excludeSet, currentDepth+1, maxDepth, repos); err != nil {
+		if err := walkDir(child, excludeSet, currentDepth+1, maxDepth, loadRepo, repos); err != nil {
 			return err
 		}
 	}
@@ -453,18 +477,19 @@ func loadStateFromPath(path string) (*config.StateV2, []string, error) {
 }
 
 // queryRepoGitState returns a RepoObs for the given repo path by invoking git
-// directly.  Errors from git (e.g. not a git repo) result in zero values for
+// directly. Errors from git (e.g. not a git repo) result in zero values for
 // HeadCommit and IsDirty rather than a hard failure — the reconciler should
 // still see the repo and can emit appropriate actions.
+//
+// Performance: a single `git status --porcelain=v2 --branch` call yields
+// HEAD oid, dirty state, and the list of changed paths in one subprocess
+// instead of three. On a setup with N repos this is 2N fewer git fork+exec
+// per reconcile tick.
 func queryRepoGitState(repoPath string, state *config.StateV2) RepoObs {
 	obs := RepoObs{Path: repoPath}
 
-	obs.HeadCommit = gitHeadCommit(repoPath)
-	obs.IsDirty = gitIsDirty(repoPath)
+	obs.HeadCommit, obs.IsDirty, obs.LastChangeAt = readGitState(repoPath)
 	obs.IgnoreFileContent = readIgnoreFile(repoPath)
-	if obs.IsDirty {
-		obs.LastChangeAt = gitLastChange(repoPath)
-	}
 
 	if state != nil {
 		if sr, ok := state.ObservedRepos[repoPath]; ok {
@@ -483,74 +508,108 @@ func readIgnoreFile(repoPath string) string {
 	return string(data)
 }
 
-func gitLastChange(repoPath string) time.Time {
-	cmd := exec.Command("git", "status", "--porcelain", "-z")
+// readGitState shells out once to `git status --porcelain=v2 --branch` and
+// returns (HEAD oid, dirty flag, most-recent mtime among dirty paths). Zero
+// values are returned on any error so the caller treats this as "repo
+// present but no info" — consistent with the pre-collapse helpers.
+func readGitState(repoPath string) (head string, dirty bool, lastChange time.Time) {
+	cmd := exec.Command("git", "status", "--porcelain=v2", "--branch")
 	cmd.Dir = repoPath
-	out, err := cmd.Output()
-	if err != nil || len(out) == 0 {
-		return time.Time{}
+	out, err := procnice.Output(cmd)
+	if err != nil {
+		return "", false, time.Time{}
 	}
 
-	var newest time.Time
-	for _, rel := range statusPaths(out) {
-		info, err := os.Stat(filepath.Join(repoPath, rel))
+	scanner := bufio.NewScanner(bytes.NewReader(out))
+	// Status output for big dirty repos can exceed the default 64K line cap
+	// when a single entry's path is long. Bump the buffer.
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		if line[0] == '#' {
+			if head == "" && bytes.HasPrefix(line, []byte("# branch.oid ")) {
+				head = string(bytes.TrimSpace(line[len("# branch.oid "):]))
+				if head == "(initial)" {
+					head = ""
+				}
+			}
+			continue
+		}
+		dirty = true
+		path := porcelainV2Path(line)
+		if path == "" {
+			continue
+		}
+		info, err := os.Stat(filepath.Join(repoPath, path))
 		if err != nil || info.IsDir() {
 			continue
 		}
-		if info.ModTime().After(newest) {
-			newest = info.ModTime()
+		if info.ModTime().After(lastChange) {
+			lastChange = info.ModTime()
 		}
 	}
-	return newest
+	return head, dirty, lastChange
 }
 
-func statusPaths(out []byte) []string {
-	parts := bytes.Split(out, []byte{0})
-	paths := make([]string, 0, len(parts))
-	for i := 0; i < len(parts); i++ {
-		part := parts[i]
-		if len(part) < 4 {
-			continue
-		}
-		status := string(part[:2])
-		rel := string(part[3:])
-		if rel == "" {
-			continue
-		}
-		paths = append(paths, rel)
-		// Renames/copies include a second path entry in porcelain -z output.
-		if strings.ContainsAny(status, "RC") && i+1 < len(parts) {
-			i++
-			if string(parts[i]) != "" {
-				paths = append(paths, string(parts[i]))
-			}
-		}
+// porcelainV2Path extracts the working-tree path from one status entry line.
+// Format reference: git-status(1) "Porcelain Format Version 2". We only need
+// the path for stat-based mtime collection, not the rest of the entry's
+// metadata, so this parser is intentionally minimal.
+func porcelainV2Path(line []byte) string {
+	if len(line) < 2 {
+		return ""
 	}
-	return paths
+	switch line[0] {
+	case '?', '!':
+		// "? <path>" — single field after the prefix.
+		return string(line[2:])
+	case '1', 'u':
+		// "1 XY sub mH mI mW hH hI hM <path>" — path is the 9th field
+		// for "1" entries; "u" entries have the same trailing path slot.
+		return fieldFromN(line, 8)
+	case '2':
+		// "2 XY sub mH mI mW hH hI X<score> <path>\t<origPath>" — we want
+		// the new path (before the tab).
+		rest := fieldFromN(line, 9)
+		if i := strings.IndexByte(rest, '\t'); i >= 0 {
+			return rest[:i]
+		}
+		return rest
+	}
+	return ""
 }
 
-// gitHeadCommit returns the current HEAD commit hash, or empty string on error.
+// fieldFromN returns line from the start of its n-th space-separated field
+// (0-indexed) to end of line. So fieldFromN("a b c d", 2) == "c d". Returns
+// "" if line has fewer than n+1 fields. Used to grab the path tail of a
+// porcelain-v2 entry without losing internal spaces in the path.
+func fieldFromN(line []byte, n int) string {
+	idx := 0
+	for i := 0; i < n; i++ {
+		sp := bytes.IndexByte(line[idx:], ' ')
+		if sp < 0 {
+			return ""
+		}
+		idx += sp + 1
+	}
+	if idx >= len(line) {
+		return ""
+	}
+	return string(line[idx:])
+}
+
+// gitHeadCommit returns the current HEAD commit hash, or empty string on
+// error. Used by applier.markRepoPushed after a successful push, where we
+// don't need the full status output — just the new HEAD.
 func gitHeadCommit(repoPath string) string {
 	cmd := exec.Command("git", "rev-parse", "HEAD")
 	cmd.Dir = repoPath
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
+	out, err := procnice.Output(cmd)
+	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(out.String())
-}
-
-// gitIsDirty reports whether the working tree has uncommitted changes.
-// Returns false on error (treats unknown repos as clean to avoid false positives).
-func gitIsDirty(repoPath string) bool {
-	// "git status --porcelain" exits 0 always; non-empty stdout means dirty.
-	cmd := exec.Command("git", "status", "--porcelain")
-	cmd.Dir = repoPath
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		return false
-	}
-	return strings.TrimSpace(out.String()) != ""
+	return strings.TrimSpace(string(out))
 }

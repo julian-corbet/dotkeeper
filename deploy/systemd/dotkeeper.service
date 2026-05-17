@@ -1,0 +1,30 @@
+[Unit]
+Description=dotkeeper — P2P repo sync with git history
+Documentation=https://github.com/julian-corbet/dotkeeper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/dotkeeper start
+Restart=on-failure
+RestartSec=10
+
+# Be invisible to the user. dotkeeper runs in the background and must never
+# cause user-visible stutter, even on weak hardware under load. Slot timing
+# (when each machine fires its daily git backup) is not deferred; instead,
+# everything dotkeeper does is heavily de-prioritized at the scheduler.
+Nice=19
+IOSchedulingClass=idle
+CPUWeight=10
+IOWeight=10
+MemoryHigh=512M
+MemoryMax=1G
+TasksMax=256
+
+# Spawned git/syncthing children inherit the cgroup limits above.
+# dotkeeper additionally applies per-process Nice/ionice to each git
+# subprocess at exec time — see internal/procnice.
+
+[Install]
+WantedBy=default.target

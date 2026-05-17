@@ -152,7 +152,7 @@ func initCmd() *cobra.Command {
 					Name:                     name,
 					Slot:                     uint(slot),
 					DefaultCommitPolicy:      "manual",
-					DefaultGitInterval:       "hourly",
+					DefaultGitInterval:       "daily",
 					DefaultSlotOffsetMinutes: 5,
 					ReconcileInterval:        "5m",
 					DefaultShareWith:         []string{},

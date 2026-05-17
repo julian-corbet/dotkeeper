@@ -927,7 +927,7 @@ func TestWalkScanRoot_EmptyDir(t *testing.T) {
 
 	dir := t.TempDir()
 	repos := make(map[string]*config.RepoConfigV2)
-	if err := walkScanRoot(dir, nil, 3, repos); err != nil {
+	if err := walkScanRoot(dir, nil, 3, nil, repos); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(repos) != 0 {
@@ -940,7 +940,7 @@ func TestWalkScanRoot_NonexistentDir(t *testing.T) {
 
 	repos := make(map[string]*config.RepoConfigV2)
 	// Non-existent directory should produce no error (os.ReadDir error is silenced).
-	if err := walkScanRoot("/does/not/exist/ever", nil, 3, repos); err != nil {
+	if err := walkScanRoot("/does/not/exist/ever", nil, 3, nil, repos); err != nil {
 		t.Fatalf("unexpected error for nonexistent dir: %v", err)
 	}
 }
