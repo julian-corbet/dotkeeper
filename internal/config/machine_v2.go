@@ -27,7 +27,7 @@ type MachineConfigV2 struct {
 	// Allowed values: "manual", "on-idle", "timer". Default: "manual".
 	DefaultCommitPolicy string `toml:"default_commit_policy"`
 	// DefaultGitInterval is the default git backup frequency (e.g. "hourly",
-	// "daily", "2h"). Default: "hourly".
+	// "daily", "2h"). Default: "daily".
 	DefaultGitInterval string `toml:"default_git_interval"`
 	// DefaultSlotOffsetMinutes is the stagger offset in minutes. Default: 5.
 	DefaultSlotOffsetMinutes uint `toml:"default_slot_offset_minutes"`
@@ -69,7 +69,7 @@ func applyMachineV2Defaults(cfg *MachineConfigV2) {
 		cfg.DefaultCommitPolicy = "manual"
 	}
 	if cfg.DefaultGitInterval == "" {
-		cfg.DefaultGitInterval = "hourly"
+		cfg.DefaultGitInterval = "daily"
 	}
 	if cfg.DefaultSlotOffsetMinutes == 0 {
 		cfg.DefaultSlotOffsetMinutes = 5

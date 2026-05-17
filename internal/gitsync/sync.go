@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/julian-corbet/dotkeeper/internal/procnice"
 )
 
 // SyncRepo pulls, auto-commits, and pushes a single git repo.
@@ -123,7 +125,7 @@ func isGitRepo(path string) bool {
 func run(dir string, name string, args ...string) error {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	return cmd.Run()
+	return procnice.Run(cmd)
 }
 
 // runCapture runs a command and returns stderr on failure for diagnostics.
@@ -132,14 +134,14 @@ func runCapture(dir string, name string, args ...string) (string, error) {
 	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err := procnice.Run(cmd)
 	return stderr.String(), err
 }
 
 func countAhead(dir string) int {
 	cmd := exec.Command("git", "rev-list", "--count", "@{upstream}..HEAD")
 	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := procnice.Output(cmd)
 	if err != nil {
 		return 0
 	}
@@ -242,7 +244,7 @@ func matchesUpstream(repoPath, relPath, upstream string) bool {
 func countBehind(dir string) int {
 	cmd := exec.Command("git", "rev-list", "--count", "HEAD..@{upstream}")
 	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := procnice.Output(cmd)
 	if err != nil {
 		return 0
 	}
@@ -255,7 +257,7 @@ func countBehind(dir string) int {
 func runOutput(dir, name string, args ...string) (string, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
-	out, err := cmd.Output()
+	out, err := procnice.Output(cmd)
 	return string(out), err
 }
 

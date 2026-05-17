@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -24,11 +25,31 @@ const (
 )
 
 // Client talks to the Syncthing REST API.
+//
+// The client memoizes responses that are expensive to fetch but cheap to
+// keep fresh: SystemStatus (immutable for the lifetime of the Syncthing
+// process), the raw /rest/config bytes (invalidated on every SetConfig),
+// and /rest/system/connections (30 s TTL). Together these cut the steady-
+// state HTTP cost of a reconcile tick that adds a device and a folder
+// from 3 GET round-trips to 1, with no observable behavioural change for
+// callers — every accessor still returns a freshly-unmarshalled value.
 type Client struct {
 	baseURL string
 	apiKey  string
 	http    *http.Client
+
+	mu                sync.Mutex
+	cachedConfigJSON  []byte
+	cachedStatus      *SystemStatus
+	cachedConns       *Connections
+	cachedConnsAt     time.Time
 }
+
+// connectionsCacheTTL bounds how long /rest/system/connections is cached.
+// Connection state changes on second-to-minute timescales; 30 s smooths
+// bursts of reconciles (e.g. fsnotify-driven) without ever hiding a real
+// loss-of-peer event for more than half the reconcile interval.
+const connectionsCacheTTL = 30 * time.Second
 
 // New creates a REST API client for the embedded Syncthing instance.
 func New(apiKey string) *Client {
@@ -50,8 +71,19 @@ type SystemStatus struct {
 	MyID string `json:"myID"`
 }
 
-// GetStatus returns the system status.
+// GetStatus returns the system status. The result is memoized for the
+// lifetime of the client: MyID does not change while the Syncthing process
+// is running, and SystemStatus exposes no other fields. Callers that need
+// a guaranteed-fresh fetch should construct a new Client.
 func (c *Client) GetStatus() (*SystemStatus, error) {
+	c.mu.Lock()
+	if c.cachedStatus != nil {
+		s := *c.cachedStatus
+		c.mu.Unlock()
+		return &s, nil
+	}
+	c.mu.Unlock()
+
 	data, err := c.get("rest/system/status")
 	if err != nil {
 		return nil, err
@@ -60,25 +92,52 @@ func (c *Client) GetStatus() (*SystemStatus, error) {
 	if err := json.Unmarshal(data, &status); err != nil {
 		return nil, err
 	}
+
+	c.mu.Lock()
+	cp := status
+	c.cachedStatus = &cp
+	c.mu.Unlock()
 	return &status, nil
 }
 
-// GetConfig returns the full Syncthing configuration as raw JSON.
+// GetConfig returns the full Syncthing configuration as raw JSON. The
+// underlying HTTP response is cached and invalidated whenever SetConfig
+// succeeds. Each call returns a freshly-unmarshalled map, so callers may
+// mutate the result without disturbing the cache.
 func (c *Client) GetConfig() (map[string]any, error) {
-	data, err := c.get("rest/config")
-	if err != nil {
-		return nil, err
+	c.mu.Lock()
+	cached := c.cachedConfigJSON
+	c.mu.Unlock()
+
+	if cached == nil {
+		data, err := c.get("rest/config")
+		if err != nil {
+			return nil, err
+		}
+		c.mu.Lock()
+		c.cachedConfigJSON = data
+		cached = data
+		c.mu.Unlock()
 	}
+
 	var cfg map[string]any
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	if err := json.Unmarshal(cached, &cfg); err != nil {
 		return nil, err
 	}
 	return cfg, nil
 }
 
-// SetConfig replaces the full Syncthing configuration.
+// SetConfig replaces the full Syncthing configuration and invalidates the
+// cached /rest/config response so the next GetConfig fetches fresh state
+// rather than the value we just overwrote.
 func (c *Client) SetConfig(cfg map[string]any) error {
-	return c.put("rest/config", cfg)
+	if err := c.put("rest/config", cfg); err != nil {
+		return err
+	}
+	c.mu.Lock()
+	c.cachedConfigJSON = nil
+	c.mu.Unlock()
+	return nil
 }
 
 // AddDevice adds a device to the Syncthing config if not present.
@@ -126,8 +185,19 @@ type Connections struct {
 	Connections map[string]Connection `json:"connections"`
 }
 
-// GetConnections queries /rest/system/connections.
+// GetConnections queries /rest/system/connections. The result is cached
+// for connectionsCacheTTL to smooth bursts of rapid reconciles (fsnotify-
+// driven, for instance) without paying an HTTP round-trip and a JSON parse
+// of the whole peer table each time.
 func (c *Client) GetConnections() (*Connections, error) {
+	c.mu.Lock()
+	if c.cachedConns != nil && time.Since(c.cachedConnsAt) < connectionsCacheTTL {
+		conns := *c.cachedConns
+		c.mu.Unlock()
+		return &conns, nil
+	}
+	c.mu.Unlock()
+
 	data, err := c.get("rest/system/connections")
 	if err != nil {
 		return nil, err
@@ -136,6 +206,12 @@ func (c *Client) GetConnections() (*Connections, error) {
 	if err := json.Unmarshal(data, &conns); err != nil {
 		return nil, err
 	}
+
+	c.mu.Lock()
+	cp := conns
+	c.cachedConns = &cp
+	c.cachedConnsAt = time.Now()
+	c.mu.Unlock()
 	return &conns, nil
 }
 

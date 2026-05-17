@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
+	"github.com/julian-corbet/dotkeeper/internal/procnice"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 )
 
@@ -169,7 +170,7 @@ func ensureGitInfoExclude(repoPath string, patterns ...string) error {
 func gitInfoExcludePath(repoPath string) (string, bool) {
 	cmd := exec.Command("git", "rev-parse", "--git-path", "info/exclude")
 	cmd.Dir = repoPath
-	out, err := cmd.Output()
+	out, err := procnice.Output(cmd)
 	if err != nil {
 		return "", false
 	}
@@ -322,6 +323,14 @@ func applyGitCommitDirty(act GitCommitDirty) error {
 		return fmt.Errorf("GitCommitDirty %q: stage: %w", act.RepoPath, err)
 	}
 
+	// Fast path: if `git add -A` produced an empty staged set, there is by
+	// definition nothing to commit and no unintended deletion to reset.
+	// Skip the second stagedDeletionsApplier call — saves one `git diff` per
+	// "dirty-but-no-real-changes" repo (e.g. touch-only timestamp churn).
+	if gitRun(act.RepoPath, "git", "diff", "--cached", "--quiet") == nil {
+		return nil
+	}
+
 	preDelSet := make(map[string]bool, len(preDels))
 	for _, f := range preDels {
 		preDelSet[f] = true
@@ -335,10 +344,11 @@ func applyGitCommitDirty(act GitCommitDirty) error {
 	if len(unintended) > 0 {
 		args := append([]string{"reset", "HEAD", "--"}, unintended...)
 		_ = gitRun(act.RepoPath, "git", args...)
-	}
-
-	if gitRun(act.RepoPath, "git", "diff", "--cached", "--quiet") == nil {
-		return nil
+		// Resetting unintended deletions may leave the index empty; bail
+		// before invoking `git commit` on a no-op staged set.
+		if gitRun(act.RepoPath, "git", "diff", "--cached", "--quiet") == nil {
+			return nil
+		}
 	}
 
 	if err := gitRun(act.RepoPath, "git", "commit", "-m", act.Message); err != nil {
@@ -359,7 +369,7 @@ func applyGitCommitDirty(act GitCommitDirty) error {
 func stagedDeletionsApplier(repoPath string) []string {
 	cmd := exec.Command("git", "diff", "--cached", "--name-only", "--diff-filter=D")
 	cmd.Dir = repoPath
-	out, err := cmd.Output()
+	out, err := procnice.Output(cmd)
 	if err != nil {
 		return nil
 	}
