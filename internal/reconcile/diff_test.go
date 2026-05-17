@@ -294,6 +294,25 @@ func TestDiff(t *testing.T) {
 			},
 		},
 		{
+			name: "dirty timer repo mid-rebase → no git action this tick",
+			desired: Desired{Repos: map[string]RepoDesired{
+				"/home/user/notes": {Path: "/home/user/notes", CommitPolicy: "timer", GitInterval: "hourly"},
+			}},
+			obs: Observed{
+				TrackedRepos: []RepoObs{
+					{Path: "/home/user/notes", IsDirty: true, HeadCommit: "abc123", DevWorkflowActive: true},
+				},
+			},
+			check: func(t *testing.T, plan Plan) {
+				for _, a := range plan {
+					switch a.(type) {
+					case GitCommitDirty, GitPushRepo:
+						t.Errorf("unexpected git action while dev workflow active: %s", a.Describe())
+					}
+				}
+			},
+		},
+		{
 			name: "timer repo with head commit → GitPushRepo",
 			desired: Desired{Repos: map[string]RepoDesired{
 				"/home/user/code": {Path: "/home/user/code", CommitPolicy: "timer", GitInterval: "hourly"},

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -960,6 +961,73 @@ func TestQueryRepoGitState_NotARepo(t *testing.T) {
 	}
 	if obs.IsDirty {
 		t.Error("expected IsDirty=false for non-repo")
+	}
+}
+
+// TestIsDevWorkflowActive covers each of git's in-progress markers that
+// auto-backup must defer for. We construct a minimal worktree with a .git
+// directory and drop one marker at a time.
+func TestIsDevWorkflowActive(t *testing.T) {
+	t.Parallel()
+
+	makeRepo := func(t *testing.T) string {
+		dir := t.TempDir()
+		gitDir := filepath.Join(dir, ".git")
+		if err := os.MkdirAll(gitDir, 0o700); err != nil {
+			t.Fatalf("mkdir .git: %v", err)
+		}
+		// `git -C <dir> rev-parse --git-dir` only succeeds inside a real
+		// repo; HEAD + an initial commit is the cheapest valid state.
+		for _, args := range [][]string{
+			{"init", "-q", "-b", "main"},
+			{"-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"},
+		} {
+			cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v\n%s", args, err, out)
+			}
+		}
+		return dir
+	}
+
+	t.Run("quiet repo is not active", func(t *testing.T) {
+		t.Parallel()
+		dir := makeRepo(t)
+		if isDevWorkflowActive(dir) {
+			t.Error("expected false on quiet repo, got true")
+		}
+	})
+
+	cases := []struct {
+		marker string
+		dir    bool // true if the marker is a directory, false if a file
+	}{
+		{"rebase-merge", true},
+		{"rebase-apply", true},
+		{"MERGE_HEAD", false},
+		{"CHERRY_PICK_HEAD", false},
+		{"REVERT_HEAD", false},
+		{"BISECT_LOG", false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run("marker "+tc.marker, func(t *testing.T) {
+			t.Parallel()
+			dir := makeRepo(t)
+			path := filepath.Join(dir, ".git", tc.marker)
+			if tc.dir {
+				if err := os.MkdirAll(path, 0o700); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+			} else {
+				if err := os.WriteFile(path, []byte("x\n"), 0o600); err != nil {
+					t.Fatalf("write: %v", err)
+				}
+			}
+			if !isDevWorkflowActive(dir) {
+				t.Errorf("expected true with %s present, got false", tc.marker)
+			}
+		})
 	}
 }
 

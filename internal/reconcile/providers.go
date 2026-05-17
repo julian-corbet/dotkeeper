@@ -490,6 +490,7 @@ func queryRepoGitState(repoPath string, state *config.StateV2) RepoObs {
 
 	obs.HeadCommit, obs.IsDirty, obs.LastChangeAt = readGitState(repoPath)
 	obs.IgnoreFileContent = readIgnoreFile(repoPath)
+	obs.DevWorkflowActive = isDevWorkflowActive(repoPath)
 
 	if state != nil {
 		if sr, ok := state.ObservedRepos[repoPath]; ok {
@@ -506,6 +507,46 @@ func readIgnoreFile(repoPath string) string {
 		return ""
 	}
 	return string(data)
+}
+
+// isDevWorkflowActive reports whether the user is in the middle of a git
+// operation that auto-backup must not interrupt. We look for the marker
+// files git itself uses to record in-progress state; checking them is a
+// few cheap stat() calls per repo per tick.
+//
+// The motivation is concrete: dotkeeper's timer-driven `git add -A` +
+// `git commit` would otherwise land mid-rebase (creating an "auto:
+// scheduled backup" commit between conflict resolutions), mid-merge
+// (collapsing the user's MERGE_MSG into a less-informative one), or
+// mid-cherry-pick. Deferring the backup costs us at most one tick — the
+// next reconcile that observes a quiet repo fires the slot normally,
+// still within the configured interval.
+func isDevWorkflowActive(repoPath string) bool {
+	// Resolve the git dir once. Most repos have .git as a directory at
+	// the worktree root; submodules and worktrees use .git files that
+	// point elsewhere. We honour that with a single git invocation.
+	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--git-dir")
+	out, err := procnice.Output(cmd)
+	if err != nil {
+		return false
+	}
+	gitDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repoPath, gitDir)
+	}
+	for _, marker := range []string{
+		"rebase-merge",      // interactive rebase or `git merge --rebase`
+		"rebase-apply",      // `git am` / classic rebase
+		"MERGE_HEAD",        // `git merge` paused on conflict
+		"CHERRY_PICK_HEAD",  // `git cherry-pick` paused
+		"REVERT_HEAD",       // `git revert` paused
+		"BISECT_LOG",        // `git bisect` in progress
+	} {
+		if _, err := os.Stat(filepath.Join(gitDir, marker)); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // readGitState shells out once to `git status --porcelain=v2 --branch` and
