@@ -7,6 +7,39 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-05-17
+
+### Fixed
+
+- **Auto-backup no longer races active git workflows.** When the user is
+  mid-rebase, mid-merge, mid-cherry-pick, mid-revert, or mid-bisect,
+  the scheduled `git add -A` + `git commit` would land in the middle of
+  the user's session — collapsing a `MERGE_MSG`, committing between
+  conflict resolutions, or producing a confusing "auto: scheduled
+  backup" commit halfway through an interactive rebase. v0.9.1 detects
+  the in-progress markers git itself maintains (`rebase-merge/`,
+  `rebase-apply/`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`, `REVERT_HEAD`,
+  `BISECT_LOG`) and defers that repo's backup to the next reconcile
+  tick. Slot timing is not "skipped" — the next quiet observation
+  fires the backup, still within the configured interval.
+
+### Security
+
+- Bumped `github.com/Azure/go-ntlmssp` from 0.1.0 to 0.1.1 (closes the
+  panic-on-malformed-NTLM-challenge advisory). Transitive dep via
+  `go-ldap`; not on any code path dotkeeper exercises today, but
+  closing the alert keeps the supply chain clean.
+
+### Maintenance
+
+- Upgraded `docker/login-action` from `v3.5.0` to `v4.1.0` (Node 20 →
+  Node 24). The June 2026 GitHub Actions deprecation no longer affects
+  the release pipeline.
+- Made the `make build` / `-tags noassets` requirement impossible to
+  miss in the README so a fresh contributor's first `go build ./...`
+  no longer produces a cryptic `undefined: auto.Assets` error without
+  a paper trail to the fix.
+
 ## [0.9.0] - 2026-05-17
 
 ### Changed

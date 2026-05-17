@@ -56,7 +56,7 @@ brew tap julian-corbet/dotkeeper
 brew install dotkeeper
 ```
 
-**From source:**
+**From source — use `make`, not `go build` directly:**
 
 ```bash
 git clone https://github.com/julian-corbet/dotkeeper.git
@@ -66,17 +66,24 @@ make build && make install
 
 Or download a pre-built binary from [Releases](https://github.com/julian-corbet/dotkeeper/releases).
 
-> **Note — `go install`**
+> **Why `make build` and not `go build ./...`?**
 >
-> dotkeeper embeds Syncthing as a library, which requires a build tag to suppress
-> the Syncthing web GUI assets. Always build with `-tags noassets`:
+> dotkeeper embeds Syncthing as a library. Syncthing's `lib/api` package
+> expects generated web-GUI assets (`gui.files.go`) that dotkeeper has no
+> use for and does not ship. A plain `go build ./cmd/dotkeeper` therefore
+> fails with `undefined: auto.Assets`. Pass `-tags noassets` to skip the
+> assets path:
 >
 > ```bash
+> go build  -tags noassets ./cmd/dotkeeper        # build the daemon
+> go test   -tags noassets ./...                  # run the test suite
 > go install -tags noassets github.com/julian-corbet/dotkeeper/cmd/dotkeeper@latest
 > ```
 >
-> A naked `go build ./cmd/dotkeeper` will fail with `undefined: auto.Assets`.
-> The `Makefile`, `Dockerfile`, and release workflow all set this tag automatically.
+> The `Makefile`, `Dockerfile`, CI workflows, and `release.yml` all set
+> this tag automatically — when contributing, prefer `make build`/`make
+> test` so the tag is never forgotten. If your IDE or linter shows the
+> `auto.Assets` error, configure it to pass `-tags noassets` to gopls.
 
 ### First machine
 

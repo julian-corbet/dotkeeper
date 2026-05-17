@@ -247,6 +247,14 @@ type RepoObs struct {
 	// IgnoreFileContent is the current .stignore content for the repo root.
 	// Empty means the file is absent or unreadable.
 	IgnoreFileContent string
+
+	// DevWorkflowActive reports whether the user is mid-rebase, mid-merge,
+	// mid-cherry-pick, or mid-bisect at the time of observation. When true,
+	// auto-backup defers this repo to the next reconcile tick so dotkeeper
+	// does not interleave its own commit with the user's in-progress work.
+	// Slot scheduling is unaffected: the next tick that observes a quiet
+	// repo will fire the backup, still within the configured interval.
+	DevWorkflowActive bool
 }
 
 // LivePeer is the observed connection state of a single Syncthing device.
