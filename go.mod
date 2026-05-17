@@ -12,7 +12,7 @@ require (
 )
 
 require (
-	github.com/Azure/go-ntlmssp v0.1.0 // indirect
+	github.com/Azure/go-ntlmssp v0.1.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/calmh/incontainer v1.0.0 // indirect
 	github.com/calmh/xdr v1.2.0 // indirect

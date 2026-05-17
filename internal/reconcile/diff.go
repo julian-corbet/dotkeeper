@@ -132,6 +132,13 @@ func Diff(desired Desired, observed Observed) Plan {
 		}
 
 		due := repoBackupDue(repoDesired, repo, time.Now())
+		// Defer this tick's backup if the user is mid-rebase / mid-merge /
+		// mid-cherry-pick / mid-bisect. Slot timing is not "skipped" — the
+		// next reconcile to observe a quiet repo fires the backup, still
+		// within the configured interval. See queryRepoGitState.
+		if due && repo.DevWorkflowActive {
+			continue
+		}
 		if repo.IsDirty && due {
 			plan = append(plan, GitCommitDirty{
 				RepoPath: repo.Path,
