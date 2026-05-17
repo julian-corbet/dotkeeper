@@ -16,6 +16,9 @@ contents:
   - src: dotkeeper
     dst: /usr/bin/dotkeeper
 
+  - src: deploy/systemd/dotkeeper.service
+    dst: /usr/lib/systemd/user/dotkeeper.service
+
   - src: docs/examples/repo-config.toml
     dst: /usr/share/doc/dotkeeper/repo-config.toml
 

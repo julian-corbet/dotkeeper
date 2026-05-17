@@ -19,8 +19,8 @@ func TestMachineV2Defaults(t *testing.T) {
 	if cfg.DefaultCommitPolicy != "manual" {
 		t.Errorf("DefaultCommitPolicy = %q, want %q", cfg.DefaultCommitPolicy, "manual")
 	}
-	if cfg.DefaultGitInterval != "hourly" {
-		t.Errorf("DefaultGitInterval = %q, want %q", cfg.DefaultGitInterval, "hourly")
+	if cfg.DefaultGitInterval != "daily" {
+		t.Errorf("DefaultGitInterval = %q, want %q", cfg.DefaultGitInterval, "daily")
 	}
 	if cfg.DefaultSlotOffsetMinutes != 5 {
 		t.Errorf("DefaultSlotOffsetMinutes = %d, want 5", cfg.DefaultSlotOffsetMinutes)

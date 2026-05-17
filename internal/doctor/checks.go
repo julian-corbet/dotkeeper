@@ -16,6 +16,7 @@ import (
 	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/conflict"
 	"github.com/julian-corbet/dotkeeper/internal/discovery"
+	"github.com/julian-corbet/dotkeeper/internal/procnice"
 	"github.com/julian-corbet/dotkeeper/internal/service"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 )
@@ -50,7 +51,7 @@ type ExecGitRunner struct{}
 // context.WithTimeout(ctx, 5*time.Second).
 func (ExecGitRunner) LsRemote(ctx context.Context, dir string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", "-C", dir, "ls-remote", "--heads", "origin", "HEAD")
-	out, err := cmd.CombinedOutput()
+	out, err := procnice.CombinedOutput(cmd)
 	return string(out), err
 }
 
@@ -657,7 +658,7 @@ func (c LocalMetadataCheck) Run(ctx context.Context) Result {
 
 func isGitRepo(ctx context.Context, repo string) bool {
 	cmd := exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "--is-inside-work-tree")
-	out, err := cmd.Output()
+	out, err := procnice.Output(cmd)
 	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
 
@@ -665,7 +666,7 @@ func listTrackedMetadata(ctx context.Context, repo string, patterns []string) ([
 	args := []string{"-C", repo, "ls-files", "--"}
 	args = append(args, patterns...)
 	cmd := exec.CommandContext(ctx, "git", args...)
-	out, err := cmd.CombinedOutput()
+	out, err := procnice.CombinedOutput(cmd)
 	if err != nil {
 		return nil, fmt.Errorf("git ls-files: %w: %s", err, strings.TrimSpace(string(out)))
 	}

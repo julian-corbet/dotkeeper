@@ -126,7 +126,7 @@ func BuildDesired(machine *config.MachineConfigV2, repos map[string]*config.Repo
 	}
 
 	defaultCommitPolicy := "manual"
-	defaultGitInterval := "hourly"
+	defaultGitInterval := "daily"
 	var machineSlot uint
 	if machine != nil {
 		defaultCommitPolicy = machine.DefaultCommitPolicy

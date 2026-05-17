@@ -20,7 +20,7 @@ func TestParseGitInterval(t *testing.T) {
 		want time.Duration
 	}{
 		// Keywords (the documented sugar).
-		{"", time.Hour},
+		{"", 24 * time.Hour}, // empty falls through to the default ("daily")
 		{"hourly", time.Hour},
 		{"daily", 24 * time.Hour},
 		{"weekly", 7 * 24 * time.Hour},
