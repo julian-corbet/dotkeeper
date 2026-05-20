@@ -261,12 +261,23 @@ func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 	}
 
 	folderCfg := map[string]any{
-		"id":               id,
-		"label":            label,
-		"path":             path,
-		"type":             "sendreceive",
-		"devices":          folderDevices,
-		"rescanIntervalS":  60,
+		"id":      id,
+		"label":   label,
+		"path":    path,
+		"type":    "sendreceive",
+		"devices": folderDevices,
+		// Daily full rescan. fsWatcher (inotify on Linux) catches every
+		// real-time change; the periodic rescan is only the
+		// belt-and-suspenders safety net for the rare case where inotify
+		// briefly drops events under extreme kernel pressure. The prior
+		// default (60s, one full rescan per minute per folder) was a
+		// defensive holdover from early dotkeeper builds before
+		// fsWatcher was trusted; on a fleet with 22 folders it burned
+		// ~1320 full tree walks per hour for no operational benefit.
+		// CPU profile against v0.9.2 showed 21% of total CPU in
+		// stat/readdir syscalls (runtime.cgocall), almost all of it
+		// driven by these rescans.
+		"rescanIntervalS":  86400,
 		"fsWatcherEnabled": true,
 		"fsWatcherDelayS":  1,
 		"ignorePerms":      false,
@@ -279,11 +290,20 @@ func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 	for i, f := range folders {
 		fm, _ := f.(map[string]any)
 		if fm["id"] == id {
-			// Merge: update only the fields we manage, preserve user customizations
+			// Merge: update fields we manage, preserve user customizations.
+			// rescanIntervalS is now in the managed set so the v0.9.4
+			// migration applies to folders carried over from earlier
+			// dotkeeper installs (which set 60s). If a user wants a
+			// different interval per-folder, the right place is an
+			// override knob in .dotkeeper.toml (not implemented in
+			// v0.9.4 — pending genuine demand).
 			fm["label"] = label
 			fm["path"] = path
 			fm["devices"] = folderDevices
 			fm["markerName"] = FolderMarkerName
+			fm["rescanIntervalS"] = 86400
+			fm["fsWatcherEnabled"] = true
+			fm["fsWatcherDelayS"] = 1
 			folders[i] = fm
 			found = true
 			break
