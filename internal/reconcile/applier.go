@@ -37,6 +37,9 @@ type SyncthingClient interface {
 	// to the canonical dotkeeper-managed values, used by the v0.9.5 drift
 	// detector to migrate folders carried over from older installs.
 	UpdateFolderSchedule(folderID string) error
+	// SetFolderPaused toggles the folder's paused flag, used by the v0.9.6
+	// auto-pause loop to suspend dormant folders and resume them on activity.
+	SetFolderPaused(folderID string, paused bool) error
 }
 
 // RealApplier executes Actions against live system state. It is idempotent:
@@ -68,6 +71,10 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 		return a.applyUpdateSyncthingFolderDevices(act)
 	case UpdateSyncthingFolderSchedule:
 		return a.applyUpdateSyncthingFolderSchedule(act)
+	case PauseSyncthingFolder:
+		return a.applyPauseSyncthingFolder(act)
+	case UnpauseSyncthingFolder:
+		return a.applyUnpauseSyncthingFolder(act)
 	case AddSyncthingDevice:
 		return a.applyAddSyncthingDevice(act)
 	case EnsureIgnoreFile:
@@ -487,6 +494,26 @@ func (a *RealApplier) applyUpdateSyncthingFolderSchedule(act UpdateSyncthingFold
 	}
 	if err := a.ST.UpdateFolderSchedule(act.FolderID); err != nil {
 		return fmt.Errorf("UpdateSyncthingFolderSchedule %q: %w", act.FolderID, err)
+	}
+	return nil
+}
+
+func (a *RealApplier) applyPauseSyncthingFolder(act PauseSyncthingFolder) error {
+	if a.ST == nil {
+		return fmt.Errorf("PauseSyncthingFolder %q: Syncthing client not available", act.FolderID)
+	}
+	if err := a.ST.SetFolderPaused(act.FolderID, true); err != nil {
+		return fmt.Errorf("PauseSyncthingFolder %q: %w", act.FolderID, err)
+	}
+	return nil
+}
+
+func (a *RealApplier) applyUnpauseSyncthingFolder(act UnpauseSyncthingFolder) error {
+	if a.ST == nil {
+		return fmt.Errorf("UnpauseSyncthingFolder %q: Syncthing client not available", act.FolderID)
+	}
+	if err := a.ST.SetFolderPaused(act.FolderID, false); err != nil {
+		return fmt.Errorf("UnpauseSyncthingFolder %q: %w", act.FolderID, err)
 	}
 	return nil
 }

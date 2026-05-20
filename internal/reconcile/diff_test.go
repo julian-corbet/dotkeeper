@@ -5,6 +5,7 @@ package reconcile
 
 import (
 	"testing"
+	"time"
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
@@ -804,6 +805,151 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestDiffAutoPause is the v0.9.6 spec test for the auto-pause
+// state machine. The four canonical transitions:
+//
+//   - !paused + active  → no action
+//   - !paused + idle    → PauseSyncthingFolder
+//   - paused  + idle    → no action (stays paused)
+//   - paused  + active  → UnpauseSyncthingFolder
+//
+// "active" means LastActivity < RecentActivityForUnpause ago.
+// "idle"   means LastActivity > IdleThresholdForPause ago.
+// In between either threshold, the diff should remain a no-op
+// (hysteresis band) — covered by the additional case below.
+func TestDiffAutoPause(t *testing.T) {
+	t.Parallel()
+
+	const path = "/repo"
+	const folderID = "dk-repo"
+	now := time.Now()
+
+	mkObs := func(paused bool, lastActivity time.Time) Observed {
+		return Observed{
+			ManagedFolders: []FolderObs{
+				{
+					SyncthingFolderID: folderID,
+					Path:              path,
+					Devices:           []string{"DEV-A"},
+					RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+					FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+					Paused:            paused,
+				},
+			},
+			TrackedRepos: []RepoObs{
+				{Path: path, IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
+			},
+			LastActivityByPath: map[string]time.Time{path: lastActivity},
+			Now:                now,
+		}
+	}
+
+	desired := Desired{
+		Repos: map[string]RepoDesired{
+			path: {Path: path, SyncthingFolderID: folderID, ShareWith: []string{"DEV-A"}},
+		},
+	}
+
+	cases := []struct {
+		name      string
+		obs       Observed
+		wantPause bool
+		wantUnp   bool
+	}{
+		{
+			name:      "!paused + active → no action",
+			obs:       mkObs(false, now.Add(-30*time.Second)),
+			wantPause: false, wantUnp: false,
+		},
+		{
+			name:      "!paused + idle → Pause",
+			obs:       mkObs(false, now.Add(-25*time.Hour)),
+			wantPause: true, wantUnp: false,
+		},
+		{
+			name:      "paused + idle → no action",
+			obs:       mkObs(true, now.Add(-25*time.Hour)),
+			wantPause: false, wantUnp: false,
+		},
+		{
+			name:      "paused + active → Unpause",
+			obs:       mkObs(true, now.Add(-10*time.Second)),
+			wantPause: false, wantUnp: true,
+		},
+		{
+			name:      "hysteresis band (paused, last activity 5min ago) → no action",
+			obs:       mkObs(true, now.Add(-5*time.Minute)),
+			wantPause: false, wantUnp: false,
+		},
+		{
+			name:      "tracker has no entry for folder → no action",
+			obs:       Observed{
+				ManagedFolders: []FolderObs{
+					{
+						SyncthingFolderID: folderID,
+						Path:              path,
+						Devices:           []string{"DEV-A"},
+						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+					},
+				},
+				TrackedRepos: []RepoObs{
+					{Path: path, IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
+				},
+				LastActivityByPath: map[string]time.Time{}, // empty; folder not yet known
+				Now:                now,
+			},
+			wantPause: false, wantUnp: false,
+		},
+		{
+			name: "LastActivityByPath nil → auto-pause disabled entirely",
+			obs: Observed{
+				ManagedFolders: []FolderObs{
+					{
+						SyncthingFolderID: folderID,
+						Path:              path,
+						Devices:           []string{"DEV-A"},
+						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+						Paused:            false,
+					},
+				},
+				TrackedRepos: []RepoObs{
+					{Path: path, IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
+				},
+				// LastActivityByPath intentionally nil — tracker unavailable.
+				Now: now,
+			},
+			wantPause: false, wantUnp: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := Diff(desired, tc.obs)
+			gotPause, gotUnp := false, false
+			for _, a := range plan {
+				switch x := a.(type) {
+				case PauseSyncthingFolder:
+					if x.FolderID == folderID {
+						gotPause = true
+					}
+				case UnpauseSyncthingFolder:
+					if x.FolderID == folderID {
+						gotUnp = true
+					}
+				}
+			}
+			if gotPause != tc.wantPause {
+				t.Errorf("PauseSyncthingFolder emitted=%v want=%v (plan=%v)", gotPause, tc.wantPause, plan)
+			}
+			if gotUnp != tc.wantUnp {
+				t.Errorf("UnpauseSyncthingFolder emitted=%v want=%v (plan=%v)", gotUnp, tc.wantUnp, plan)
+			}
+		})
+	}
 }
 
 // TestDiffEmitsUpdateScheduleOnDrift is the v0.9.5 regression guard.

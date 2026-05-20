@@ -23,6 +23,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 
+	"github.com/julian-corbet/dotkeeper/internal/activity"
 	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/reconcile"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
@@ -65,7 +66,13 @@ func reconcileCmd() *cobra.Command {
 			}))
 
 			desired := reconcile.NewDesiredProvider(machinePath, statePath)
-			observed := buildObservedProvider(statePath)
+			// One-shot `dotkeeper reconcile` doesn't run an activity
+			// tracker. Auto-pause decisions would be wrong anyway —
+			// no history means every folder looks "idle since
+			// startup", which the diff would over-pause on. Pass nil
+			// so LastActivityByPath stays nil and Diff skips the
+			// auto-pause checks entirely.
+			observed := buildObservedProvider(statePath, nil)
 
 			applier := &reconcile.RealApplier{
 				ST:     nil, // populated below if Syncthing is reachable
@@ -326,16 +333,18 @@ func untrackCmd() *cobra.Command {
 // buildObservedProvider returns an ObservedProvider wired to the live Syncthing
 // instance (if available) and state.toml. If the Syncthing API key is
 // unavailable the provider falls back to a nil client (no folder/peer query).
+// When activity is non-nil, the provider also populates
+// Observed.LastActivityByPath so the diff can decide auto-pause transitions.
 //
 // Passing a typed-nil *stclient.Client to NewObservedProvider would produce a
 // non-nil interface value and trigger a nil-pointer dereference inside
 // querySyncthing, so we only pass a non-nil client when one is actually available.
 // (NewObservedProvider also has a defensive nil-check; this is belt + braces.)
-func buildObservedProvider(statePath string) reconcile.ObservedProvider {
+func buildObservedProvider(statePath string, activity reconcile.ActivityQuerier) reconcile.ObservedProvider {
 	if key, err := engine().APIKey(); err == nil {
-		return reconcile.NewObservedProvider(stclient.New(key), statePath)
+		return reconcile.NewObservedProviderWithActivity(stclient.New(key), statePath, activity)
 	}
-	return reconcile.NewObservedProvider(nil, statePath)
+	return reconcile.NewObservedProviderWithActivity(nil, statePath, activity)
 }
 
 // loadMachineName returns the machine name from machine.toml (v2 schema).
@@ -350,8 +359,11 @@ func loadMachineName() (string, error) {
 // startReconcileDaemon constructs a Reconciler from real providers and starts
 // the reconcile loop (timer + fsnotify). It is called from startCmd.
 // Errors during construction are logged but never fatal — Syncthing must keep
-// running even if the reconcile daemon can't start.
-func startReconcileDaemon(ctx context.Context, logger *slog.Logger) {
+// running even if the reconcile daemon can't start. activityTracker is
+// optional — when non-nil it provides LastActivityByPath for auto-pause
+// decisions and a Hints channel that triggers immediate reconciles on
+// activity (so paused folders unpause without waiting for the next tick).
+func startReconcileDaemon(ctx context.Context, logger *slog.Logger, activityTracker *activity.Tracker) {
 	machinePath := config.MachineConfigPath()
 	statePath := config.StateV2Path()
 
@@ -373,7 +385,13 @@ func startReconcileDaemon(ctx context.Context, logger *slog.Logger) {
 	}
 
 	desired := reconcile.NewDesiredProvider(machinePath, statePath)
-	observed := buildObservedProvider(statePath)
+	// Pass the activity tracker (or nil) through the typed nil-friendly
+	// wrapper so the provider can populate LastActivityByPath.
+	var activityQ reconcile.ActivityQuerier
+	if activityTracker != nil {
+		activityQ = activityTracker
+	}
+	observed := buildObservedProvider(statePath, activityQ)
 
 	// Wire up Syncthing client for the applier.
 	var stClient *stclient.Client
@@ -413,6 +431,47 @@ func startReconcileDaemon(ctx context.Context, logger *slog.Logger) {
 	)
 
 	startReconcileLoop(ctx, r, reconcileInterval, watchPaths, logger)
+
+	// Fan activity hints into the reconcile-trigger channel so a
+	// paused folder unpauses on the first user touch instead of
+	// waiting up to ReconcileInterval. The reconcile loop's
+	// single-slot pending channel coalesces bursts naturally.
+	// startReconcileLoop above doesn't expose its requestReconcile
+	// closure, so we use the same mechanism it does: a synthetic
+	// touch on machine.toml is the documented "ask reconcile to
+	// run" signal that the fsnotify branch already debounces and
+	// triggers on. Cheaper than threading another channel through
+	// the loop's signature.
+	if activityTracker != nil {
+		go forwardActivityHintsToReconcile(ctx, activityTracker.Hints(), machinePath, logger)
+	}
+}
+
+// forwardActivityHintsToReconcile drains the activity tracker's
+// Hints channel and, on each event, touches machine.toml — which the
+// reconcile loop's fsnotify watcher debounces into a reconcile
+// trigger. Coalescing happens in the reconcile loop's single-slot
+// pending channel, so a burst of editor saves produces at most one
+// reconcile per debounce window.
+//
+// We touch via os.Chtimes rather than rewriting the file, so the
+// activity fan-out can never corrupt machine.toml even on disk
+// errors.
+func forwardActivityHintsToReconcile(ctx context.Context, hints <-chan string, machinePath string, logger *slog.Logger) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, ok := <-hints:
+			if !ok {
+				return
+			}
+			now := time.Now()
+			if err := os.Chtimes(machinePath, now, now); err != nil {
+				logger.DebugContext(ctx, "activity-hint chtimes failed", "err", err)
+			}
+		}
+	}
 }
 
 // startReconcileLoop wires reconcile triggers and a single serialised worker.
