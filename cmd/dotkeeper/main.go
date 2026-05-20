@@ -23,6 +23,7 @@ import (
 	"github.com/julian-corbet/dotkeeper/internal/conflict"
 	"github.com/julian-corbet/dotkeeper/internal/discovery"
 	"github.com/julian-corbet/dotkeeper/internal/doctor"
+	"github.com/julian-corbet/dotkeeper/internal/procnice"
 	"github.com/julian-corbet/dotkeeper/internal/service"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 	"github.com/julian-corbet/dotkeeper/internal/stengine"
@@ -344,6 +345,18 @@ func startCmd() *cobra.Command {
 			// SIGINT/SIGTERM is wired into the root context in main(), so
 			// cmd.Context() already cancels on signal. No need to redo it.
 			ctx := cmd.Context()
+
+			// Self-apply nice=19 / ioprio=idle before any heavy work
+			// starts. The packaged systemd user unit already sets these
+			// (Nice=19, IOSchedulingClass=idle, CPUWeight=10) — on those
+			// installs LowerSelf is an idempotent no-op. The point is
+			// installs that bypass the unit: Docker containers built by
+			// third parties, manual `dotkeeper start` in a dev loop,
+			// distro packagers who shipped a stripped-down unit. The
+			// embedded Syncthing scanner is heavy enough that running
+			// without de-prioritisation is user-visible on weaker
+			// hardware. Non-Linux platforms compile to a no-op.
+			procnice.LowerSelf()
 
 			// Configure slog handler. Writes to os.Stdout because
 			// engine.Start later dup2's fd 1 to ~/.local/state/dotkeeper/
