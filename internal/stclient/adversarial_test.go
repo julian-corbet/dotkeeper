@@ -4,8 +4,10 @@
 package stclient
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,9 +121,13 @@ func TestAddDevicePutConfigFails(t *testing.T) {
 }
 
 // TestAddOrUpdateFolderMergesExisting verifies that updating an existing
-// folder preserves the folder ID while updating label, path, and devices.
+// folder preserves the folder ID and any unrelated custom fields while
+// updating label, path, devices, and the v0.9.4-managed scheduler
+// fields (rescanIntervalS, fsWatcher*). This last bit is the migration
+// path for folders carried over from earlier dotkeeper installs (which
+// set rescanIntervalS=60s and now need to land at 86400s).
 func TestAddOrUpdateFolderMergesExisting(t *testing.T) {
-	var putConfig map[string]any
+	var putRaw string
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -133,16 +139,15 @@ func TestAddOrUpdateFolderMergesExisting(t *testing.T) {
 					"label": "Old Label",
 					"path": "/old/path",
 					"devices": [],
+					"rescanIntervalS": 60,
 					"customField": "preserved"
 				}]
 			}`))
 		case r.Method == "GET" && r.URL.Path == "/rest/system/status":
 			_, _ = w.Write([]byte(`{"myID": "MY-ID"}`))
 		case r.Method == "PUT":
-			json := make([]byte, r.ContentLength)
-			_, _ = r.Body.Read(json)
-			// Simple enough to just check the raw bytes
-			putConfig = map[string]any{"raw": string(json)}
+			body, _ := io.ReadAll(r.Body)
+			putRaw = string(body)
 			w.WriteHeader(200)
 		}
 	}))
@@ -153,8 +158,24 @@ func TestAddOrUpdateFolderMergesExisting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AddOrUpdateFolder: %v", err)
 	}
-	if putConfig == nil {
+	if putRaw == "" {
 		t.Fatal("PUT was not called")
+	}
+
+	// Migration assertion: the pre-existing rescanIntervalS=60 must be
+	// overwritten to 86400. If a future change reverts dotkeeper to
+	// "preserve user customisations" semantics for the scheduler fields,
+	// existing v0.9.3-and-earlier installs would stay at 60s forever and
+	// the user would not see the perf improvement on upgrade.
+	if !strings.Contains(putRaw, `"rescanIntervalS":86400`) {
+		t.Errorf("expected rescanIntervalS=86400 in PUT body, got:\n%s", putRaw)
+	}
+	if strings.Contains(putRaw, `"rescanIntervalS":60`) {
+		t.Errorf("pre-existing rescanIntervalS=60 not migrated; full PUT body:\n%s", putRaw)
+	}
+	// Preservation assertion: customField must survive the merge.
+	if !strings.Contains(putRaw, `"customField":"preserved"`) {
+		t.Errorf("merge dropped customField; full PUT body:\n%s", putRaw)
 	}
 }
 
