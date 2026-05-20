@@ -7,6 +7,54 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-05-20
+
+### Fixed
+
+- **Reconcile now actively migrates the folder scheduler fields on
+  upgrade.** v0.9.4 changed the default `rescanIntervalS` from 60 to
+  86400 and added the new value to the `AddOrUpdateFolder` merge
+  path, but the merge path only fires when reconcile's diff decides
+  the folder needs an add-or-update — which it doesn't when path,
+  devices, and marker all look correct. The result: existing
+  installs that upgraded from v0.9.3 saw the new code but no
+  migration, and their folders stayed at `rescanIntervalS=60`
+  indefinitely. The CPU win advertised by v0.9.4 simply did not
+  apply on upgrade paths, only on fresh installs.
+
+  v0.9.5 closes the gap with an explicit drift detector. The
+  reconciler now reads each folder's `rescanIntervalS` and
+  `fsWatcherEnabled` from Syncthing's REST config and compares them
+  to the canonical values exported from `internal/stclient`
+  (`CanonicalRescanIntervalS`, `CanonicalFsWatcherEnabled`,
+  `CanonicalFsWatcherDelayS`). When they drift, the diff emits
+  `UpdateSyncthingFolderSchedule`, and the applier calls a new
+  `Client.UpdateFolderSchedule` method that PUTs corrected values
+  to Syncthing while leaving all other folder fields untouched.
+  First reconcile after upgrade migrates every existing folder.
+
+  The check intentionally also fires when `rescanIntervalS=0`
+  (Syncthing's "inotify only, no periodic rescan" mode), because
+  while 0 is functionally reasonable on Linux, it's not the
+  canonical dotkeeper default and should not be reached
+  accidentally. A per-folder override knob (planned for a later
+  release) is the right path for users who genuinely want 0 or
+  3600.
+
+### Tests
+
+- `TestDiffEmitsUpdateScheduleOnDrift`: matrix of canonical vs
+  drifted scheduler values, asserting the new action is emitted
+  exactly when drift is observed.
+- `fakeST` (the test double for `SyncthingClient`) now implements
+  `UpdateFolderSchedule` and records the folder IDs it was called
+  with, so applier tests can assert end-to-end migration behaviour
+  without depending on a real Syncthing.
+- Existing `TestDiff` cases that exercise the "folder otherwise
+  consistent" path now set `RescanIntervalS` and `FsWatcherEnabled`
+  to the canonical values explicitly, since the zero values would
+  now (correctly) trigger the drift detector.
+
 ## [0.9.4] - 2026-05-20
 
 ### Performance
