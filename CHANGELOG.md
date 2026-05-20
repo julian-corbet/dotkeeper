@@ -7,6 +7,34 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-05-20
+
+### Performance
+
+- **Daemon self-applies nice=19 / ioprio=idle on every thread at
+  startup.** The packaged systemd user unit already enforces this via
+  `Nice=`, `IOSchedulingClass=`, and `CPUWeight=10`, but containers,
+  manual `dotkeeper start` in a dev loop, and third-party packagers
+  that ship a stripped-down unit all bypassed it. The embedded
+  Syncthing scanner is heavy enough that running at default priority
+  is user-visible on weaker hardware. Implementation iterates
+  `/proc/self/task` because Linux setpriority is per-thread despite
+  the `PRIO_PROCESS` name (man 2 setpriority NOTES), and Go's runtime
+  has already created GOMAXPROCS worker threads by the time `main()`
+  is entered. Non-Linux platforms compile to a no-op — operators on
+  the BSDs / macOS / Windows are expected to lean on
+  launchd / rc.d / container scheduling.
+
+- **Tightened default `.stignore` patterns.** Added the
+  language-server and tooling caches observed dominating Syncthing's
+  index and rescan footprint on active development trees:
+  `.zig-cache`, `.rust-analyzer`, `.ccls-cache`, `.clangd`,
+  `.ipynb_checkpoints`, `playwright-report`, `test-results`. A
+  pinning test in `internal/config/ignore_test.go` catches accidental
+  removal during future refactors. (Operator-side flakes/Nix
+  configurations that mirror the in-Go list need a follow-up commit
+  to stay aligned; the canonical list is now the Go default.)
+
 ## [0.9.1] - 2026-05-17
 
 ### Fixed

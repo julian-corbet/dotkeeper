@@ -43,6 +43,30 @@ func TestSyncIgnoreFileContentStable(t *testing.T) {
 	}
 }
 
+// TestDefaultSyncIgnorePatternsCoversLanguageServerCaches pins the
+// presence of language-server and tooling caches added in v0.9.2 after
+// they were observed dominating Syncthing's index/rescan footprint on
+// active development trees. Adding new caches is fine; removing one
+// should be a deliberate decision, not an accidental refactor.
+func TestDefaultSyncIgnorePatternsCoversLanguageServerCaches(t *testing.T) {
+	t.Parallel()
+
+	required := []string{
+		".zig-cache",
+		".rust-analyzer",
+		".ccls-cache",
+		".clangd",
+		".ipynb_checkpoints",
+		"playwright-report",
+		"test-results",
+	}
+	for _, want := range required {
+		if !containsPattern(DefaultSyncIgnorePatterns, want) {
+			t.Fatalf("DefaultSyncIgnorePatterns missing %q", want)
+		}
+	}
+}
+
 func containsPattern(patterns []string, want string) bool {
 	for _, pattern := range patterns {
 		if pattern == want {
