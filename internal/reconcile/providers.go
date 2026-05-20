@@ -301,16 +301,36 @@ func NewObservedProvider(stClient *stclient.Client, stateConfigPath string) Obse
 	// bypass the nil check inside newObservedProvider and panic. Explicitly
 	// pass a nil interface when the pointer is nil.
 	if stClient == nil {
-		return newObservedProvider(nil, stateConfigPath)
+		return newObservedProvider(nil, stateConfigPath, nil)
 	}
-	return newObservedProvider(stClient, stateConfigPath)
+	return newObservedProvider(stClient, stateConfigPath, nil)
+}
+
+// ActivityQuerier is the minimum surface NewObservedProviderWithActivity
+// needs from the activity tracker. Returns the most recent observed
+// Write/Create/Remove timestamp under root and an ok flag indicating
+// whether the path is tracked. Allows the activity package to stay
+// out of the reconcile import graph.
+type ActivityQuerier interface {
+	LastActivity(root string) (time.Time, bool)
+}
+
+// NewObservedProviderWithActivity is NewObservedProvider plus an
+// activity querier. The provider populates Observed.LastActivityByPath
+// from the querier on every call so Diff can decide auto-pause
+// transitions. Pass nil when auto-pause is disabled or unavailable.
+func NewObservedProviderWithActivity(stClient *stclient.Client, stateConfigPath string, activity ActivityQuerier) ObservedProvider {
+	if stClient == nil {
+		return newObservedProvider(nil, stateConfigPath, activity)
+	}
+	return newObservedProvider(stClient, stateConfigPath, activity)
 }
 
 // newObservedProvider accepts the SyncthingQuerier interface directly, which
 // lets tests pass a stub without wrapping the real stclient.Client.
-func newObservedProvider(querier SyncthingQuerier, stateConfigPath string) ObservedProvider {
+func newObservedProvider(querier SyncthingQuerier, stateConfigPath string, activity ActivityQuerier) ObservedProvider {
 	return func(_ context.Context) (Observed, error) {
-		obs := Observed{}
+		obs := Observed{Now: time.Now()}
 
 		// 1. Live Syncthing folder config.
 		if querier != nil {
@@ -322,6 +342,19 @@ func newObservedProvider(querier SyncthingQuerier, stateConfigPath string) Obser
 			}
 			obs.ManagedFolders = folders
 			obs.LivePeers = peers
+		}
+
+		// 1b. Activity timestamps for auto-pause decisions. When the
+		// tracker is nil, LastActivityByPath stays nil and Diff
+		// skips the Pause/Unpause checks entirely.
+		if activity != nil {
+			byPath := make(map[string]time.Time, len(obs.ManagedFolders))
+			for _, f := range obs.ManagedFolders {
+				if t, ok := activity.LastActivity(f.Path); ok {
+					byPath[f.Path] = t
+				}
+			}
+			obs.LastActivityByPath = byPath
 		}
 
 		// 2. state.toml for cached state + tracked override paths.
@@ -402,6 +435,10 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 			if fw, ok := fm["fsWatcherEnabled"].(bool); ok {
 				fsWatcherEnabled = fw
 			}
+			paused := false
+			if p, ok := fm["paused"].(bool); ok {
+				paused = p
+			}
 
 			folders = append(folders, FolderObs{
 				SyncthingFolderID: folderID,
@@ -410,6 +447,7 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 				MarkerDirMissing:  folderMarkerMissing(folderPath, markerName),
 				RescanIntervalS:   rescanIntervalS,
 				FsWatcherEnabled:  fsWatcherEnabled,
+				Paused:            paused,
 			})
 		}
 	}

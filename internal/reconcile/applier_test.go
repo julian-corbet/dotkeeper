@@ -25,15 +25,22 @@ import (
 // and a fixed device ID. Any method can be made to return an error by setting
 // the corresponding Err* field.
 type fakeST struct {
-	cfg              map[string]any
-	myID             string
-	ErrGet           error
-	ErrSet           error
-	ErrAdd           error
-	ErrDevice        error
-	ErrStatus        error
-	ErrSchedule      error
-	ScheduleUpdated  []string // folder IDs for which UpdateFolderSchedule was invoked, in order
+	cfg             map[string]any
+	myID            string
+	ErrGet          error
+	ErrSet          error
+	ErrAdd          error
+	ErrDevice       error
+	ErrStatus       error
+	ErrSchedule     error
+	ErrPause        error
+	ScheduleUpdated []string         // folder IDs for which UpdateFolderSchedule was invoked, in order
+	PausedSet       []pauseFolderOp  // ordered record of SetFolderPaused calls
+}
+
+type pauseFolderOp struct {
+	FolderID string
+	Paused   bool
 }
 
 func newFakeST() *fakeST {
@@ -94,6 +101,24 @@ func (f *fakeST) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 		"path":  path,
 	})
 	return nil
+}
+
+func (f *fakeST) SetFolderPaused(folderID string, paused bool) error {
+	if f.ErrPause != nil {
+		return f.ErrPause
+	}
+	folders, _ := f.cfg["folders"].([]any)
+	for i, fld := range folders {
+		fm, _ := fld.(map[string]any)
+		if fm["id"] == folderID {
+			fm["paused"] = paused
+			folders[i] = fm
+			f.cfg["folders"] = folders
+			f.PausedSet = append(f.PausedSet, pauseFolderOp{FolderID: folderID, Paused: paused})
+			return nil
+		}
+	}
+	return fmt.Errorf("folder %q not found", folderID)
 }
 
 func (f *fakeST) UpdateFolderSchedule(folderID string) error {

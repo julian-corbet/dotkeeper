@@ -86,6 +86,20 @@ type Observed struct {
 	// per-repo push history so Diff can skip pushes for commits already backed
 	// up. May be nil if the state file has not been written yet.
 	CachedState *config.StateV2
+
+	// LastActivityByPath maps each managed folder root path to the
+	// most recent Write/Create/Remove timestamp observed by the
+	// dotkeeper-side activity tracker. nil when the tracker is
+	// unavailable (auto-pause disabled). Diff uses the timestamps to
+	// decide PauseSyncthingFolder / UnpauseSyncthingFolder actions.
+	LastActivityByPath map[string]time.Time
+
+	// Now is the wall-clock time at which Observed was constructed.
+	// Diff uses it for "is this older than the idle threshold"
+	// comparisons. Carrying it on the struct rather than calling
+	// time.Now() inside Diff keeps Diff a pure function — same inputs
+	// always produce the same plan.
+	Now time.Time
 }
 
 // BuildDesired constructs a Desired from a parsed MachineConfigV2, the
@@ -235,6 +249,12 @@ type FolderObs struct {
 	// FsWatcherEnabled mirrors the folder's fsWatcherEnabled field.
 	// Part of the same scheduler-drift check as RescanIntervalS.
 	FsWatcherEnabled bool
+
+	// Paused mirrors the folder's `paused` field. When true, Syncthing
+	// runs no scanner, no fsWatcher, and no BEP gossip for the folder.
+	// The auto-pause feature in v0.9.6 toggles this based on observed
+	// filesystem activity from the dotkeeper-side activity tracker.
+	Paused bool
 }
 
 // RepoObs is the observed state of a single tracked git repository.
@@ -345,6 +365,34 @@ type UpdateSyncthingFolderSchedule struct {
 
 func (a UpdateSyncthingFolderSchedule) Describe() string {
 	return "update scheduler fields for Syncthing folder " + a.FolderID
+}
+
+// PauseSyncthingFolder is emitted by the auto-pause logic when a
+// folder has been quiet on the local filesystem for longer than the
+// idle threshold. Pausing stops Syncthing's scanner, watcher, and BEP
+// gossip for the folder; the index DB is unloaded from memory.
+// Unpause happens automatically on the next reconcile after the
+// activity tracker sees a Write/Create/Remove under the folder root.
+type PauseSyncthingFolder struct {
+	FolderID string
+}
+
+func (a PauseSyncthingFolder) Describe() string {
+	return "pause idle Syncthing folder " + a.FolderID
+}
+
+// UnpauseSyncthingFolder is the inverse of PauseSyncthingFolder.
+// Emitted when a paused folder sees activity. Reconcile is expected
+// to fire shortly after the activity tracker observes the event, so
+// the user-perceived pause-to-unpause latency is dominated by the
+// debounce window inside the reconcile loop (~1 second) rather than
+// the auto-pause interval.
+type UnpauseSyncthingFolder struct {
+	FolderID string
+}
+
+func (a UnpauseSyncthingFolder) Describe() string {
+	return "unpause active Syncthing folder " + a.FolderID
 }
 
 // EnsureIgnoreFile is emitted when a repo root is missing dotkeeper's

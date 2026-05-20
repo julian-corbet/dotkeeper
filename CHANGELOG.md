@@ -7,6 +7,98 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-05-21
+
+### Added
+
+- **Auto-pause idle folders.** A folder that has seen no
+  Write/Create/Remove on the local filesystem for longer than
+  `IdleThresholdForPause` (24 hours) is paused via Syncthing's
+  per-folder `paused` flag. Pausing stops Syncthing's scanner,
+  fsWatcher, and BEP gossip for that folder; the index DB stays on
+  disk but is unloaded from memory. A paused folder that sees
+  activity within `RecentActivityForUnpause` (1 minute) is unpaused
+  immediately — the activity tracker emits a hint that triggers a
+  reconcile within seconds of the user's first save.
+
+  The motivation: on a fleet with many enrolled repos but only a
+  handful actively worked on day-to-day (typical: 22 enrolled, 3
+  used in any given week), the per-folder fixed cost — one worker
+  thread per folder, even at idle — dominates the daemon's
+  steady-state memory and contributes a noticeable share of CPU.
+  Auto-pause collapses the active set to "what the user is actually
+  touching."
+
+  The user-perceived sync latency on a folder's first touch after
+  pause is bounded by the reconcile debounce (~1 second) plus
+  Syncthing's resume time (sub-second). Edits inside an unpaused
+  folder are real-time as before.
+
+### Implementation
+
+- New `internal/activity` package: a `Tracker` that runs its own
+  fsnotify watcher over every managed folder root, records the most
+  recent observed event per root, and emits hints on a buffered
+  channel. Independent of the conflict watcher because the two
+  concerns (per-folder timestamps vs sync-conflict-file detection)
+  evolve separately and we want each to survive the other's
+  failures.
+
+- `internal/reconcile`: new `PauseSyncthingFolder` and
+  `UnpauseSyncthingFolder` actions; `FolderObs` gains `Paused`;
+  `Observed` gains `LastActivityByPath` and `Now`. The new
+  `autoPauseAction` helper implements the four-state state machine
+  ((paused × active) → unpause; (!paused × idle) → pause; rest →
+  no-op). `Diff` is still a pure function — `Now` is passed in
+  rather than read inside.
+
+- `internal/stclient`: new `Client.SetFolderPaused(folderID, paused)`
+  toggles the folder's paused flag via the REST config endpoint.
+
+- `cmd/dotkeeper/main.go`, `cmds_v5.go`: lifecycle wiring. The
+  tracker starts alongside the conflict watcher; its hint channel
+  is fanned into the existing reconcile-trigger machinery via a
+  no-op `os.Chtimes` on `machine.toml`, which the existing fsnotify
+  watcher already debounces and converts into a reconcile request.
+
+### Known limitations
+
+- The tracker's root set is captured at daemon startup. Folders
+  added or removed *after* startup are not reflected until next
+  restart. Working repos restart-survive intact; net result is "a
+  newly-added folder doesn't auto-pause until next service
+  restart." A reload-on-folder-set-change pass is feasible but
+  deferred until a real impact appears.
+
+- One-shot `dotkeeper reconcile` invocations pass nil for the
+  activity tracker, so auto-pause decisions never fire from the
+  CLI. Intentional: no-history means every folder would look idle
+  since startup, and the diff would over-pause. Only the running
+  daemon makes auto-pause decisions.
+
+- The unpause path relies on the activity tracker seeing the event
+  before Syncthing's own (now-stopped) fsWatcher would have. On a
+  paused folder, Syncthing isn't watching, so dotkeeper's tracker
+  is the only signal — which is the design, but worth knowing if
+  the tracker fails (e.g. inotify watch limit hit). When that
+  happens, the timer-driven reconcile (every 5 min by default)
+  still picks up paused-but-active folders eventually; just not
+  with sub-second latency.
+
+### Tests
+
+- `internal/activity/tracker_test.go` — fresh-startup seed, write
+  detection, skipDirs exclusion (.git churn doesn't count as
+  activity), auto-add of directories created post-`New()`,
+  idempotent `Close`, unknown-root handling.
+- `internal/reconcile/diff_test.go` — `TestDiffAutoPause` matrix
+  covers all four state transitions plus the hysteresis band, the
+  "tracker has no entry" branch, and the "tracker disabled
+  entirely" branch.
+- `fakeST` test double extended with `SetFolderPaused` and a
+  `PausedSet` audit log so applier tests can assert end-to-end
+  pause/unpause behaviour without a real Syncthing.
+
 ## [0.9.5] - 2026-05-20
 
 ### Fixed

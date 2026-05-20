@@ -106,6 +106,15 @@ func Diff(desired Desired, observed Observed) Plan {
 		if exists && obs.MarkerDirMissing {
 			plan = append(plan, EnsureFolderMarker{RepoPath: df.path})
 		}
+		// Auto-pause: emit Pause/Unpause based on observed activity.
+		// Skipped when LastActivityByPath is nil (tracker unavailable,
+		// e.g. on first-boot before discovery has populated paths or
+		// when the daemon was built without activity wiring).
+		if exists && observed.LastActivityByPath != nil {
+			if act := autoPauseAction(obs, df.path, observed.LastActivityByPath, observed.Now); act != nil {
+				plan = append(plan, act)
+			}
+		}
 		repoDesired := desired.Repos[df.path]
 		repoObs := observedRepoByPath(observed.TrackedRepos, df.path)
 		wantIgnore := config.SyncIgnoreFileContent(repoDesired.Ignore)
@@ -250,6 +259,49 @@ func stringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// IdleThresholdForPause is the duration a folder must be quiet on the
+// local filesystem before the auto-pause logic pauses it. Aligned
+// with the daily rescan interval — the design intent is "folders we
+// haven't touched in a day stop costing CPU and memory." Per-folder
+// overrides are a planned follow-up.
+const IdleThresholdForPause = 24 * time.Hour
+
+// RecentActivityForUnpause is the window within which observed
+// activity on a paused folder triggers an immediate unpause. Short
+// enough that legitimate user editing wakes the folder promptly;
+// long enough that a brief unpause from background tooling doesn't
+// thrash if the same folder goes quiet again within the window.
+const RecentActivityForUnpause = 1 * time.Minute
+
+// autoPauseAction returns the Pause/Unpause action the reconciler
+// should emit for the given folder, or nil if no transition is due.
+// Pure function — pulls all wall-clock information from `now` so
+// Diff stays deterministic.
+func autoPauseAction(obs FolderObs, folderPath string, activity map[string]time.Time, now time.Time) Action {
+	last, ok := activity[folderPath]
+	if !ok {
+		// Tracker doesn't know this folder. Likely a transient state
+		// (folder just added; tracker not yet populated). Skip
+		// — the next reconcile after the tracker catches up will
+		// reach the right decision.
+		return nil
+	}
+	if obs.Paused {
+		// Recent activity → unpause. Bounded "recent" window prevents
+		// flapping when the tracker carries a stale-but-old timestamp
+		// from before the pause.
+		if now.Sub(last) <= RecentActivityForUnpause {
+			return UnpauseSyncthingFolder{FolderID: obs.SyncthingFolderID}
+		}
+		return nil
+	}
+	// !Paused. Quiet long enough → pause.
+	if now.Sub(last) >= IdleThresholdForPause {
+		return PauseSyncthingFolder{FolderID: obs.SyncthingFolderID}
+	}
+	return nil
 }
 
 // folderScheduleDrifted reports whether the observed folder's
