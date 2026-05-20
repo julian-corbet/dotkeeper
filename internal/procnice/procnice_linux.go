@@ -25,7 +25,9 @@ package procnice
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
+	"strconv"
 	"sync"
 
 	"golang.org/x/sys/unix"
@@ -115,6 +117,39 @@ func lower(pid int) {
 		uintptr(ioprioWhoProcess),
 		uintptr(pid),
 		uintptr(ioprioClassIdle<<ioprioClassShift))
+}
+
+// LowerSelf drops the calling process's CPU and I/O priority to
+// nice=19 / idle I/O class. Defensive for installs that don't run
+// dotkeeper under a hardened systemd unit — Docker, manual
+// `dotkeeper start`, third-party packagers that omitted the Nice= and
+// IOSchedulingClass= directives. The packaged systemd user unit
+// (Nice=19, IOSchedulingClass=idle, CPUWeight=10) already enforces
+// the same values, so on those installs this is an idempotent no-op.
+//
+// On Linux, setpriority(2) and ioprio_set(2) are per-thread despite
+// the PRIO_PROCESS name (see man 2 setpriority's NOTES on NPTL). A
+// naive setpriority(PRIO_PROCESS, 0, 19) only nices the calling
+// thread — fine if called before any goroutine spawns an OS thread,
+// but Go's runtime has already created GOMAXPROCS threads by main()'s
+// entry. We therefore enumerate /proc/self/task and lower each TID.
+// Threads created *after* this call inherit their creator's nice
+// value, so as long as the workers spawned by the Syncthing engine
+// start from an already-niced thread, the inheritance is correct.
+func LowerSelf() {
+	lower(0)
+
+	entries, err := os.ReadDir("/proc/self/task")
+	if err != nil {
+		return // best-effort
+	}
+	for _, e := range entries {
+		tid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		lower(tid)
+	}
 }
 
 // Run starts cmd with lowered CPU and I/O priority and waits for it to
