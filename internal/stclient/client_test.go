@@ -176,15 +176,17 @@ func TestAddOrUpdateFolder(t *testing.T) {
 		t.Errorf("markerName = %v, want %q", folder["markerName"], FolderMarkerName)
 	}
 
-	// v0.9.4: rescanIntervalS must be 86400 (daily) — not the prior 60s
-	// default, and not Syncthing's stock 3600s. fsWatcher carries
-	// real-time changes; the periodic rescan is the safety net. JSON
-	// numerics decode as float64.
-	if got := folder["rescanIntervalS"]; got != float64(86400) {
-		t.Errorf("rescanIntervalS = %v, want 86400", got)
+	// rescanIntervalS must match the canonical default in
+	// stclient.CanonicalRescanIntervalS. v0.9.4 set this to 86400
+	// (daily); v0.9.7 lowered to 0 (dotkeeper-driven rescans).
+	// Asserting against the constant rather than a hard-coded
+	// number keeps this test resilient across future changes to
+	// the canonical value.
+	if got := folder["rescanIntervalS"]; got != float64(CanonicalRescanIntervalS) {
+		t.Errorf("rescanIntervalS = %v, want %d", got, CanonicalRescanIntervalS)
 	}
-	if got := folder["fsWatcherEnabled"]; got != true {
-		t.Errorf("fsWatcherEnabled = %v, want true", got)
+	if got := folder["fsWatcherEnabled"]; got != CanonicalFsWatcherEnabled {
+		t.Errorf("fsWatcherEnabled = %v, want %v", got, CanonicalFsWatcherEnabled)
 	}
 }
 

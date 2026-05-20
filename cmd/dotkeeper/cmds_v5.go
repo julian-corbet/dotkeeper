@@ -27,6 +27,7 @@ import (
 	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/reconcile"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
+	"github.com/julian-corbet/dotkeeper/internal/watchhealth"
 )
 
 // reconcilerIface is the narrow surface startReconcileLoop needs from a
@@ -331,20 +332,77 @@ func untrackCmd() *cobra.Command {
 // --- start rewrite helpers ---
 
 // buildObservedProvider returns an ObservedProvider wired to the live Syncthing
-// instance (if available) and state.toml. If the Syncthing API key is
-// unavailable the provider falls back to a nil client (no folder/peer query).
-// When activity is non-nil, the provider also populates
-// Observed.LastActivityByPath so the diff can decide auto-pause transitions.
-//
-// Passing a typed-nil *stclient.Client to NewObservedProvider would produce a
-// non-nil interface value and trigger a nil-pointer dereference inside
-// querySyncthing, so we only pass a non-nil client when one is actually available.
-// (NewObservedProvider also has a defensive nil-check; this is belt + braces.)
+// instance (if available) and state.toml. v0.9.6-compatible signature; kept
+// for the one-shot `dotkeeper reconcile` command which doesn't run a tracker.
 func buildObservedProvider(statePath string, activity reconcile.ActivityQuerier) reconcile.ObservedProvider {
 	if key, err := engine().APIKey(); err == nil {
 		return reconcile.NewObservedProviderWithActivity(stclient.New(key), statePath, activity)
 	}
 	return reconcile.NewObservedProviderWithActivity(nil, statePath, activity)
+}
+
+// buildObservedProviderFull is the v0.9.7 entry point that wires
+// the full ObservedProviderInputs into a provider. Used by the
+// long-running daemon where every input is available; the one-shot
+// CLI keeps using buildObservedProvider.
+func buildObservedProviderFull(statePath string, inputs reconcile.ObservedProviderInputs) reconcile.ObservedProvider {
+	if key, err := engine().APIKey(); err == nil {
+		return reconcile.NewObservedProviderFull(stclient.New(key), statePath, inputs)
+	}
+	return reconcile.NewObservedProviderFull(nil, statePath, inputs)
+}
+
+// healthForReconcile is the narrow interface the daemon-side
+// startReconcileDaemon needs from the watchhealth tracker. The
+// concrete *watchhealth.Tracker satisfies it (via the wrapper
+// below). Defining it here rather than importing watchhealth into
+// reconcile keeps the package graph one-way: reconcile depends on
+// nothing platform-specific.
+type healthForReconcile interface {
+	reconcile.HealthQuerier
+	reconcile.HealthResetter
+}
+
+// healthResetter returns the HealthResetter interface view of h,
+// or nil when h is nil. Lets us pass it to RealApplier.Health
+// without an explicit nil check at the call site.
+func healthResetter(h healthForReconcile) reconcile.HealthResetter {
+	if h == nil {
+		return nil
+	}
+	return h
+}
+
+// healthAdapter bridges *watchhealth.Tracker (returns watchhealth.Status)
+// to the reconcile-side interfaces (returns reconcile.FolderHealth).
+// Kept at the daemon edge so the reconcile package never imports
+// watchhealth and vice-versa.
+type healthAdapter struct {
+	tracker *watchhealth.Tracker
+}
+
+func newHealthAdapter(tr *watchhealth.Tracker) *healthAdapter {
+	if tr == nil {
+		return nil
+	}
+	return &healthAdapter{tracker: tr}
+}
+
+func (h *healthAdapter) StatusForReconcile(root string) (reconcile.FolderHealth, bool) {
+	st, ok := h.tracker.Status(root)
+	if !ok {
+		return reconcile.FolderHealth{}, false
+	}
+	return reconcile.FolderHealth{
+		FilesystemReliable:  st.Kind == watchhealth.FilesystemReliable,
+		OverflowSeen:        st.OverflowSeen,
+		WatchLimitHit:       st.WatchLimitHit,
+		LastReliableEventAt: st.LastReliableEventAt,
+	}, true
+}
+
+func (h *healthAdapter) Reset(root string) {
+	h.tracker.Reset(root)
 }
 
 // loadMachineName returns the machine name from machine.toml (v2 schema).
@@ -359,11 +417,28 @@ func loadMachineName() (string, error) {
 // startReconcileDaemon constructs a Reconciler from real providers and starts
 // the reconcile loop (timer + fsnotify). It is called from startCmd.
 // Errors during construction are logged but never fatal — Syncthing must keep
-// running even if the reconcile daemon can't start. activityTracker is
-// optional — when non-nil it provides LastActivityByPath for auto-pause
-// decisions and a Hints channel that triggers immediate reconciles on
-// activity (so paused folders unpause without waiting for the next tick).
-func startReconcileDaemon(ctx context.Context, logger *slog.Logger, activityTracker *activity.Tracker) {
+// running even if the reconcile daemon can't start.
+//
+// Optional v0.9.6/v0.9.7 inputs:
+//
+//   - activityTracker: feeds LastActivityByPath and the immediate-
+//     unpause hint channel.
+//   - health: per-folder filesystem classification + overflow flags.
+//   - wake: one-shot suspend/resume signal.
+//   - rescans: in-memory last-rescan-per-folder log used by the
+//     backstop check.
+//
+// Any of these may be nil; reconcile/Diff degrades gracefully (no
+// rescan emissions, no auto-pause emissions), preserving the
+// pre-v0.9.6/v0.9.7 baseline.
+func startReconcileDaemon(
+	ctx context.Context,
+	logger *slog.Logger,
+	activityTracker *activity.Tracker,
+	health healthForReconcile,
+	wake reconcileWakeFlag,
+	rescans *rescanLog,
+) {
 	machinePath := config.MachineConfigPath()
 	statePath := config.StateV2Path()
 
@@ -385,13 +460,25 @@ func startReconcileDaemon(ctx context.Context, logger *slog.Logger, activityTrac
 	}
 
 	desired := reconcile.NewDesiredProvider(machinePath, statePath)
-	// Pass the activity tracker (or nil) through the typed nil-friendly
-	// wrapper so the provider can populate LastActivityByPath.
-	var activityQ reconcile.ActivityQuerier
+
+	// Build the full ObservedProviderInputs. Each input is converted
+	// from the daemon-side concrete type to the narrow reconcile
+	// interface here so the reconcile package doesn't depend on the
+	// concrete activity/watchhealth/wake packages.
+	inputs := reconcile.ObservedProviderInputs{}
 	if activityTracker != nil {
-		activityQ = activityTracker
+		inputs.Activity = activityTracker
 	}
-	observed := buildObservedProvider(statePath, activityQ)
+	if health != nil {
+		inputs.Health = health
+	}
+	if wake != nil {
+		inputs.Wake = wake
+	}
+	if rescans != nil {
+		inputs.LastRescans = rescans
+	}
+	observed := buildObservedProviderFull(statePath, inputs)
 
 	// Wire up Syncthing client for the applier.
 	var stClient *stclient.Client
@@ -400,8 +487,10 @@ func startReconcileDaemon(ctx context.Context, logger *slog.Logger, activityTrac
 	}
 
 	applier := &reconcile.RealApplier{
-		ST:     stClient,
-		Logger: logger,
+		ST:                 stClient,
+		Logger:             logger,
+		Health:             healthResetter(health),
+		LastRescanRecorder: rescans,
 	}
 
 	r := &reconcile.Reconciler{

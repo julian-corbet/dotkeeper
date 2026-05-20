@@ -40,6 +40,20 @@ type SyncthingClient interface {
 	// SetFolderPaused toggles the folder's paused flag, used by the v0.9.6
 	// auto-pause loop to suspend dormant folders and resume them on activity.
 	SetFolderPaused(folderID string, paused bool) error
+	// ScheduleRescan asks Syncthing to immediately rescan the named
+	// folder, used by the v0.9.7 smart-rescan loop in response to
+	// overflow/wake/backstop signals.
+	ScheduleRescan(folderID string) error
+}
+
+// HealthResetter is called by the applier after a successful
+// RescanFolderNow to clear the overflow / watch-limit flags on the
+// watchhealth tracker. Optional — when nil, the applier just skips
+// the reset and the tracker's flags persist until the next reset
+// call from elsewhere (none today, so leaving HealthResetter nil
+// would leak the flags). Wired by the daemon in cmd/dotkeeper.
+type HealthResetter interface {
+	Reset(path string)
 }
 
 // RealApplier executes Actions against live system state. It is idempotent:
@@ -52,6 +66,29 @@ type RealApplier struct {
 
 	// Logger receives structured log events for each action applied.
 	Logger *slog.Logger
+
+	// Health, when non-nil, receives Reset(path) calls after a
+	// RescanFolderNow action runs successfully. Lets the v0.9.7
+	// smart-rescan loop clear its per-folder flags from inside the
+	// applier without exposing the action.Path field to its caller.
+	Health HealthResetter
+
+	// LastRescanRecorder, when non-nil, is called after each
+	// successful RescanFolderNow so reconcile can persist when the
+	// scan was emitted. Used to drive the backstop interval. In-
+	// memory map updated under a mutex; persisting to state.toml is
+	// a v0.9.8 enhancement (current in-memory map resets on daemon
+	// restart, which causes one extra rescan per folder per restart
+	// — acceptable cost given restarts are rare).
+	LastRescanRecorder LastRescanRecorder
+}
+
+// LastRescanRecorder records the timestamp at which dotkeeper asked
+// Syncthing to rescan the folder. Pulled out as an interface so the
+// daemon can supply a real in-memory implementation and tests can
+// supply a no-op.
+type LastRescanRecorder interface {
+	RecordRescan(path string, at time.Time)
 }
 
 // Apply dispatches to the correct handler based on the concrete Action type.
@@ -75,6 +112,8 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 		return a.applyPauseSyncthingFolder(act)
 	case UnpauseSyncthingFolder:
 		return a.applyUnpauseSyncthingFolder(act)
+	case RescanFolderNow:
+		return a.applyRescanFolderNow(act)
 	case AddSyncthingDevice:
 		return a.applyAddSyncthingDevice(act)
 	case EnsureIgnoreFile:
@@ -514,6 +553,25 @@ func (a *RealApplier) applyUnpauseSyncthingFolder(act UnpauseSyncthingFolder) er
 	}
 	if err := a.ST.SetFolderPaused(act.FolderID, false); err != nil {
 		return fmt.Errorf("UnpauseSyncthingFolder %q: %w", act.FolderID, err)
+	}
+	return nil
+}
+
+func (a *RealApplier) applyRescanFolderNow(act RescanFolderNow) error {
+	if a.ST == nil {
+		return fmt.Errorf("RescanFolderNow %q: Syncthing client not available", act.FolderID)
+	}
+	if err := a.ST.ScheduleRescan(act.FolderID); err != nil {
+		return fmt.Errorf("RescanFolderNow %q: %w", act.FolderID, err)
+	}
+	// Reset watchhealth flags only on success — if the rescan failed
+	// we want the flags to stay raised so the next reconcile cycle
+	// retries.
+	if a.Health != nil && act.Path != "" {
+		a.Health.Reset(act.Path)
+	}
+	if a.LastRescanRecorder != nil && act.Path != "" {
+		a.LastRescanRecorder.RecordRescan(act.Path, time.Now())
 	}
 	return nil
 }

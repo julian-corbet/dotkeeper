@@ -301,9 +301,9 @@ func NewObservedProvider(stClient *stclient.Client, stateConfigPath string) Obse
 	// bypass the nil check inside newObservedProvider and panic. Explicitly
 	// pass a nil interface when the pointer is nil.
 	if stClient == nil {
-		return newObservedProvider(nil, stateConfigPath, nil)
+		return newObservedProvider(nil, stateConfigPath, nil, nil, nil, nil)
 	}
-	return newObservedProvider(stClient, stateConfigPath, nil)
+	return newObservedProvider(stClient, stateConfigPath, nil, nil, nil, nil)
 }
 
 // ActivityQuerier is the minimum surface NewObservedProviderWithActivity
@@ -315,20 +315,77 @@ type ActivityQuerier interface {
 	LastActivity(root string) (time.Time, bool)
 }
 
+// HealthQuerier is the minimum surface the provider needs from the
+// watchhealth tracker. The signature deliberately returns the
+// fields as a small structurally-equivalent FolderHealth so the
+// watchhealth package can stay out of reconcile's import graph
+// (avoiding a long-term coupling that would force every reconcile
+// test to provide a watchhealth stub).
+type HealthQuerier interface {
+	StatusForReconcile(root string) (FolderHealth, bool)
+}
+
+// WakeFlag is consulted by the provider to decide whether
+// Observed.SleepWakeSeen should be set on this cycle. Implementations
+// are expected to clear the flag on Take() so it fires exactly once
+// per detected wake event (Take is "consume the pending flag").
+type WakeFlag interface {
+	Take() bool
+}
+
+// LastRescanQuerier returns the timestamp at which dotkeeper last
+// asked Syncthing to rescan the named folder. Returns zero time
+// and ok=false when no rescan has been recorded for the path.
+type LastRescanQuerier interface {
+	LastRescan(path string) (time.Time, bool)
+}
+
 // NewObservedProviderWithActivity is NewObservedProvider plus an
 // activity querier. The provider populates Observed.LastActivityByPath
 // from the querier on every call so Diff can decide auto-pause
 // transitions. Pass nil when auto-pause is disabled or unavailable.
 func NewObservedProviderWithActivity(stClient *stclient.Client, stateConfigPath string, activity ActivityQuerier) ObservedProvider {
 	if stClient == nil {
-		return newObservedProvider(nil, stateConfigPath, activity)
+		return newObservedProvider(nil, stateConfigPath, activity, nil, nil, nil)
 	}
-	return newObservedProvider(stClient, stateConfigPath, activity)
+	return newObservedProvider(stClient, stateConfigPath, activity, nil, nil, nil)
+}
+
+// ObservedProviderInputs bundles the optional v0.9.7 inputs to
+// newObservedProvider so the daemon can extend the wiring with
+// watchhealth/wake/lastRescan support without further constructor
+// proliferation. nil fields are tolerated and Diff degrades
+// gracefully (missing watchhealth → all folders treated as
+// unreliable; missing wake flag → SleepWakeSeen stays false;
+// missing last-rescan → backstops fire on first reconcile, which
+// is benign because rescans are idempotent).
+type ObservedProviderInputs struct {
+	Activity    ActivityQuerier
+	Health      HealthQuerier
+	Wake        WakeFlag
+	LastRescans LastRescanQuerier
+}
+
+// NewObservedProviderFull is the v0.9.7 constructor that wires all
+// optional inputs. v0.9.6's NewObservedProviderWithActivity
+// continues to work as before for callers that only need activity.
+func NewObservedProviderFull(stClient *stclient.Client, stateConfigPath string, in ObservedProviderInputs) ObservedProvider {
+	if stClient == nil {
+		return newObservedProvider(nil, stateConfigPath, in.Activity, in.Health, in.Wake, in.LastRescans)
+	}
+	return newObservedProvider(stClient, stateConfigPath, in.Activity, in.Health, in.Wake, in.LastRescans)
 }
 
 // newObservedProvider accepts the SyncthingQuerier interface directly, which
 // lets tests pass a stub without wrapping the real stclient.Client.
-func newObservedProvider(querier SyncthingQuerier, stateConfigPath string, activity ActivityQuerier) ObservedProvider {
+func newObservedProvider(
+	querier SyncthingQuerier,
+	stateConfigPath string,
+	activity ActivityQuerier,
+	health HealthQuerier,
+	wake WakeFlag,
+	lastRescans LastRescanQuerier,
+) ObservedProvider {
 	return func(_ context.Context) (Observed, error) {
 		obs := Observed{Now: time.Now()}
 
@@ -355,6 +412,37 @@ func newObservedProvider(querier SyncthingQuerier, stateConfigPath string, activ
 				}
 			}
 			obs.LastActivityByPath = byPath
+		}
+
+		// 1c. Watch-health classifications for smart rescan. When
+		// the health tracker is nil, WatchHealthByPath stays nil
+		// and Diff defaults to "treat every folder as untrusted"
+		// (daily backstop), matching the v0.9.4-v0.9.6 baseline.
+		if health != nil {
+			byPath := make(map[string]FolderHealth, len(obs.ManagedFolders))
+			for _, f := range obs.ManagedFolders {
+				if h, ok := health.StatusForReconcile(f.Path); ok {
+					byPath[f.Path] = h
+				}
+			}
+			obs.WatchHealthByPath = byPath
+		}
+
+		// 1d. Wake flag. Take() consumes the pending flag so it
+		// fires exactly once per detected suspend/resume cycle.
+		if wake != nil {
+			obs.SleepWakeSeen = wake.Take()
+		}
+
+		// 1e. Last-rescan timestamps for the backstop interval check.
+		if lastRescans != nil {
+			byPath := make(map[string]time.Time, len(obs.ManagedFolders))
+			for _, f := range obs.ManagedFolders {
+				if t, ok := lastRescans.LastRescan(f.Path); ok {
+					byPath[f.Path] = t
+				}
+			}
+			obs.LastRescanByPath = byPath
 		}
 
 		// 2. state.toml for cached state + tracked override paths.

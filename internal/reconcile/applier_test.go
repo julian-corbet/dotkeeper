@@ -34,8 +34,9 @@ type fakeST struct {
 	ErrStatus       error
 	ErrSchedule     error
 	ErrPause        error
-	ScheduleUpdated []string         // folder IDs for which UpdateFolderSchedule was invoked, in order
-	PausedSet       []pauseFolderOp  // ordered record of SetFolderPaused calls
+	ScheduleUpdated []string        // folder IDs for which UpdateFolderSchedule was invoked, in order
+	PausedSet       []pauseFolderOp // ordered record of SetFolderPaused calls
+	RescanRequested []string        // folder IDs for which ScheduleRescan was invoked, in order
 }
 
 type pauseFolderOp struct {
@@ -100,6 +101,14 @@ func (f *fakeST) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 		"label": label,
 		"path":  path,
 	})
+	return nil
+}
+
+func (f *fakeST) ScheduleRescan(folderID string) error {
+	if f.ErrSchedule != nil {
+		return f.ErrSchedule
+	}
+	f.RescanRequested = append(f.RescanRequested, folderID)
 	return nil
 }
 

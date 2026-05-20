@@ -94,12 +94,53 @@ type Observed struct {
 	// decide PauseSyncthingFolder / UnpauseSyncthingFolder actions.
 	LastActivityByPath map[string]time.Time
 
+	// WatchHealthByPath maps each managed folder root path to its
+	// current watchhealth.Status. nil when the watchhealth tracker
+	// is unavailable; in that case Diff falls back to per-folder
+	// periodic rescan (as if every folder were on an unreliable
+	// filesystem), matching pre-v0.9.7 behaviour.
+	//
+	// The map is encoded as a generic key-value pair rather than a
+	// typed reference to watchhealth.Status because importing
+	// watchhealth into reconcile would create a long-term coupling:
+	// reconcile-side tests would need a watchhealth stub for every
+	// scenario. Instead, the diff treats WatchHealthByPath as opaque
+	// data (uses only the fields it knows by name via Status struct
+	// embedding through the FolderHealth re-export below).
+	WatchHealthByPath map[string]FolderHealth
+
+	// SleepWakeSeen reports whether the wake detector signalled a
+	// suspect resume-from-sleep event since the last reconcile
+	// cycle. When true, Diff emits a RescanFolderNow for every
+	// managed folder regardless of its filesystem classification.
+	SleepWakeSeen bool
+
+	// LastRescanByPath tracks when dotkeeper last asked Syncthing
+	// to rescan each folder. Drives the weekly-backstop check for
+	// reliable filesystems and the daily-backstop check for
+	// unreliable filesystems. May be nil on first reconcile after
+	// daemon startup; Diff treats nil as "never rescanned" and
+	// emits rescans where due.
+	LastRescanByPath map[string]time.Time
+
 	// Now is the wall-clock time at which Observed was constructed.
 	// Diff uses it for "is this older than the idle threshold"
 	// comparisons. Carrying it on the struct rather than calling
 	// time.Now() inside Diff keeps Diff a pure function — same inputs
 	// always produce the same plan.
 	Now time.Time
+}
+
+// FolderHealth is reconcile's view of the watchhealth.Status for
+// one folder. Kept as a structurally-equivalent copy so the diff
+// can branch on health without taking on a hard dependency on the
+// watchhealth package's representation. The provider populates it
+// by copying fields one-to-one from watchhealth.Status.
+type FolderHealth struct {
+	FilesystemReliable  bool
+	OverflowSeen        bool
+	WatchLimitHit       bool
+	LastReliableEventAt time.Time
 }
 
 // BuildDesired constructs a Desired from a parsed MachineConfigV2, the
@@ -393,6 +434,29 @@ type UnpauseSyncthingFolder struct {
 
 func (a UnpauseSyncthingFolder) Describe() string {
 	return "unpause active Syncthing folder " + a.FolderID
+}
+
+// RescanFolderNow asks Syncthing to do an immediate full rescan of
+// the folder identified by FolderID. Emitted by the v0.9.7 smart
+// rescan logic when the OS event API is suspected to have missed
+// something. Reason is included for log evidence — operators see
+// "rescan folder X (reason: inotify queue overflow)" rather than
+// having to deduce why the action fired.
+//
+// Path is included because the applier needs to call back into the
+// watchhealth tracker's Reset(path) after a successful rescan, and
+// the tracker is keyed by path, not folder ID.
+type RescanFolderNow struct {
+	FolderID string
+	Path     string
+	Reason   string
+}
+
+func (a RescanFolderNow) Describe() string {
+	if a.Reason == "" {
+		return "rescan Syncthing folder " + a.FolderID
+	}
+	return "rescan Syncthing folder " + a.FolderID + " (reason: " + a.Reason + ")"
 }
 
 // EnsureIgnoreFile is emitted when a repo root is missing dotkeeper's
