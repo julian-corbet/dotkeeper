@@ -237,6 +237,23 @@ func (c *Client) GetFolderStatus(folderID string) (*FolderStatus, error) {
 	return &s, nil
 }
 
+// Canonical scheduler defaults written by dotkeeper into every managed
+// Syncthing folder. Centralised so the diff (which detects drift) and
+// the applier (which writes the desired values) share one definition.
+//
+// rescanIntervalS=86400 (daily). fsWatcher carries real-time changes
+// via inotify on Linux; the periodic rescan is the inotify-drop safety
+// net. The prior 60s default forced ~one full tree walk per minute per
+// folder, dominating the daemon's CPU on multi-folder fleets without
+// any operational benefit. See v0.9.4 CHANGELOG for the original
+// switch; v0.9.5 added the drift detector so existing installs migrate
+// even when the folder otherwise looks correct to the reconciler.
+const (
+	CanonicalRescanIntervalS  = 86400
+	CanonicalFsWatcherEnabled = true
+	CanonicalFsWatcherDelayS  = 1
+)
+
 // AddOrUpdateFolder adds or updates a shared folder.
 func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) error {
 	cfg, err := c.GetConfig()
@@ -277,9 +294,9 @@ func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 		// CPU profile against v0.9.2 showed 21% of total CPU in
 		// stat/readdir syscalls (runtime.cgocall), almost all of it
 		// driven by these rescans.
-		"rescanIntervalS":  86400,
-		"fsWatcherEnabled": true,
-		"fsWatcherDelayS":  1,
+		"rescanIntervalS":  CanonicalRescanIntervalS,
+		"fsWatcherEnabled": CanonicalFsWatcherEnabled,
+		"fsWatcherDelayS":  CanonicalFsWatcherDelayS,
 		"ignorePerms":      false,
 		"autoNormalize":    true,
 		"markerName":       FolderMarkerName,
@@ -301,9 +318,9 @@ func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 			fm["path"] = path
 			fm["devices"] = folderDevices
 			fm["markerName"] = FolderMarkerName
-			fm["rescanIntervalS"] = 86400
-			fm["fsWatcherEnabled"] = true
-			fm["fsWatcherDelayS"] = 1
+			fm["rescanIntervalS"] = CanonicalRescanIntervalS
+			fm["fsWatcherEnabled"] = CanonicalFsWatcherEnabled
+			fm["fsWatcherDelayS"] = CanonicalFsWatcherDelayS
 			folders[i] = fm
 			found = true
 			break
@@ -353,4 +370,39 @@ func (c *Client) put(endpoint string, data any) error {
 		return fmt.Errorf("API returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// UpdateFolderSchedule rewrites the scheduler fields (rescanIntervalS,
+// fsWatcherEnabled, fsWatcherDelayS) on an existing folder to the
+// canonical dotkeeper-managed values, leaving all other fields
+// (devices, label, custom user fields) untouched. Returns an error if
+// the folder ID is not present in Syncthing's config.
+//
+// This exists separately from AddOrUpdateFolder because reconcile's
+// drift detector emits UpdateSyncthingFolderSchedule when only the
+// scheduler fields are wrong — in which case calling AddOrUpdateFolder
+// would also rewrite devices/label/path needlessly.
+func (c *Client) UpdateFolderSchedule(folderID string) error {
+	cfg, err := c.GetConfig()
+	if err != nil {
+		return err
+	}
+	folders, _ := cfg["folders"].([]any)
+	found := false
+	for i, f := range folders {
+		fm, _ := f.(map[string]any)
+		if fm["id"] == folderID {
+			fm["rescanIntervalS"] = CanonicalRescanIntervalS
+			fm["fsWatcherEnabled"] = CanonicalFsWatcherEnabled
+			fm["fsWatcherDelayS"] = CanonicalFsWatcherDelayS
+			folders[i] = fm
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("folder %q not found in Syncthing config", folderID)
+	}
+	cfg["folders"] = folders
+	return c.SetConfig(cfg)
 }
