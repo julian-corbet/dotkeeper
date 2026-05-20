@@ -67,6 +67,61 @@ func TestDefaultSyncIgnorePatternsCoversLanguageServerCaches(t *testing.T) {
 	}
 }
 
+// TestDefaultSyncIgnorePatternsAreConsolidated guards the v0.9.3
+// pattern-consolidation work against accidental re-expansion. A
+// profile showed ignore.Matcher.Match consuming 32.6% of the daemon's
+// CPU; the dominant per-pattern cost was glob matching, multiplied by
+// the variant explosion in the prior list (8 sqlite + 4 swap + 2 pyc
+// + 2 log enumerations).
+//
+// Each "absent" check fails if anyone reintroduces an enumerated
+// variant; each "present" check confirms the consolidating glob is
+// still in place. If a future change has a documented reason to split
+// a family back out (e.g. a Syncthing matcher bug with a specific
+// glob class), update this test deliberately with a comment, don't
+// silently delete the guard.
+func TestDefaultSyncIgnorePatternsAreConsolidated(t *testing.T) {
+	t.Parallel()
+
+	// Patterns that MUST be present — the consolidating globs.
+	required := []string{
+		"*.sqlite*",
+		"*.log*",
+		"*.py[co]",
+		"*.sw[op]",
+		".*.sw[op]",
+	}
+	for _, want := range required {
+		if !containsPattern(DefaultSyncIgnorePatterns, want) {
+			t.Errorf("consolidated pattern %q missing; was it split back into variants?", want)
+		}
+	}
+
+	// Patterns that MUST be absent — the old enumerated variants.
+	forbidden := []string{
+		"*.sqlite3",
+		"*.sqlite3-journal",
+		"*.sqlite3-wal",
+		"*.sqlite3-shm",
+		"*.sqlite",
+		"*.sqlite-journal",
+		"*.sqlite-wal",
+		"*.sqlite-shm",
+		"*.log.*",
+		"*.pyc",
+		"*.pyo",
+		"*.swp",
+		"*.swo",
+		".*.swp",
+		".*.swo",
+	}
+	for _, gone := range forbidden {
+		if containsPattern(DefaultSyncIgnorePatterns, gone) {
+			t.Errorf("pre-consolidation variant %q reintroduced; collapse into the family glob instead", gone)
+		}
+	}
+}
+
 func containsPattern(patterns []string, want string) bool {
 	for _, pattern := range patterns {
 		if pattern == want {

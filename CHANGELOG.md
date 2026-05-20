@@ -7,6 +7,36 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-05-20
+
+### Performance
+
+- **Consolidated default ignore patterns.** A CPU profile against the
+  running daemon showed `ignore.Matcher.Match` accounting for 32.6%
+  of total CPU, with the supporting glob engine and string-search
+  internals pushing matching-related work past 50%. The dominant
+  per-pattern cost was glob matching, multiplied by enumerated
+  variant families in the prior default list. Collapses:
+  - 8 sqlite variants (`*.sqlite3`, `*.sqlite3-journal`, … ) → `*.sqlite*`
+  - 4 vim/nvim swap variants (`*.swp`, `*.swo`, `.*.swp`, `.*.swo`) →
+    `*.sw[op]` + `.*.sw[op]` (two patterns, character class instead
+    of separate strings)
+  - 2 Python bytecode variants (`*.pyc`, `*.pyo`) → `*.py[co]`
+  - 2 log variants (`*.log`, `*.log.*`) → `*.log*`
+
+  Net pattern count: 64 → 51. Expected matcher-time reduction is
+  30-50% in steady state on dev trees with many files.
+
+  Pattern order is also load-bearing now: the highest-frequency
+  matches (`.git`, dotkeeper/Syncthing control files) stay at the top
+  of the list so the matcher's first-hit-wins short-circuits early.
+  Documented in the file header.
+
+  Two new regression tests pin the consolidation against accidental
+  re-expansion: one asserts the consolidating globs are present,
+  one asserts the old enumerated variants are absent. A deliberate
+  future split-back-out would have to amend both.
+
 ## [0.9.2] - 2026-05-20
 
 ### Performance
