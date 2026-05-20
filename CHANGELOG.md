@@ -7,6 +7,45 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-05-20
+
+### Performance
+
+- **Folder rescan interval raised from 60 seconds to 24 hours.** The
+  prior 60s value was a defensive holdover from early dotkeeper
+  builds, before Syncthing's fsWatcher (inotify on Linux) was
+  trusted. On a fleet with 22 active folders it forced ~1320 full
+  tree walks per hour — visible in CPU profiles as 21% of total CPU
+  spent in stat/readdir syscalls (`runtime.cgocall`) for no
+  operational benefit, because every real-time change was already
+  being picked up by inotify within milliseconds.
+
+  The new daily rescan is purely the safety-net path for the
+  vanishingly rare case where inotify briefly drops events under
+  extreme kernel memory pressure. fsWatcher remains enabled with a
+  1-second coalescing delay, so the user-perceived sync latency is
+  unchanged.
+
+  The merge path of `AddOrUpdateFolder` now actively writes
+  `rescanIntervalS` (and `fsWatcherEnabled`, `fsWatcherDelayS`) on
+  every reconcile, so folders carried over from v0.9.3-and-earlier
+  installs migrate automatically on first reconcile after upgrade.
+  Without this, existing installs would have stayed at the old 60s
+  value indefinitely.
+
+  Per-folder override via `.dotkeeper.toml` is not implemented in
+  v0.9.4 — the daily default is what the load-bearing fleet wants
+  and a per-folder knob is straightforward to add when genuine
+  demand appears.
+
+### Tests
+
+- `TestAddOrUpdateFolderMergesExisting` now asserts the migration
+  path: a pre-existing `rescanIntervalS=60` must be overwritten to
+  86400 on next reconcile, while unrelated custom fields survive
+  the merge. Prevents accidental regression to "preserve user
+  customisation" semantics for the scheduler-managed fields.
+
 ## [0.9.3] - 2026-05-20
 
 ### Performance
