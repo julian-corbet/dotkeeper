@@ -224,6 +224,17 @@ type FolderObs struct {
 	// directory is absent from Path. A missing marker leaves the folder
 	// configured but unusable, so reconcile must repair it.
 	MarkerDirMissing bool
+
+	// RescanIntervalS is the folder's current rescanIntervalS as
+	// reported by Syncthing's REST config. Compared against
+	// stclient.CanonicalRescanIntervalS so reconcile can migrate
+	// folders carried over from earlier dotkeeper installs whose
+	// scheduler values predate the v0.9.4 default change.
+	RescanIntervalS int
+
+	// FsWatcherEnabled mirrors the folder's fsWatcherEnabled field.
+	// Part of the same scheduler-drift check as RescanIntervalS.
+	FsWatcherEnabled bool
 }
 
 // RepoObs is the observed state of a single tracked git repository.
@@ -319,6 +330,21 @@ type UpdateSyncthingFolderDevices struct {
 
 func (a UpdateSyncthingFolderDevices) Describe() string {
 	return "update devices for Syncthing folder " + a.FolderID
+}
+
+// UpdateSyncthingFolderSchedule is emitted when the folder's scheduler
+// fields (rescanIntervalS, fsWatcherEnabled) drift from the canonical
+// dotkeeper-managed values. The driving case is migrating folders
+// carried over from v0.9.3-and-earlier installs whose
+// rescanIntervalS=60 still bleeds CPU after upgrade because
+// reconcile's other diff checks see "folder exists, correct path,
+// correct devices, marker present" and emit no actions.
+type UpdateSyncthingFolderSchedule struct {
+	FolderID string
+}
+
+func (a UpdateSyncthingFolderSchedule) Describe() string {
+	return "update scheduler fields for Syncthing folder " + a.FolderID
 }
 
 // EnsureIgnoreFile is emitted when a repo root is missing dotkeeper's

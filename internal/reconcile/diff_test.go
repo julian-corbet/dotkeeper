@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
+	"github.com/julian-corbet/dotkeeper/internal/stclient"
 )
 
 func TestDiff(t *testing.T) {
@@ -120,6 +121,8 @@ func TestDiff(t *testing.T) {
 						SyncthingFolderID: "dk-repo",
 						Path:              "/repo",
 						Devices:           []string{"DEVICE-A"}, // missing DEVICE-B
+						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
 					},
 				},
 				TrackedRepos: []RepoObs{
@@ -156,6 +159,8 @@ func TestDiff(t *testing.T) {
 						SyncthingFolderID: "dk-repo",
 						Path:              "/repo",
 						Devices:           []string{"DEVICE-A"},
+						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
 					},
 				},
 				TrackedRepos: []RepoObs{
@@ -186,6 +191,8 @@ func TestDiff(t *testing.T) {
 						SyncthingFolderID: "dk-repo",
 						Path:              "/repo",
 						Devices:           []string{"DEVICE-A"},
+						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
 					},
 				},
 				TrackedRepos: []RepoObs{{Path: "/repo"}},
@@ -224,6 +231,8 @@ func TestDiff(t *testing.T) {
 						Path:              "/repo",
 						Devices:           []string{"DEVICE-A"},
 						MarkerDirMissing:  true,
+						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
 					},
 				},
 				TrackedRepos: []RepoObs{
@@ -252,7 +261,13 @@ func TestDiff(t *testing.T) {
 			},
 			obs: Observed{
 				ManagedFolders: []FolderObs{
-					{SyncthingFolderID: "dk-dots", Path: "/dots", Devices: []string{"X", "Y"}},
+					{
+						SyncthingFolderID: "dk-dots",
+						Path:              "/dots",
+						Devices:           []string{"X", "Y"},
+						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+					},
 				},
 				TrackedRepos: []RepoObs{
 					{Path: "/dots", IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
@@ -789,4 +804,91 @@ func containsString(items []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestDiffEmitsUpdateScheduleOnDrift is the v0.9.5 regression guard.
+// Folders carried over from v0.9.3-and-earlier installs have
+// rescanIntervalS=60 and otherwise correct devices/path/marker. Prior
+// to v0.9.5, reconcile's diff loop saw no drift on any of the checks
+// it did (path/devices/marker/ignore) and emitted no actions, leaving
+// the folder at 60s indefinitely. The drift detector closes that gap.
+func TestDiffEmitsUpdateScheduleOnDrift(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		obs  FolderObs
+		want bool
+	}{
+		{
+			name: "fresh canonical install — no action",
+			obs: FolderObs{
+				SyncthingFolderID: "dk-x",
+				Path:              "/x",
+				Devices:           []string{"DEV-A"},
+				RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+				FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+			},
+			want: false,
+		},
+		{
+			name: "v0.9.3 leftover rescanIntervalS=60 — emit",
+			obs: FolderObs{
+				SyncthingFolderID: "dk-x",
+				Path:              "/x",
+				Devices:           []string{"DEV-A"},
+				RescanIntervalS:   60, // the bug we're migrating away from
+				FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+			},
+			want: true,
+		},
+		{
+			name: "fsWatcher disabled by third-party UI — emit",
+			obs: FolderObs{
+				SyncthingFolderID: "dk-x",
+				Path:              "/x",
+				Devices:           []string{"DEV-A"},
+				RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+				FsWatcherEnabled:  false,
+			},
+			want: true,
+		},
+		{
+			name: "rescanIntervalS=0 (inotify-only) — still emit, not canonical",
+			obs: FolderObs{
+				SyncthingFolderID: "dk-x",
+				Path:              "/x",
+				Devices:           []string{"DEV-A"},
+				RescanIntervalS:   0,
+				FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+			},
+			want: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			desired := Desired{
+				Repos: map[string]RepoDesired{
+					"/x": {Path: "/x", SyncthingFolderID: "dk-x", ShareWith: []string{"DEV-A"}},
+				},
+			}
+			observed := Observed{
+				ManagedFolders: []FolderObs{tc.obs},
+				TrackedRepos: []RepoObs{
+					{Path: "/x", IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
+				},
+			}
+			plan := Diff(desired, observed)
+			emitted := false
+			for _, a := range plan {
+				if u, ok := a.(UpdateSyncthingFolderSchedule); ok && u.FolderID == "dk-x" {
+					emitted = true
+				}
+			}
+			if emitted != tc.want {
+				t.Errorf("UpdateSyncthingFolderSchedule emitted=%v want=%v (plan=%v)", emitted, tc.want, plan)
+			}
+		})
+	}
 }

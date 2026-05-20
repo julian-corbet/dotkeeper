@@ -6,6 +6,7 @@ package reconcile
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -24,13 +25,15 @@ import (
 // and a fixed device ID. Any method can be made to return an error by setting
 // the corresponding Err* field.
 type fakeST struct {
-	cfg       map[string]any
-	myID      string
-	ErrGet    error
-	ErrSet    error
-	ErrAdd    error
-	ErrDevice error
-	ErrStatus error
+	cfg              map[string]any
+	myID             string
+	ErrGet           error
+	ErrSet           error
+	ErrAdd           error
+	ErrDevice        error
+	ErrStatus        error
+	ErrSchedule      error
+	ScheduleUpdated  []string // folder IDs for which UpdateFolderSchedule was invoked, in order
 }
 
 func newFakeST() *fakeST {
@@ -91,6 +94,26 @@ func (f *fakeST) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 		"path":  path,
 	})
 	return nil
+}
+
+func (f *fakeST) UpdateFolderSchedule(folderID string) error {
+	if f.ErrSchedule != nil {
+		return f.ErrSchedule
+	}
+	f.ScheduleUpdated = append(f.ScheduleUpdated, folderID)
+	folders, _ := f.cfg["folders"].([]any)
+	for i, fld := range folders {
+		fm, _ := fld.(map[string]any)
+		if fm["id"] == folderID {
+			fm["rescanIntervalS"] = float64(stclient.CanonicalRescanIntervalS)
+			fm["fsWatcherEnabled"] = stclient.CanonicalFsWatcherEnabled
+			fm["fsWatcherDelayS"] = float64(stclient.CanonicalFsWatcherDelayS)
+			folders[i] = fm
+			f.cfg["folders"] = folders
+			return nil
+		}
+	}
+	return fmt.Errorf("folder %q not found", folderID)
 }
 
 func (f *fakeST) AddDevice(deviceID, name string) error {

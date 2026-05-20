@@ -389,11 +389,27 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 				}
 			}
 
+			// JSON numerics decode as float64; coerce to int for the
+			// drift comparison. Default to 0 (which fails the
+			// equality check against the canonical value, correctly
+			// flagging the field as drifted) if the key is absent or
+			// has the wrong type.
+			rescanIntervalS := 0
+			if rv, ok := fm["rescanIntervalS"].(float64); ok {
+				rescanIntervalS = int(rv)
+			}
+			fsWatcherEnabled := false
+			if fw, ok := fm["fsWatcherEnabled"].(bool); ok {
+				fsWatcherEnabled = fw
+			}
+
 			folders = append(folders, FolderObs{
 				SyncthingFolderID: folderID,
 				Path:              folderPath,
 				Devices:           devices,
 				MarkerDirMissing:  folderMarkerMissing(folderPath, markerName),
+				RescanIntervalS:   rescanIntervalS,
+				FsWatcherEnabled:  fsWatcherEnabled,
 			})
 		}
 	}

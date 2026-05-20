@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
+	"github.com/julian-corbet/dotkeeper/internal/stclient"
 )
 
 // Diff computes the Plan needed to move observed state towards desired state.
@@ -89,6 +90,17 @@ func Diff(desired Desired, observed Observed) Plan {
 			plan = append(plan, UpdateSyncthingFolderDevices{
 				FolderID: df.folderID,
 				Devices:  df.devices,
+			})
+		}
+		// Scheduler-field drift check: independent of device drift,
+		// because a folder can have the right devices but the wrong
+		// scheduler values (the case after upgrading from a release
+		// that wrote rescanIntervalS=60). Emitted on the existing-
+		// folder branch only; new folders get the canonical values
+		// directly from AddSyncthingFolder/AddOrUpdateFolder.
+		if exists && folderScheduleDrifted(obs) {
+			plan = append(plan, UpdateSyncthingFolderSchedule{
+				FolderID: df.folderID,
 			})
 		}
 		if exists && obs.MarkerDirMissing {
@@ -238,4 +250,25 @@ func stringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// folderScheduleDrifted reports whether the observed folder's
+// scheduler fields differ from the canonical dotkeeper-managed values.
+// Both fields are checked because a folder created by a third-party
+// Syncthing UI might have one wrong and the other right; dotkeeper
+// owns both.
+//
+// A RescanIntervalS of 0 is reserved by Syncthing for "watcher only,
+// no periodic rescan" and is *not* the canonical value, so it triggers
+// migration to 86400. If a user-facing per-folder override knob is
+// added later, this check needs to consult the desired override rather
+// than always reaching for the canonical default.
+func folderScheduleDrifted(obs FolderObs) bool {
+	if obs.RescanIntervalS != stclient.CanonicalRescanIntervalS {
+		return true
+	}
+	if obs.FsWatcherEnabled != stclient.CanonicalFsWatcherEnabled {
+		return true
+	}
+	return false
 }

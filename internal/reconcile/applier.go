@@ -33,6 +33,10 @@ type SyncthingClient interface {
 	AddOrUpdateFolder(id, label, path string, deviceIDs []string) error
 	// AddDevice adds a Syncthing peer device if it is not already present.
 	AddDevice(deviceID, name string) error
+	// UpdateFolderSchedule rewrites the scheduler fields on an existing folder
+	// to the canonical dotkeeper-managed values, used by the v0.9.5 drift
+	// detector to migrate folders carried over from older installs.
+	UpdateFolderSchedule(folderID string) error
 }
 
 // RealApplier executes Actions against live system state. It is idempotent:
@@ -62,6 +66,8 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 		return a.applyRemoveSyncthingFolder(act)
 	case UpdateSyncthingFolderDevices:
 		return a.applyUpdateSyncthingFolderDevices(act)
+	case UpdateSyncthingFolderSchedule:
+		return a.applyUpdateSyncthingFolderSchedule(act)
 	case AddSyncthingDevice:
 		return a.applyAddSyncthingDevice(act)
 	case EnsureIgnoreFile:
@@ -470,6 +476,19 @@ func loadOrInitState() (*config.StateV2, error) {
 		}
 	}
 	return state, nil
+}
+
+// applyUpdateSyncthingFolderSchedule rewrites the scheduler fields on
+// an existing folder. Driving case is migrating folders left at
+// rescanIntervalS=60 by v0.9.3-and-earlier installs.
+func (a *RealApplier) applyUpdateSyncthingFolderSchedule(act UpdateSyncthingFolderSchedule) error {
+	if a.ST == nil {
+		return fmt.Errorf("UpdateSyncthingFolderSchedule %q: Syncthing client not available (is Syncthing running?)", act.FolderID)
+	}
+	if err := a.ST.UpdateFolderSchedule(act.FolderID); err != nil {
+		return fmt.Errorf("UpdateSyncthingFolderSchedule %q: %w", act.FolderID, err)
+	}
+	return nil
 }
 
 // gitRun executes a git command in the given directory, passing through the
