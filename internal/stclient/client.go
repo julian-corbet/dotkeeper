@@ -372,6 +372,38 @@ func (c *Client) put(endpoint string, data any) error {
 	return nil
 }
 
+// SetFolderPaused sets the paused flag on an existing Syncthing folder
+// to the given value. Pausing stops the folder's scanner, fsWatcher,
+// and BEP gossip; the folder's index DB stays on disk but is unloaded
+// from memory. Unpausing is the inverse. Returns an error if the
+// folder ID is not present in Syncthing's config.
+//
+// Used by the v0.9.6 auto-pause feature: reconcile pauses folders
+// that have been quiet on the local filesystem for longer than the
+// idle threshold, and unpauses immediately when activity reappears.
+func (c *Client) SetFolderPaused(folderID string, paused bool) error {
+	cfg, err := c.GetConfig()
+	if err != nil {
+		return err
+	}
+	folders, _ := cfg["folders"].([]any)
+	found := false
+	for i, f := range folders {
+		fm, _ := f.(map[string]any)
+		if fm["id"] == folderID {
+			fm["paused"] = paused
+			folders[i] = fm
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("folder %q not found in Syncthing config", folderID)
+	}
+	cfg["folders"] = folders
+	return c.SetConfig(cfg)
+}
+
 // UpdateFolderSchedule rewrites the scheduler fields (rescanIntervalS,
 // fsWatcherEnabled, fsWatcherDelayS) on an existing folder to the
 // canonical dotkeeper-managed values, leaving all other fields

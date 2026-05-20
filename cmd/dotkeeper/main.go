@@ -19,6 +19,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/julian-corbet/dotkeeper/internal/activity"
 	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/conflict"
 	"github.com/julian-corbet/dotkeeper/internal/discovery"
@@ -382,8 +383,22 @@ func startCmd() *cobra.Command {
 			stopWatcher := startConflictWatcher(ctx)
 			defer stopWatcher()
 
+			// Spin up the activity tracker for auto-pause. Independent
+			// of the conflict watcher because its purpose is different
+			// (per-folder timestamps vs sync-conflict-file detection)
+			// and we want activity tracking to keep running even if
+			// the conflict watcher fails. Best-effort: if no managed
+			// folders exist yet, returns nil tracker and auto-pause is
+			// effectively disabled until next reconcile rediscovers.
+			tracker := startActivityTracker(ctx, logger)
+			defer func() {
+				if tracker != nil {
+					_ = tracker.Close()
+				}
+			}()
+
 			// Start the reconcile daemon alongside Syncthing.
-			startReconcileDaemon(ctx, logger)
+			startReconcileDaemon(ctx, logger, tracker)
 
 			eng := engine()
 			if err := eng.Start(ctx); err != nil {
@@ -971,3 +986,31 @@ func buildDoctorChecks() []doctor.Check {
 
 // unused keeps the time import live for the statusCmd's time.Time formatting.
 var _ = time.Time{}
+
+// startActivityTracker creates an activity.Tracker over every
+// currently-managed folder root. Returns nil (auto-pause disabled)
+// when there are no managed folders or the tracker can't start —
+// both are non-fatal because the daemon must keep running.
+//
+// Folders added or removed *after* startup are not reflected in the
+// tracker's watch set in this v0.9.6 first cut. The trade-off:
+// folders added after startup don't auto-pause until the next daemon
+// restart; folders removed after startup have their watches dangle
+// until the same. Both are recoverable on the next service restart.
+// A proper "reload roots on reconcile-detected folder set change" is
+// possible but adds enough complexity that it's worth waiting for a
+// reported user impact before shipping it.
+func startActivityTracker(ctx context.Context, logger *slog.Logger) *activity.Tracker {
+	roots := managedFolderPathsV5()
+	if len(roots) == 0 {
+		logger.InfoContext(ctx, "activity tracker disabled (no managed folders yet)")
+		return nil
+	}
+	tr, err := activity.New(roots)
+	if err != nil {
+		logger.WarnContext(ctx, "activity tracker failed to start; auto-pause disabled", "err", err)
+		return nil
+	}
+	logger.InfoContext(ctx, "activity tracker started", "roots", len(roots))
+	return tr
+}

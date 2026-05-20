@@ -556,7 +556,7 @@ func TestObservedProvider_NilClient(t *testing.T) {
 	dir := t.TempDir()
 	statePath := filepath.Join(dir, "state.toml")
 
-	provider := newObservedProvider(nil, statePath)
+	provider := newObservedProvider(nil, statePath, nil)
 	obs, err := provider(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error with nil client: %v", err)
@@ -576,7 +576,7 @@ func TestObservedProvider_SyncthingUnreachable(t *testing.T) {
 	statePath := filepath.Join(dir, "state.toml")
 
 	q := &stubQuerier{err: fmt.Errorf("connection refused")}
-	provider := newObservedProvider(q, statePath)
+	provider := newObservedProvider(q, statePath, nil)
 
 	_, err := provider(context.Background())
 	if err == nil {
@@ -621,7 +621,7 @@ func TestObservedProvider_FoldersAndPeers(t *testing.T) {
 		},
 	}
 
-	provider := newObservedProvider(q, statePath)
+	provider := newObservedProvider(q, statePath, nil)
 	obs, err := provider(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -693,7 +693,7 @@ func TestObservedProvider_DetectsMissingFolderMarker(t *testing.T) {
 		conns: &stclient.Connections{Connections: map[string]stclient.Connection{}},
 	}
 
-	provider := newObservedProvider(q, statePath)
+	provider := newObservedProvider(q, statePath, nil)
 	obs, err := provider(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -742,7 +742,7 @@ func TestObservedProvider_FolderWithoutID_Skipped(t *testing.T) {
 		conns: &stclient.Connections{Connections: map[string]stclient.Connection{}},
 	}
 
-	provider := newObservedProvider(q, statePath)
+	provider := newObservedProvider(q, statePath, nil)
 	obs, err := provider(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -763,7 +763,7 @@ func TestObservedProvider_MissingStateToml(t *testing.T) {
 		conns: &stclient.Connections{Connections: map[string]stclient.Connection{}},
 	}
 
-	provider := newObservedProvider(q, statePath)
+	provider := newObservedProvider(q, statePath, nil)
 	obs, err := provider(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error for missing state.toml: %v", err)
@@ -797,7 +797,7 @@ func TestObservedProvider_TrackedOverridesLoadedFromState(t *testing.T) {
 		conns: &stclient.Connections{Connections: map[string]stclient.Connection{}},
 	}
 
-	provider := newObservedProvider(q, statePath)
+	provider := newObservedProvider(q, statePath, nil)
 	obs, err := provider(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -829,7 +829,7 @@ func TestObservedProvider_ReadsIgnoreFileForTrackedRepo(t *testing.T) {
 		cfg:   map[string]any{"folders": []any{}},
 		conns: &stclient.Connections{Connections: map[string]stclient.Connection{}},
 	}
-	provider := newObservedProvider(q, statePath)
+	provider := newObservedProvider(q, statePath, nil)
 	obs, err := provider(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -876,7 +876,7 @@ last_backup_at = %s
 		conns: &stclient.Connections{Connections: map[string]stclient.Connection{}},
 	}
 
-	provider := newObservedProvider(q, statePath)
+	provider := newObservedProvider(q, statePath, nil)
 	obs, err := provider(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
