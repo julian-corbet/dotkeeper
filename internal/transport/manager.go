@@ -43,7 +43,7 @@ type Manager struct {
 
 // CostPrior captures the bootstrap parameters for a single Transport's
 // CostModel. Each Transport implementation should supply a sensible
-// default; operators can override via configuration in v1.1+.
+// default; operator configuration override is a planned extension.
 type CostPrior struct {
 	SetupMS     float64
 	MSPerByte   float64
@@ -123,8 +123,8 @@ type RouteEntry struct {
 }
 
 // NewManager constructs a Manager. Each transport's prior cost
-// model is seeded from DefaultPriorFor(transport.Name()); v1.1+
-// will load operator overrides from config.
+// model is seeded from DefaultPriorFor(transport.Name()); loading
+// operator overrides from config is a planned extension.
 func NewManager(transports []Transport) *Manager {
 	priorsByTpt := make(map[string]CostPrior, len(transports))
 	for _, t := range transports {
@@ -153,9 +153,10 @@ func (m *Manager) Transports() []Transport {
 // probe has completed (or hit its per-transport timeout, which the
 // Transport implementation enforces internally).
 //
-// Probes run concurrently — a slow Tailscale lookup doesn't delay
-// the parallel Syncthing ping. Total wall-clock latency of Discover
-// is the slowest probe's individual timeout.
+// Probes run concurrently — a slow probe for one transport
+// doesn't delay parallel probes for others. Total wall-clock
+// latency of Discover is bounded by the slowest probe's per-
+// transport timeout.
 //
 // Discover is the only operation that does network I/O against
 // peers from inside the Manager; Route is pure compute against the

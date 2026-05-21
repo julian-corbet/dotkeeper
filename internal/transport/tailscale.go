@@ -102,9 +102,9 @@ type tailscaleStatus struct {
 // tailnet at all.
 //
 // Hostname matching is case-insensitive because Tailscale lowercases
-// hostnames in its API output while dotkeeper machine names can be
-// mixed-case (e.g. "CACHYOS-Elitebook"). Matching against either
-// Peer.Name or Peer.Hostname catches both conventions.
+// hostnames in its API output while dotkeeper machine names may be
+// mixed-case. Matching against either Peer.Name or Peer.Hostname
+// catches both conventions.
 func (r *TailscaleResolver) Resolve(ctx context.Context, peer Peer) (string, error) {
 	if err := r.refreshIfStale(ctx); err != nil {
 		return "", err

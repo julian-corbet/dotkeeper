@@ -13,8 +13,8 @@ import (
 // different ways of discovering the address:
 //
 //   - TailscaleResolver: `tailscale status --json` lookup by hostname
-//   - MDNSResolver: `<peer-name>.local` DNS lookup (v1.1+)
-//   - StaticResolver: user-configured address per peer (v1.1+)
+//   - MDNSResolver: `<peer-name>.local` DNS lookup (planned)
+//   - StaticResolver: user-configured address per peer (planned)
 //
 // A nil Resolver implementation is treated as "this resolution path is
 // not available right now" — TransportManager skips the corresponding

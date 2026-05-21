@@ -10,9 +10,15 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [1.0.0] - 2026-05-21
 
 **dotkeeper goes multi-transport.** The Syncthing-only era ends with
-this release: dotkeeper now knows about more than one way to move
-changes between peers, can decide per-change which one to use, and
-learns from experience which one is actually fastest.
+this release. The full v1.0.0 release ships not just the framework
+(below) but also actively uses it: every successful auto-commit
+fans out to every paired peer via the Manager's per-change routing
+decision, the picked transport executes the push, observed elapsed
+time feeds back into the cost model, and a new `dotkeeper bare-init`
+CLI configures peer-side repos so direct `git push` updates the
+peer's working tree. End-to-end integration tests prove a commit on
+machine A appears in machine B's working tree via the new transport
+path.
 
 ### Added
 
@@ -141,24 +147,65 @@ learns from experience which one is actually fastest.
   stub doesn't translate; resolver logic itself is platform-
   independent.
 
+### Reconcile integration (completes v1.0.0)
+
+- **`RealApplier.Propagator`** — new field on the reconcile
+  applier. After every successful `GitCommitDirty`, the applier
+  invokes `Propagator.PropagateNewCommit(ctx, folderPath)`. The
+  daemon-side `daemonPropagator` resolves the folder, asks the
+  `Manager` to route the change based on estimated size (from
+  `git diff --shortstat`), calls the picked transport's
+  `PropagateChange`, and feeds the observed elapsed time back to
+  `Manager.RecordTransfer` so the cost model learns from every
+  real push.
+
+- **`dotkeeper bare-init [--peer=NAME] [--host=USER@ADDR]`** —
+  operator CLI that configures peer-side repos for direct push.
+  SSHs to each peer and runs
+  `git config receive.denyCurrentBranch updateInstead` in every
+  tracked folder. With that setting, a push to the peer's
+  currently-checked-out branch atomically updates the working
+  tree — no separate bare repo, no post-receive hook, no second
+  authoritative copy of the data. Idempotent.
+
+  Address resolution ladder: explicit `--host` override → any
+  registered resolver that knows the peer (v1.0.0 has Tailscale;
+  v1.1+ adds mDNS and static-hub variants) → the peer name as a
+  hostname (so users with `/etc/hosts` entries, `~/.ssh/config`
+  Host blocks, or LAN-local DNS need no dotkeeper-side resolver
+  configured at all).
+
+- **`GitSSHTransport.remoteURL` targets the working tree
+  directly.** Earlier drafts pointed at a separate bare-repo
+  path; the v1.0.0 final design pushes to the peer's working
+  tree path directly (the v1.0.0 mirror-paths constraint), using
+  updateInstead semantics for atomic working-tree updates.
+
+- **Three end-to-end integration tests** in
+  `internal/transport/integration_test.go` prove the full path
+  works: file:// push to an updateInstead-configured repo
+  updates the working tree; the negative control (no
+  updateInstead) shows git refuses; the full
+  `GitSSHTransport.PropagateChange` code path delivers a commit
+  to a real local destination via a URL-rewriting wrapper around
+  the exec runner.
+
+- **`TestRealApplierFiresPropagatorAfterCommit`** pins the
+  reconcile seam — catches future refactors that would silently
+  regress dotkeeper to Syncthing-only propagation.
+
 ### Known limitations / v1.1+ roadmap
 
-- **PropagateChange not yet integrated with reconcile.** v1.0.0
-  ships the multi-transport machinery and exposes it via the CLI;
-  the reconcile applier still drives change propagation via
-  Syncthing's BEP gossip (which has always worked). Wiring
-  `Manager.Route` into the commit-driven push loop is v1.0.1's
-  scope.
+- **Mirror-paths constraint.** v1.0.0 assumes the same folder
+  path on every peer (an existing dotkeeper convention via
+  `scan_roots`). v1.1+ adds per-peer path maps for users with
+  diverging layouts.
 
-- **Peer-side bare repo is operator-provisioned.** v1.0.0
-  documents the convention (`~/.local/share/dotkeeper/repos/<folder-id>.git`)
-  and the `git init --bare` recipe; v1.1+ ships `dotkeeper
-  bare-init` to automate it over SSH at pair time.
-
-- **No mDNS or static-hub variants yet.** Only `git-ssh+tailscale`
-  and `syncthing` are registered in v1.0.0. The Resolver interface
-  is designed to take additional resolvers without changes to the
-  GitSSHTransport itself; v1.1+ adds the variants.
+- **No mDNS or static-hub Resolver variants yet.** Only
+  `git-ssh+tailscale` and `syncthing` are registered. The
+  Resolver interface is designed to take additional resolvers
+  without changes to the GitSSHTransport itself; v1.1+ adds the
+  variants.
 
 - **Manager doesn't persist learned cost-model parameters.**
   Restarting the daemon resets every model to its prior. Adding
@@ -166,6 +213,12 @@ learns from experience which one is actually fastest.
   the cost is "first ~20 transfers after restart route based on
   defaults" — benign because the defaults are sensible and
   convergence is fast.
+
+- **Propagator fires on every `GitCommitDirty` action, including
+  no-op (clean-repo) ones.** Cost is one SSH probe per peer per
+  reconcile cycle (~5 min). The optimisation to only fire on
+  HEAD-advance is a follow-up; v1.0.0 prioritises correctness
+  over the wasted probes.
 
 ## [0.9.9] - 2026-05-21
 
@@ -553,11 +606,12 @@ these two concerns is the structural payoff of the refactor.
 - **Folder rescan interval raised from 60 seconds to 24 hours.** The
   prior 60s value was a defensive holdover from early dotkeeper
   builds, before Syncthing's fsWatcher (inotify on Linux) was
-  trusted. On a fleet with 22 active folders it forced ~1320 full
-  tree walks per hour — visible in CPU profiles as 21% of total CPU
-  spent in stat/readdir syscalls (`runtime.cgocall`) for no
-  operational benefit, because every real-time change was already
-  being picked up by inotify within milliseconds.
+  trusted. Per active folder this meant a full tree walk every
+  minute, which dominated daemon CPU on installs with multiple
+  tracked folders — visible in profiles as stat/readdir syscalls
+  (`runtime.cgocall`) accounting for a large share of total time
+  — for no operational benefit, because every real-time change
+  was already being picked up by inotify within milliseconds.
 
   The new daily rescan is purely the safety-net path for the
   vanishingly rare case where inotify briefly drops events under
@@ -589,12 +643,11 @@ these two concerns is the structural payoff of the refactor.
 
 ### Performance
 
-- **Consolidated default ignore patterns.** A CPU profile against the
-  running daemon showed `ignore.Matcher.Match` accounting for 32.6%
-  of total CPU, with the supporting glob engine and string-search
-  internals pushing matching-related work past 50%. The dominant
-  per-pattern cost was glob matching, multiplied by enumerated
-  variant families in the prior default list. Collapses:
+- **Consolidated default ignore patterns.** Profiling showed
+  Syncthing's `ignore.Matcher.Match` and supporting glob engine
+  accounting for a substantial share of total daemon CPU on
+  active development trees, dominated by enumerated variant
+  families in the prior default list. Collapses:
   - 8 sqlite variants (`*.sqlite3`, `*.sqlite3-journal`, … ) → `*.sqlite*`
   - 4 vim/nvim swap variants (`*.swp`, `*.swo`, `.*.swp`, `.*.swo`) →
     `*.sw[op]` + `.*.sw[op]` (two patterns, character class instead
