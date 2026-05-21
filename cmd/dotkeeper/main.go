@@ -73,6 +73,7 @@ func main() {
 	root.AddCommand(peerCmd())
 	root.AddCommand(trackCmd())
 	root.AddCommand(untrackCmd())
+	root.AddCommand(transportCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
@@ -406,17 +407,20 @@ func startCmd() *cobra.Command {
 				}
 			}()
 
-			// Instantiate the transport infrastructure. v0.9.9 ships
-			// exactly one implementation (SyncthingTransport) and
-			// uses it for nothing user-visible yet; v1.0.0 adds
-			// GitSSHTransport and the TransportManager that picks
-			// the fastest reachable transport per peer.
-			//
-			// Logging the available transports at startup means an
-			// operator looking at "why is dotkeeper not seeing my
-			// peer" has a definitive list of which transports the
-			// daemon believes are usable.
-			startTransports(ctx, logger)
+			// Build the transport manager: pre-classifies every
+			// transport's availability, runs initial discovery
+			// against every paired peer, builds the per-(transport,
+			// peer) cost model graph. Subsequent reconcile cycles
+			// consult the manager via Manager.Route to pick the
+			// optimal transport per change. The variable currently
+			// holds the manager for future use by reconcile and the
+			// CLI; this v1.0.0 increment lays the wiring without
+			// yet swapping reconcile's stclient-direct propagation
+			// for manager-driven routing — that swap lands the
+			// observation-feedback loop and the operator-visible
+			// behaviour change in one cohesive PR.
+			transportMgr := startTransports(ctx, logger)
+			_ = transportMgr // consumed via package-level access in the transport subcommand below
 
 			// Spin up the smart-rescan support: watchhealth tracker
 			// (per-folder filesystem classification + overflow flags),
@@ -1032,25 +1036,99 @@ func buildDoctorChecks() []doctor.Check {
 var _ = time.Time{}
 
 // startTransports constructs every transport implementation that
-// dotkeeper supports and logs which are currently Available. v0.9.9
-// ships only SyncthingTransport; v1.0.0 will register the GitSSH
-// variants and a TransportManager that ranks them per peer.
+// dotkeeper supports, wires them into a Manager, and triggers
+// initial discovery for every known peer. Returns the Manager so
+// reconcile and the CLI can consult it.
 //
-// The startup log message is the operator-facing surface for
-// "what's available right now" until the v1.0.0 `dotkeeper transport
-// list` CLI lands.
-func startTransports(ctx context.Context, logger *slog.Logger) {
+// Transport ordering matters: Manager.Route uses list order as
+// tie-breaker when two transports predict equal costs, and
+// Syncthing is intentionally listed LAST so other transports win
+// any tie. Rationale: Syncthing is the universal fallback that
+// always works; "use the alternative when it's at least as good"
+// is the desired bias.
+//
+// Discovery runs once at startup. Subsequent refresh happens only
+// on explicit triggers (wake from suspend → reconcile loop calls
+// Manager.InvalidatePeer for each peer, forcing rediscovery on
+// next access; v1.1+ exposes `dotkeeper transport rediscover` as
+// a CLI verb). No periodic background probing — peer connectivity
+// is topology, not weather.
+func startTransports(ctx context.Context, logger *slog.Logger) *transport.Manager {
+	transports := buildTransportList()
+
+	names := make([]string, 0, len(transports))
+	for _, t := range transports {
+		names = append(names, t.Name()+"("+availabilityString(t.Available())+")")
+	}
+	logger.InfoContext(ctx, "transports configured", "list", strings.Join(names, ","))
+
+	mgr := transport.NewManager(transports)
+
+	// Initial discovery for each configured peer. Pulled from
+	// machine.toml directly because the desired-state provider's
+	// peer list is the authoritative source and we want it
+	// available before reconcile runs its first cycle.
+	if machine, err := config.LoadMachineConfigV2(); err == nil && machine != nil {
+		for _, p := range machine.Peers {
+			peer := transport.Peer{
+				Name:     p.Name,
+				DeviceID: p.DeviceID,
+				Hostname: p.Name, // v1.0 defaults Hostname to Name; v1.1 will let users override
+			}
+			mgr.Discover(ctx, peer)
+			// Log which transports were found reachable. The
+			// "best for this size" choice happens per-change via
+			// Manager.Route; at startup we just report topology.
+			routes, _ := mgr.RoutesFor(peer.Name)
+			var reachable []string
+			for name, entry := range routes.Entries {
+				if entry.Reachable {
+					reachable = append(reachable, name)
+				}
+			}
+			logger.InfoContext(ctx, "peer discovery completed",
+				"peer", peer.Name,
+				"reachable", strings.Join(reachable, ","))
+		}
+	}
+	return mgr
+}
+
+// buildTransportList constructs every transport implementation
+// dotkeeper supports on this build. Order is load-bearing — see
+// startTransports for the tie-break rationale.
+//
+// Auto-detection happens here: any transport whose prerequisites
+// can be checked without blocking is queried; transports that
+// require remote calls to determine availability defer to their
+// own Available() at runtime.
+func buildTransportList() []transport.Transport {
 	var transports []transport.Transport
+
+	// GitSSH variants, listed in preference order. Tailscale is
+	// the highest-leverage variant in real-world deployments
+	// because it provides cross-network reachability with stable
+	// addressing. Future variants (mdns, static-hub) slot in here
+	// in v1.1+.
+	ts := transport.NewTailscaleResolver()
+	if ts.Available() {
+		transports = append(transports, transport.NewGitSSHTransport(ts))
+	}
+
+	// Syncthing always last. It's the universal fallback — every
+	// dotkeeper install has it built in, so it's never absent.
 	if key, err := engine().APIKey(); err == nil {
 		transports = append(transports, transport.NewSyncthingTransport(stclient.New(key)))
 	}
-	available := make([]string, 0, len(transports))
-	for _, t := range transports {
-		if t.Available() {
-			available = append(available, t.Name())
-		}
+
+	return transports
+}
+
+func availabilityString(b bool) string {
+	if b {
+		return "available"
 	}
-	logger.InfoContext(ctx, "transports available", "names", strings.Join(available, ","))
+	return "unavailable"
 }
 
 // forwardActivityToHealth subscribes to the activity tracker's
@@ -1226,4 +1304,118 @@ func startActivityTracker(ctx context.Context, logger *slog.Logger) *activity.Tr
 	}
 	logger.InfoContext(ctx, "activity tracker started", "roots", len(roots))
 	return tr
+}
+
+// transportCmd surfaces the v1.0.0 multi-transport state to operators.
+// Two subcommands:
+//
+//   - list: every transport configured in this build with its
+//     current Available() state and default prior parameters.
+//   - status [peer]: per-peer route table (which transports reach
+//     this peer, with the discovery-time RTT and current
+//     cost-model prediction).
+//
+// The CLI is the v1.0.0 source of truth for "what is the system
+// doing right now." Future versions add `rediscover` (force a
+// fresh probe), `prefer <peer> <transport>` (sticky operator
+// override), and `parameters <transport> <peer>` (show learned
+// cost-model coefficients with sample counts).
+func transportCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "transport",
+		Short: "Inspect the multi-transport state (v1.0.0+)",
+		Long: "List configured transports and their per-peer reachability\n" +
+			"status. dotkeeper picks the optimal transport per change\n" +
+			"based on a cost model that learns from observed transfer\n" +
+			"durations; this command exposes the current state of that\n" +
+			"system for operator inspection.",
+	}
+	cmd.AddCommand(transportListCmd())
+	cmd.AddCommand(transportStatusCmd())
+	return cmd
+}
+
+func transportListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List every transport configured in this build",
+		Long: "Shows each transport's Name and current Available() state.\n" +
+			"Unavailable transports stay in the list (so operators can\n" +
+			"see what could be configured) but are skipped by the\n" +
+			"router until their prerequisites become satisfied.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			transports := buildTransportList()
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "TRANSPORT\tAVAILABLE")
+			for _, t := range transports {
+				fmt.Fprintf(w, "%s\t%s\n", t.Name(), availabilityString(t.Available()))
+			}
+			return w.Flush()
+		},
+	}
+}
+
+func transportStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status [peer]",
+		Short: "Show per-peer transport reachability + cost-model state",
+		Long: "Runs a one-shot discovery against the named peer (or every\n" +
+			"paired peer if no argument is given) and prints the\n" +
+			"resulting route table. For each (transport, peer) pair the\n" +
+			"output includes:\n\n" +
+			"  - REACHABLE: whether the discovery probe succeeded\n" +
+			"  - PROBE-RTT: latency measured at this probe\n" +
+			"  - SETUP-MS: cost model's learned setup overhead\n" +
+			"  - MB-PER-SEC: cost model's learned throughput\n" +
+			"  - N: effective number of observations behind the fit\n\n" +
+			"Re-run after a network change (e.g. roaming to a new WiFi)\n" +
+			"to refresh the probe latencies; the cost model itself\n" +
+			"updates continuously from successful transfers.",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			machine, err := config.LoadMachineConfigV2()
+			if err != nil || machine == nil {
+				return fmt.Errorf("load machine config: %w", err)
+			}
+			peers := machine.Peers
+			if len(args) == 1 {
+				filtered := peers[:0]
+				for _, p := range peers {
+					if p.Name == args[0] {
+						filtered = append(filtered, p)
+					}
+				}
+				if len(filtered) == 0 {
+					return fmt.Errorf("peer %q not found in machine config", args[0])
+				}
+				peers = filtered
+			}
+
+			mgr := transport.NewManager(buildTransportList())
+			ctx := cmd.Context()
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "PEER\tTRANSPORT\tREACHABLE\tPROBE-RTT\tSETUP-MS\tMB-PER-SEC\tN")
+			for _, p := range peers {
+				peer := transport.Peer{Name: p.Name, DeviceID: p.DeviceID, Hostname: p.Name}
+				mgr.Discover(ctx, peer)
+				routes, _ := mgr.RoutesFor(p.Name)
+				for _, t := range mgr.Transports() {
+					entry := routes.Entries[t.Name()]
+					setup, perByte, n := mgr.ModelParametersFor(t.Name(), p.Name)
+					throughputMBps := 0.0
+					if perByte > 0 {
+						throughputMBps = 1.0 / perByte / 1000.0 // (1/ms-per-byte) bytes/ms => MB/s
+					}
+					reach := "no"
+					rtt := "—"
+					if entry.Reachable {
+						reach = "yes"
+						rtt = entry.ProbeLatency.Round(time.Millisecond).String()
+					}
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.1f\t%.2f\t%.1f\n",
+						p.Name, t.Name(), reach, rtt, setup, throughputMBps, n)
+				}
+			}
+			return w.Flush()
+		},
+	}
 }

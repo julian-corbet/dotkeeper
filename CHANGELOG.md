@@ -7,6 +7,166 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-05-21
+
+**dotkeeper goes multi-transport.** The Syncthing-only era ends with
+this release: dotkeeper now knows about more than one way to move
+changes between peers, can decide per-change which one to use, and
+learns from experience which one is actually fastest.
+
+### Added
+
+- **`internal/transport.Manager` — the multi-transport orchestrator.**
+  Owns a list of `Transport` implementations and maintains, per
+  paired peer, a `Routes` snapshot of which transports are
+  currently reachable. Exposes `Route(change, peer)` — a pure
+  compute call that returns the optimal `Transport` for one
+  specific change based on its size and the peer's known routes.
+
+- **`Transport` is event-driven, not periodic.** Reachability
+  discovery (`Discover`) runs at daemon startup, at peer pairing,
+  on wake-from-suspend, and on explicit operator request. There is
+  no background polling — the assumption is that the set of
+  transports that *can* reach a given peer is topology, which
+  doesn't change every five minutes. What changes per-change is
+  *which* transport is optimal for *this* payload size, and that
+  decision is microseconds of arithmetic against the cached
+  topology.
+
+- **`CostModel` — auto-adapting routing brain.** Per-(transport,
+  peer) linear regression of `cost(bytes) = setupMS +
+  bytes * msPerByte`. Parameters are seeded from sensible priors
+  (each transport supplies its own — git-ssh is "fast setup, slow
+  throughput"; Syncthing is "slow setup, fast throughput") and
+  updated on every successful transfer via
+  `Manager.RecordTransfer(transport, peer, size, elapsed)`.
+  Exponential decay with a 1-day half-life means the model adapts
+  to changing conditions (network rerouted, peer load shifted)
+  without manual intervention.
+
+  No hardcoded size thresholds. The router asks each available
+  transport for its `Predict(sizeBytes)` and picks the minimum.
+  Crossover between transports happens *where the math says they
+  cross over*, learned from the actual fleet's behaviour rather
+  than guessed at design time.
+
+- **`GitSSHTransport`** — first non-Syncthing transport. Manages a
+  per-peer git remote (`git remote add` / `set-url`), probes
+  reachability via `ssh peer true`, and propagates changes via
+  `git push <peer-remote> <commit>:refs/heads/main`. The peer-side
+  endpoint is a bare repository at
+  `~/.local/share/dotkeeper/repos/<folder-id>.git` on the peer
+  host; v1.0.0 documents this prerequisite, v1.1+ will ship a
+  `dotkeeper bare-init` helper that provisions it automatically
+  over SSH.
+
+- **`TailscaleResolver`** — first non-Syncthing peer-discovery
+  mechanism. Parses `tailscale status --json` to map peer names to
+  TailscaleIPs. Cached for 30s between invocations so probe-driven
+  resolution doesn't re-fork the CLI on every reconcile. Available
+  on Linux, macOS, Windows, and BSDs — Tailscale ships an
+  identical CLI on all of them and dotkeeper uses only the JSON
+  output, which is a stable cross-version contract.
+
+- **`dotkeeper transport` CLI subtree.** Two verbs in v1.0.0:
+  - `dotkeeper transport list` — every transport configured in this
+    build with its current Available() state.
+  - `dotkeeper transport status [peer]` — per-peer route table
+    showing reachability, probe RTT, and the cost model's learned
+    parameters (setup ms, throughput MB/s, effective sample count).
+
+  v1.1+ adds `rediscover`, `prefer`, and `parameters` for forcing
+  refresh and inspecting individual models.
+
+### Design notes (for operators and contributors)
+
+- **Topology vs policy.** v1.0.0's split between "what's reachable"
+  (discovered, cached) and "what's optimal right now" (computed
+  per-change) is deliberate. Re-probing latency every five minutes
+  is wasted work because it doesn't change every five minutes. What
+  *does* change between changes is the payload size, and that's
+  what the per-change router responds to.
+
+- **Why no hardcoded thresholds.** The naive design ("git for files
+  under 1 MB, Syncthing above") is fast to write and wrong
+  everywhere except the development machine it was tuned on.
+  Different fleets have different network characteristics; the
+  crossover where transport A overtakes transport B for size X is a
+  function of the actual measurable performance, not a function we
+  can guess. The cost-model approach learns it.
+
+- **Boundary of "transport."** The Transport interface is
+  *peer-facing* — anything that moves a change from machine A to
+  machine B. Local Syncthing operations (pause, schedule, manual
+  rescan) stay in `internal/stclient`. Cleanly separating these
+  two concerns means the transport graph and the daemon-management
+  graph evolve independently.
+
+- **No periodic background work.** v0.9.x added several background
+  loops (auto-pause, smart rescan). v1.0.0 deliberately adds
+  *none*. Probing happens on events; routing happens per-change;
+  the daemon idles cleanly between activities.
+
+### Tests
+
+- **`costmodel_test.go`** — regression math, convergence under
+  noisy observations, decay behaviour, edge cases (negative
+  observations dropped, zero-variance input falls back to prior,
+  Predict never returns negative, prior weight controls
+  convergence speed).
+
+- **`manager_test.go`** — Discover populates routes, unavailable
+  transports skipped, probe-error handling, Route picks
+  lowest-cost (tiny payload → git-ssh, huge payload → Syncthing),
+  routing adapts after RecordTransfer feedback, InvalidatePeer
+  drops cached entry, tie-breaking favours earlier transport,
+  per-(transport, peer) model isolation, concurrency safety under
+  -race.
+
+- **`gitssh_test.go`** — Name composition, Available delegates to
+  resolver, EnsurePeerReachability tries set-url then add,
+  surfaces non-recoverable errors verbatim, wraps unknown-resolver
+  errors with ErrPeerUnknown, Probe round-trips, returns
+  ErrUnreachable on SSH failure, PropagateChange constructs the
+  right push args, surfaces git's stderr verbatim, remote name
+  sanitisation, remote URL composition with and without explicit
+  user.
+
+- **`tailscale_test.go`** — JSON parsing happy path, case-
+  insensitive hostname matching, offline peers still resolve to
+  their IPs (reachability is the probe's job), unknown peers
+  return ErrPeerUnknown, malformed JSON returns
+  ErrResolverUnavailable, absent binary fails Available, cache
+  honored within TTL. Skip on Windows because the shell-script
+  stub doesn't translate; resolver logic itself is platform-
+  independent.
+
+### Known limitations / v1.1+ roadmap
+
+- **PropagateChange not yet integrated with reconcile.** v1.0.0
+  ships the multi-transport machinery and exposes it via the CLI;
+  the reconcile applier still drives change propagation via
+  Syncthing's BEP gossip (which has always worked). Wiring
+  `Manager.Route` into the commit-driven push loop is v1.0.1's
+  scope.
+
+- **Peer-side bare repo is operator-provisioned.** v1.0.0
+  documents the convention (`~/.local/share/dotkeeper/repos/<folder-id>.git`)
+  and the `git init --bare` recipe; v1.1+ ships `dotkeeper
+  bare-init` to automate it over SSH at pair time.
+
+- **No mDNS or static-hub variants yet.** Only `git-ssh+tailscale`
+  and `syncthing` are registered in v1.0.0. The Resolver interface
+  is designed to take additional resolvers without changes to the
+  GitSSHTransport itself; v1.1+ adds the variants.
+
+- **Manager doesn't persist learned cost-model parameters.**
+  Restarting the daemon resets every model to its prior. Adding
+  state.toml persistence for the cost-model parameters is v1.1+;
+  the cost is "first ~20 transfers after restart route based on
+  defaults" — benign because the defaults are sensible and
+  convergence is fast.
+
 ## [0.9.9] - 2026-05-21
 
 ### Added
