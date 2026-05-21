@@ -913,7 +913,14 @@ func TestDiffSmartRescan(t *testing.T) {
 			wantRescan: false,
 		},
 		{
-			name: "first-cycle (LastRescanByPath nil, no health) → rescan via backstop",
+			// v0.9.8 changed this: zero LastRescan now means "no
+			// information; defer the decision" rather than "epoch,
+			// definitely overdue." Closing the cold-start rescan
+			// storm that v0.9.7 shipped — every fresh daemon fired
+			// one RescanFolderNow per folder within seconds of
+			// startup, briefly overwhelming Syncthing on multi-
+			// folder fleets.
+			name: "first-cycle (LastRescanByPath nil, no health) → defer, no action",
 			obs: Observed{
 				ManagedFolders: []FolderObs{
 					{
@@ -929,8 +936,32 @@ func TestDiffSmartRescan(t *testing.T) {
 				},
 				Now: now,
 			},
-			wantRescan: true,
-			wantReason: "untrusted filesystem",
+			wantRescan: false,
+		},
+		{
+			// Companion to the above: once a baseline timestamp
+			// exists (seeded by the daemon at startup), the
+			// backstop fires on schedule. Confirms the seeded-but-
+			// fresh case behaves identically to "we rescanned just
+			// now and don't need to again yet."
+			name: "first-cycle with seeded LastRescan=now → no action",
+			obs: Observed{
+				ManagedFolders: []FolderObs{
+					{
+						SyncthingFolderID: folderID,
+						Path:              path,
+						Devices:           []string{"DEV-A"},
+						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+					},
+				},
+				TrackedRepos: []RepoObs{
+					{Path: path, IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
+				},
+				LastRescanByPath: map[string]time.Time{path: now},
+				Now:              now,
+			},
+			wantRescan: false,
 		},
 	}
 
