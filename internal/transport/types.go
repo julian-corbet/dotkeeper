@@ -81,9 +81,10 @@ type Peer struct {
 	User string
 }
 
-// Change identifies what propagated. For now it's the bare minimum
-// (folder + commit ref or sync-event marker); v1.0.0 may extend with
-// payload-size hints when those inform realistic-payload probing.
+// Change identifies what propagated. Carries enough context that
+// the Manager's Route(change, peer) call can pick the optimal
+// transport based on the change's characteristics — primarily
+// payload size, secondarily a coarse classification.
 type Change struct {
 	Folder Folder
 
@@ -91,6 +92,53 @@ type Change struct {
 	// represents the change in dotkeeper's canonical state. Used by
 	// GitSSHTransport to construct the actual push.
 	CommitHash string
+
+	// SizeHint is the approximate payload size in bytes that the
+	// transport will need to move. Used by Manager.Route to
+	// choose between transports — small payloads prefer
+	// fast-setup transports (git+ssh), large payloads prefer
+	// fast-throughput ones (Syncthing block-level transfer, or
+	// annex for very large content). Zero means "unknown"; the
+	// Manager treats unknown as "use the transport prior's
+	// crossover prediction with no payload-specific bias," which
+	// in practice means Syncthing wins because its high-throughput
+	// prior beats git-ssh on the median payload size.
+	SizeHint int64
+
+	// Kind classifies the payload semantically. Currently
+	// informational — kept for v1.1+ when classification (text
+	// vs binary, code vs media) may inform routing in addition to
+	// size. Optional; zero value is fine.
+	Kind ChangeKind
+}
+
+// ChangeKind classifies a payload's nature for routing purposes.
+// v1.0.0 routing uses SizeHint only; Kind is recorded for future
+// policies and for the CLI's output.
+type ChangeKind int
+
+const (
+	// ChangeKindUnknown is the zero value — used when the caller
+	// has no information about the change's nature.
+	ChangeKindUnknown ChangeKind = iota
+	// ChangeKindText is a text-mode change (source, config,
+	// markdown). Typically small + well-compressed.
+	ChangeKindText
+	// ChangeKindBinary is a binary blob (image, archive, model
+	// weights). Typically large + already compressed; benefits
+	// from streaming transfer rather than line-by-line diff.
+	ChangeKindBinary
+)
+
+func (k ChangeKind) String() string {
+	switch k {
+	case ChangeKindText:
+		return "text"
+	case ChangeKindBinary:
+		return "binary"
+	default:
+		return "unknown"
+	}
 }
 
 // ErrUnreachable is returned by Probe when the transport cannot
