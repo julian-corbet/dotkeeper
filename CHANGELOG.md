@@ -7,6 +7,59 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-05-21
+
+### Fixed
+
+- **Cold-start rescan storm shipped in v0.9.7.** A fresh daemon's
+  in-memory rescan log was empty, which the v0.9.7 diff interpreted
+  as "every folder was rescanned at the epoch — definitely overdue
+  for backstop." Result: within seconds of daemon startup, one
+  RescanFolderNow fired per managed folder. On a multi-folder fleet
+  the burst briefly overwhelmed Syncthing's REST endpoint — one
+  folder timed out at the default 5-second client deadline when
+  22 rescans hit simultaneously during the v0.9.7 deploy.
+
+  Two-layer fix:
+
+  1. **Daemon-side seeding.** At startup the rescan log is now
+     populated with `time.Now()` for every currently-managed folder,
+     so the first reconcile observes "just rescanned" rather than
+     "never rescanned." Subsequent daemon restarts behave the same
+     way — a restart is not a reason to rescan; nothing meaningful
+     has happened. The first backstop rescan fires one full backstop
+     interval after the daemon's last start (7 days for reliable
+     filesystems, 24h for unreliable).
+
+  2. **Diff-side defensive nil-handling.** Zero `LastRescan` is now
+     treated as "no information; defer this decision" rather than
+     "epoch, overdue." This is the second line of defence if the
+     daemon ever fails to seed for some reason, and it also fixes
+     the one-shot `dotkeeper reconcile` CLI behaviour: the CLI
+     doesn't carry a long-lived rescan log so it always passed
+     `LastRescanByPath=nil` to Diff, which previously meant "fire
+     RescanFolderNow for every folder on every CLI invocation."
+     Now the CLI cleanly emits no rescans — backstop decisions are
+     daemon-only.
+
+  Side effect on the misleading log line: with no rescans fired,
+  the "daily backstop (untrusted filesystem)" message no longer
+  appears on btrfs (or any other reliable filesystem) during
+  routine CLI use. The classification itself was always correct;
+  the message only ever printed when a backstop *fired*, which on
+  reliable filesystems should be once per week.
+
+### Tests
+
+- `TestDiffSmartRescan` updated:
+  - "first-cycle (LastRescanByPath nil, no health)" inverted from
+    `wantRescan: true` to `wantRescan: false`. The expectation
+    encodes the fix.
+  - New case "first-cycle with seeded LastRescan=now" confirms
+    the seeded-baseline path: a daemon that has just seeded the
+    rescan log on startup behaves identically to a daemon mid-way
+    through a backstop interval.
+
 ## [0.9.7] - 2026-05-21
 
 ### Changed

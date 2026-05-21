@@ -409,6 +409,10 @@ func startCmd() *cobra.Command {
 			healthAd := newHealthAdapter(health)
 			wakeFlag := startWakeDetector(ctx, logger)
 			rescanLog := newRescanLog()
+			// Seed the rescan log so the first reconcile after
+			// daemon start does not fire a backstop RescanFolderNow
+			// for every folder. See seed() comment for rationale.
+			rescanLog.seed(managedFolderPathsV5(), time.Now())
 
 			// Forward activity events into the watchhealth tracker so
 			// LastReliableEventAt advances. Tracker already drives the
@@ -1108,6 +1112,38 @@ type rescanLog struct {
 
 func newRescanLog() *rescanLog {
 	return &rescanLog{entries: make(map[string]time.Time)}
+}
+
+// seedRescanLog populates the log with time.Now() for every
+// currently-managed folder root. Called once at daemon startup so
+// the first reconcile sees "just rescanned" rather than "never
+// rescanned." Without this seeding, v0.9.7's backstop logic fires
+// a RescanFolderNow for every folder within seconds of daemon
+// start — on a multi-folder fleet, that burst can overwhelm
+// Syncthing's REST endpoint (one folder timed out at the default
+// 5s when 22 rescans hit at once during the v0.9.7 deploy).
+//
+// Side-effect: a fresh daemon defers all backstop rescans by one
+// backstop interval (7 days for reliable filesystems, 24h for
+// unreliable). For the daemon-restart case that's correct: we
+// don't actually need to rescan; nothing meaningful has happened.
+// For the first-ever boot case there's a small theoretical window
+// where Syncthing's own scan history is empty too, but Syncthing
+// always scans at startup independent of dotkeeper, so the bases
+// are covered.
+func (r *rescanLog) seed(paths []string, at time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, p := range paths {
+		// Don't overwrite an existing entry — the seed represents
+		// a baseline, not a forced reset. (Currently the only call
+		// site is daemon startup where the map is freshly empty,
+		// but the guard is cheap and future-proofs against e.g.
+		// re-seeding on folder-set change.)
+		if _, ok := r.entries[p]; !ok {
+			r.entries[p] = at
+		}
+	}
 }
 
 func (r *rescanLog) RecordRescan(path string, at time.Time) {
