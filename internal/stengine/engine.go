@@ -16,6 +16,7 @@ import (
 	"github.com/syncthing/syncthing/lib/config"
 	"github.com/syncthing/syncthing/lib/events"
 	"github.com/syncthing/syncthing/lib/locations"
+	"github.com/syncthing/syncthing/lib/logger"
 	"github.com/syncthing/syncthing/lib/protocol"
 	"github.com/syncthing/syncthing/lib/svcutil"
 	stlib "github.com/syncthing/syncthing/lib/syncthing"
@@ -126,28 +127,36 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 
 	evLogger := events.NewLogger()
-	spec := svcutil.SpecWithDebugLogger()
+	// SpecWithDebugLogger requires a logger.Logger as of upstream
+	// Syncthing 1.30.0 (was no-arg in earlier versions). Pass the
+	// package-default logger; dotkeeper's stdout-redirect upstream
+	// of this call already routes Syncthing's log output to
+	// ~/.local/state/dotkeeper/syncthing.log.
+	spec := svcutil.SpecWithDebugLogger(logger.DefaultLogger)
 	earlySvc := suture.New("early", spec)
 	earlyCtx, earlyCancel := context.WithCancel(ctx)
 	defer earlyCancel()
 	earlySvc.ServeBackground(earlyCtx)
 	earlySvc.Add(evLogger)
 
-	cfgWrapper, err := stlib.LoadConfigAtStartup(configFile, cert, evLogger, false, true)
+	// LoadConfigAtStartup gained a sixth bool parameter
+	// (skipPortProbing) in upstream Syncthing 1.30.0. We pass
+	// false — port probing is the right default for an embedded
+	// instance where dotkeeper hasn't validated the listen-port
+	// availability itself.
+	cfgWrapper, err := stlib.LoadConfigAtStartup(configFile, cert, evLogger, false, true, false)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
 	earlySvc.Add(cfgWrapper)
 
-	// Migrate any legacy LevelDB database left over from dotkeeper ≤ v0.7
-	// (syncthing v1.x). No-op when there is no legacy database to migrate.
-	// deleteRetention=0 preserves all deleted-item history (no auto-prune),
-	// matching v1.x behaviour.
-	if err := stlib.TryMigrateDatabase(ctx, 0); err != nil {
-		return fmt.Errorf("migrating legacy database: %w", err)
-	}
-
-	sdb, err := stlib.OpenDatabase(dbFile, 0)
+	// Legacy LevelDB migration (TryMigrateDatabase / OpenDatabase)
+	// was retired upstream of Syncthing 1.30.0 in favour of an
+	// implicit migration during OpenDBBackend. The DatabaseTuning
+	// option from the config drives backend selection; passing
+	// cfgWrapper.Options().DatabaseTuning keeps dotkeeper aligned
+	// with whatever the user (or upstream defaults) chose.
+	sdb, err := stlib.OpenDBBackend(dbFile, cfgWrapper.Options().DatabaseTuning)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
