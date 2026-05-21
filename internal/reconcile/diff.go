@@ -115,6 +115,16 @@ func Diff(desired Desired, observed Observed) Plan {
 				plan = append(plan, act)
 			}
 		}
+		// Smart rescan: emit RescanFolderNow when the watch health
+		// or sleep state implies the fsWatcher missed something.
+		// Paused folders are never rescanned — Syncthing rejects
+		// scan requests for paused folders and the user-visible
+		// effect (wait for unpause) is already correct.
+		if exists && !obs.Paused {
+			if act := smartRescanAction(obs, df.path, observed); act != nil {
+				plan = append(plan, act)
+			}
+		}
 		repoDesired := desired.Repos[df.path]
 		repoObs := observedRepoByPath(observed.TrackedRepos, df.path)
 		wantIgnore := config.SyncIgnoreFileContent(repoDesired.Ignore)
@@ -259,6 +269,87 @@ func stringSlicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// RescanBackstopReliable is the maximum interval between rescans on
+// a filesystem classified as reliable. Even when no overflow / wake
+// event has fired, we re-scan once a week to cover detector blind
+// spots — kernel bugs that don't surface as IN_Q_OVERFLOW, a peer
+// that silently rewrote a file via a tool that bypassed the local
+// kernel, miscounted inotify watches. Weekly is far cheaper than
+// daily and still bounds worst-case divergence to ~7 days, which
+// matches typical user-visible "huh, did that file ever sync?"
+// detection latency.
+const RescanBackstopReliable = 7 * 24 * time.Hour
+
+// RescanBackstopUnreliable applies to filesystems classified as
+// unreliable: NFS, SMB, FUSE-with-uncertain-event-semantics, etc.
+// Daily because the safety-net is the *only* signal driving change
+// detection on these mounts; there's no fsWatcher to fall back on.
+const RescanBackstopUnreliable = 24 * time.Hour
+
+// smartRescanAction decides whether a folder should be rescanned now
+// based on watch-health signals (overflow, watch-limit-hit), wake
+// events, filesystem trust, and the time since the last scheduled
+// rescan. Returns nil when no action is due.
+//
+// Decision tree, in priority order:
+//
+//  1. Sleep/wake observed since last cycle → rescan now. The wake
+//     event is global, so reconcile emits this for every folder in
+//     one pass (one RescanFolderNow per folder is fine — Syncthing
+//     handles a burst of scan requests).
+//  2. Per-folder overflow flag set → rescan now. Highest-precision
+//     signal: the kernel told us we missed events.
+//  3. Watch-limit hit → rescan now. The folder couldn't be fully
+//     watched; the next reconcile re-evaluates whether the limit
+//     was raised.
+//  4. Backstop interval exceeded for filesystem class → rescan now.
+//     Catches the "kernel bug we don't know about yet" case.
+//
+// All paths leading to nil mean "no rescan due."
+func smartRescanAction(obs FolderObs, folderPath string, observed Observed) Action {
+	mk := func(reason string) Action {
+		return RescanFolderNow{
+			FolderID: obs.SyncthingFolderID,
+			Path:     folderPath,
+			Reason:   reason,
+		}
+	}
+
+	if observed.SleepWakeSeen {
+		return mk("suspend/resume detected")
+	}
+
+	health, hasHealth := observed.WatchHealthByPath[folderPath]
+
+	if hasHealth {
+		if health.OverflowSeen {
+			return mk("event queue overflow")
+		}
+		if health.WatchLimitHit {
+			return mk("watch limit reached")
+		}
+	}
+
+	// Backstop: emit a rescan if we haven't rescanned in long enough.
+	// Unknown filesystem classification → use the unreliable threshold
+	// (safer default).
+	backstop := RescanBackstopUnreliable
+	if hasHealth && health.FilesystemReliable {
+		backstop = RescanBackstopReliable
+	}
+	var lastRescan time.Time
+	if observed.LastRescanByPath != nil {
+		lastRescan = observed.LastRescanByPath[folderPath]
+	}
+	if observed.Now.Sub(lastRescan) >= backstop {
+		if hasHealth && health.FilesystemReliable {
+			return mk("weekly backstop")
+		}
+		return mk("daily backstop (untrusted filesystem)")
+	}
+	return nil
 }
 
 // IdleThresholdForPause is the duration a folder must be quiet on the
