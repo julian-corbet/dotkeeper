@@ -295,17 +295,17 @@ func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 		"path":    path,
 		"type":    "sendreceive",
 		"devices": folderDevices,
-		// Daily full rescan. fsWatcher (inotify on Linux) catches every
-		// real-time change; the periodic rescan is only the
-		// belt-and-suspenders safety net for the rare case where inotify
-		// briefly drops events under extreme kernel pressure. The prior
-		// default (60s, one full rescan per minute per folder) was a
-		// defensive holdover from early dotkeeper builds before
-		// fsWatcher was trusted; on a fleet with 22 folders it burned
-		// ~1320 full tree walks per hour for no operational benefit.
-		// CPU profile against v0.9.2 showed 21% of total CPU in
-		// stat/readdir syscalls (runtime.cgocall), almost all of it
-		// driven by these rescans.
+		// Daily full rescan. fsWatcher (inotify on Linux,
+		// FSEvents on macOS, ReadDirectoryChangesW on Windows)
+		// catches every real-time change; the periodic rescan is
+		// the belt-and-suspenders safety net for the rare case
+		// where the OS event API drops events under extreme
+		// kernel pressure. The prior default (60s, one full rescan
+		// per minute per folder) was a defensive holdover from
+		// early dotkeeper builds before fsWatcher was trusted; it
+		// dominated daemon CPU on fleets with many folders without
+		// any operational benefit because the per-minute walk
+		// duplicated the inotify signal.
 		"rescanIntervalS":  CanonicalRescanIntervalS,
 		"fsWatcherEnabled": CanonicalFsWatcherEnabled,
 		"fsWatcherDelayS":  CanonicalFsWatcherDelayS,

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"github.com/julian-corbet/dotkeeper/internal/discovery"
 	"github.com/julian-corbet/dotkeeper/internal/doctor"
 	"github.com/julian-corbet/dotkeeper/internal/procnice"
+	"github.com/julian-corbet/dotkeeper/internal/reconcile"
 	"github.com/julian-corbet/dotkeeper/internal/service"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 	"github.com/julian-corbet/dotkeeper/internal/stengine"
@@ -74,6 +76,7 @@ func main() {
 	root.AddCommand(trackCmd())
 	root.AddCommand(untrackCmd())
 	root.AddCommand(transportCmd())
+	root.AddCommand(bareInitCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
 		os.Exit(1)
@@ -420,7 +423,7 @@ func startCmd() *cobra.Command {
 			// observation-feedback loop and the operator-visible
 			// behaviour change in one cohesive PR.
 			transportMgr := startTransports(ctx, logger)
-			_ = transportMgr // consumed via package-level access in the transport subcommand below
+			propagator := buildPropagator(transportMgr, logger)
 
 			// Spin up the smart-rescan support: watchhealth tracker
 			// (per-folder filesystem classification + overflow flags),
@@ -446,7 +449,7 @@ func startCmd() *cobra.Command {
 			}
 
 			// Start the reconcile daemon alongside Syncthing.
-			startReconcileDaemon(ctx, logger, tracker, healthAd, wakeFlag, rescanLog)
+			startReconcileDaemon(ctx, logger, tracker, healthAd, wakeFlag, rescanLog, propagator)
 
 			eng := engine()
 			if err := eng.Start(ctx); err != nil {
@@ -1050,9 +1053,9 @@ var _ = time.Time{}
 // Discovery runs once at startup. Subsequent refresh happens only
 // on explicit triggers (wake from suspend → reconcile loop calls
 // Manager.InvalidatePeer for each peer, forcing rediscovery on
-// next access; v1.1+ exposes `dotkeeper transport rediscover` as
-// a CLI verb). No periodic background probing — peer connectivity
-// is topology, not weather.
+// next access; an explicit `dotkeeper transport rediscover` CLI
+// verb is a planned extension). No periodic background probing —
+// peer connectivity is topology, not weather.
 func startTransports(ctx context.Context, logger *slog.Logger) *transport.Manager {
 	transports := buildTransportList()
 
@@ -1105,11 +1108,13 @@ func startTransports(ctx context.Context, logger *slog.Logger) *transport.Manage
 func buildTransportList() []transport.Transport {
 	var transports []transport.Transport
 
-	// GitSSH variants, listed in preference order. Tailscale is
-	// the highest-leverage variant in real-world deployments
-	// because it provides cross-network reachability with stable
-	// addressing. Future variants (mdns, static-hub) slot in here
-	// in v1.1+.
+	// GitSSH variants are registered when their resolver's
+	// prerequisites are satisfied on this host. v1.0.0 ships one
+	// resolver (Tailscale); the Resolver interface is the seam for
+	// mDNS and static-hub variants in follow-up releases. The
+	// order of resolvers here is the order the Manager consults
+	// when ranking transports for a peer; the cost model decides
+	// per-change which one is actually used.
 	ts := transport.NewTailscaleResolver()
 	if ts.Available() {
 		transports = append(transports, transport.NewGitSSHTransport(ts))
@@ -1218,6 +1223,154 @@ type reconcileWakeFlag interface {
 	Take() bool
 }
 
+// buildPropagator constructs the v1.0.0 daemon-side
+// CommitPropagator. Returns nil when no transport manager exists
+// (defensive — reconcile degrades to "no peer propagation," same
+// as releases before v1.0.0).
+//
+// Reads machine.toml for the peer roster and managed folders;
+// constructs transport.Folder values from each tracked path so
+// the propagator can fan out via Manager.Route without
+// re-resolving folder identity on the hot path.
+func buildPropagator(mgr *transport.Manager, logger *slog.Logger) reconcile.CommitPropagator {
+	if mgr == nil {
+		return nil
+	}
+	machine, err := config.LoadMachineConfigV2()
+	if err != nil || machine == nil {
+		return nil
+	}
+	peers := make([]transport.Peer, 0, len(machine.Peers))
+	for _, p := range machine.Peers {
+		peers = append(peers, transport.Peer{
+			Name:     p.Name,
+			DeviceID: p.DeviceID,
+			Hostname: p.Name,
+		})
+	}
+	folders := make([]transport.Folder, 0)
+	for _, root := range managedFolderPathsV5() {
+		// Folder ID derived from the repo basename — matches the
+		// reconcile convention. Reconcile's own folder map could
+		// expose this directly in a follow-up to avoid duplication.
+		folders = append(folders, transport.Folder{
+			ID:   filepath.Base(root),
+			Path: root,
+		})
+	}
+	return newDaemonPropagator(mgr, peers, folders, logger)
+}
+
+// daemonPropagator implements reconcile.CommitPropagator on top of
+// the v1.0.0 transport.Manager. For each successful local commit,
+// it fans out to every paired peer, asks the Manager for the
+// optimal transport given the change's measured size, executes
+// the push via Transport.PropagateChange, and feeds the observed
+// elapsed time back into the Manager's cost model.
+//
+// All work is best-effort: a per-peer push failure logs but does
+// not propagate to the caller, because the local commit is
+// canonical state and peers eventually catch up via Syncthing's
+// universal fallback or via subsequent reconcile cycles.
+type daemonPropagator struct {
+	mgr    *transport.Manager
+	peers  []transport.Peer
+	logger *slog.Logger
+
+	// folderByPath resolves a working-tree path to the dotkeeper
+	// folder identity used by Manager.Route. Captured at daemon
+	// startup; folders added later are picked up on the next
+	// daemon restart (same convention as the v0.9.6/v0.9.7
+	// trackers).
+	folderByPath map[string]transport.Folder
+}
+
+func newDaemonPropagator(mgr *transport.Manager, peers []transport.Peer, folders []transport.Folder, logger *slog.Logger) *daemonPropagator {
+	byPath := make(map[string]transport.Folder, len(folders))
+	for _, f := range folders {
+		byPath[f.Path] = f
+	}
+	return &daemonPropagator{mgr: mgr, peers: peers, folderByPath: byPath, logger: logger}
+}
+
+func (p *daemonPropagator) PropagateNewCommit(ctx context.Context, folderPath string) {
+	if p.mgr == nil || len(p.peers) == 0 {
+		return
+	}
+	folder, ok := p.folderByPath[folderPath]
+	if !ok {
+		p.logger.DebugContext(ctx, "propagator: no folder known for path", "path", folderPath)
+		return
+	}
+
+	// Approximate change size from the last commit's diff. Used by
+	// Manager.Route to pick between transports; the cost model
+	// improves with every observation, so the initial estimate
+	// doesn't need to be perfect.
+	sizeBytes := estimateLastCommitSize(folderPath)
+
+	change := transport.Change{
+		Folder:   folder,
+		SizeHint: sizeBytes,
+		Kind:     transport.ChangeKindUnknown,
+	}
+
+	for _, peer := range p.peers {
+		t, err := p.mgr.Route(change, peer.Name)
+		if err != nil {
+			p.logger.WarnContext(ctx, "propagator: no route to peer",
+				"peer", peer.Name, "err", err)
+			continue
+		}
+		start := time.Now()
+		if err := t.PropagateChange(ctx, change, peer); err != nil {
+			p.logger.WarnContext(ctx, "propagator: push failed",
+				"peer", peer.Name, "transport", t.Name(), "err", err)
+			continue
+		}
+		elapsed := time.Since(start)
+		p.mgr.RecordTransfer(t.Name(), peer.Name, sizeBytes, elapsed)
+		p.logger.InfoContext(ctx, "propagator: pushed",
+			"peer", peer.Name,
+			"transport", t.Name(),
+			"bytes", sizeBytes,
+			"elapsed", elapsed.Round(time.Millisecond).String())
+	}
+}
+
+// estimateLastCommitSize approximates the byte count of the
+// most-recent commit's changes by parsing `git diff --shortstat
+// HEAD~1 HEAD`. Returns 0 (interpreted by Manager.Route as
+// "unknown size; fall back to defaults") when the diff query
+// fails — e.g. on the very first commit where HEAD~1 doesn't
+// exist.
+//
+// The estimate is an upper bound — shortstat counts inserted +
+// deleted line bytes but ignores binary deltas. For dotkeeper's
+// text-heavy workload that's a fine approximation; the cost model
+// learns the per-byte multiplier empirically anyway.
+func estimateLastCommitSize(folderPath string) int64 {
+	cmd := exec.Command("git", "diff", "--shortstat", "HEAD~1", "HEAD")
+	cmd.Dir = folderPath
+	out, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+	// shortstat format: " N files changed, X insertions(+), Y deletions(-)"
+	// We only use the insertion + deletion counts as a size proxy.
+	// One line of source is ~50 bytes average; multiply count by 50
+	// to get a bytes-ish number for the cost model.
+	s := string(out)
+	var inserts, deletes int64
+	if idx := strings.Index(s, "insertion"); idx > 0 {
+		_, _ = fmt.Sscanf(s[max(0, idx-10):idx], "%d", &inserts)
+	}
+	if idx := strings.Index(s, "deletion"); idx > 0 {
+		_, _ = fmt.Sscanf(s[max(0, idx-10):idx], "%d", &deletes)
+	}
+	return (inserts + deletes) * 50
+}
+
 // rescanLog is the in-memory store of last-rescan timestamps per
 // folder path. Implements both reconcile.LastRescanRecorder (called
 // by the applier on successful rescan) and reconcile.LastRescanQuerier
@@ -1304,6 +1457,186 @@ func startActivityTracker(ctx context.Context, logger *slog.Logger) *activity.Tr
 	}
 	logger.InfoContext(ctx, "activity tracker started", "roots", len(roots))
 	return tr
+}
+
+// bareInitCmd configures peer-side git repositories so that
+// dotkeeper's GitSSHTransport can push directly to them. The peer
+// side runs `git config receive.denyCurrentBranch updateInstead`
+// in every tracked folder — that tells git to accept pushes to
+// the currently-checked-out branch AND atomically update the
+// working tree on each push.
+//
+// Why this design (vs the more conventional bare-repo +
+// post-receive hook): one configuration knob per folder instead
+// of provisioning a bare repo + installing hooks, no second
+// authoritative copy of the data on the peer, no path-mapping
+// problem (peer's working tree lives at the same path as the
+// local one — already a dotkeeper invariant via `scan_roots`),
+// and natural coexistence with Syncthing (both transports write
+// to the same working tree; identical content is a no-op for
+// either).
+//
+// Prerequisites the operator must satisfy:
+//   - SSH key access from this host to the peer's account
+//     (authorized_keys configured ahead of time)
+//   - Same folder path on the peer as on this host (the v1.0.0
+//     constraint; a per-peer path map is a planned extension)
+//   - Each tracked folder exists as a git working tree on the
+//     peer (dotkeeper-managed folders are git working trees by
+//     definition)
+func bareInitCmd() *cobra.Command {
+	var peerName string
+	var hostOverride string
+	cmd := &cobra.Command{
+		Use:   "bare-init [--peer=NAME] [--host=USER@ADDR]",
+		Short: "Configure peer-side git repos for direct-push transport",
+		Long: "For each folder tracked by dotkeeper on this host, SSH to\n" +
+			"the named peer (or every peer in machine.toml if --peer is\n" +
+			"omitted) and run:\n\n" +
+			"  git -C <folder> config receive.denyCurrentBranch updateInstead\n\n" +
+			"This enables `git push` directly to the peer's working tree —\n" +
+			"the basis of dotkeeper's v1.0.0 GitSSHTransport. Idempotent:\n" +
+			"re-running on an already-configured folder is a no-op.\n\n" +
+			"Peer address resolution order:\n" +
+			"  1. --host=USER@ADDR (operator override)\n" +
+			"  2. Any registered resolver that knows the peer\n" +
+			"     (v1.0.0 ships a Tailscale resolver; mDNS and\n" +
+			"     static-hub variants are planned)\n" +
+			"  3. The peer.Name itself (assume it's resolvable as a\n" +
+			"     hostname via the operator's /etc/hosts, DNS, or\n" +
+			"     SSH config)\n\n" +
+			"Prerequisites: SSH key access already configured to the\n" +
+			"peer (`ssh peer-address true` must succeed); each folder\n" +
+			"exists at the same absolute path on both hosts (the v1.0.0\n" +
+			"path-mirroring constraint).",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			machine, err := config.LoadMachineConfigV2()
+			if err != nil || machine == nil {
+				return fmt.Errorf("load machine config: %w", err)
+			}
+
+			peers := machine.Peers
+			if peerName != "" {
+				filtered := peers[:0]
+				for _, p := range peers {
+					if p.Name == peerName {
+						filtered = append(filtered, p)
+					}
+				}
+				if len(filtered) == 0 {
+					return fmt.Errorf("peer %q not found in machine config", peerName)
+				}
+				peers = filtered
+			}
+			if len(peers) == 0 {
+				return fmt.Errorf("no peers configured; pair a peer first with `dotkeeper peer add`")
+			}
+
+			folders := managedFolderPathsV5()
+			if len(folders) == 0 {
+				return fmt.Errorf("no managed folders; track at least one before bare-init")
+			}
+
+			// Construct the list of available resolvers in
+			// preference order. v1.0.0 ships one resolver
+			// (Tailscale); mDNS and static-hub variants are
+			// planned extensions. Each resolver's Available() is
+			// consulted lazily inside resolveBareInitAddress so an
+			// unconfigured resolver (e.g. the resolver's
+			// prerequisite tool isn't installed) simply
+			// contributes nothing.
+			resolvers := []transport.Resolver{
+				transport.NewTailscaleResolver(),
+			}
+
+			if hostOverride != "" && len(peers) > 1 {
+				return fmt.Errorf("--host can only be used together with --peer (a single override address can't apply to every peer)")
+			}
+
+			ctx := cmd.Context()
+			out := cmd.OutOrStdout()
+			anyErr := false
+			for _, p := range peers {
+				addr, source, err := resolveBareInitAddress(ctx, p, hostOverride, resolvers)
+				if err != nil {
+					_, _ = fmt.Fprintf(out, "peer %q: skip (%v)\n", p.Name, err)
+					anyErr = true
+					continue
+				}
+				for _, folder := range folders {
+					_, _ = fmt.Fprintf(out, "peer %q (%s via %s) folder %q: configuring receive.denyCurrentBranch=updateInstead\n",
+						p.Name, addr, source, folder)
+					sshCmd := exec.CommandContext(ctx, "ssh",
+						"-o", "BatchMode=yes",
+						"-o", "ConnectTimeout=5",
+						"-o", "StrictHostKeyChecking=accept-new",
+						addr,
+						"git", "-C", shellQuote(folder),
+						"config", "receive.denyCurrentBranch", "updateInstead")
+					output, err := sshCmd.CombinedOutput()
+					if err != nil {
+						_, _ = fmt.Fprintf(out, "  FAILED: %v: %s\n", err, strings.TrimSpace(string(output)))
+						anyErr = true
+						continue
+					}
+					_, _ = fmt.Fprintf(out, "  ok\n")
+				}
+			}
+			if anyErr {
+				return fmt.Errorf("bare-init completed with errors; see output above")
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&peerName, "peer", "", "configure only this peer (default: every peer)")
+	cmd.Flags().StringVar(&hostOverride, "host", "", "SSH target address (USER@ADDR or just ADDR); overrides all resolvers")
+	return cmd
+}
+
+// resolveBareInitAddress walks the address-resolution ladder
+// described in bareInitCmd's --help: explicit override → any
+// available resolver → peer.Name as a last-resort hostname.
+// Returns the resolved address and a short label for the source
+// (used in operator-facing log lines). The "name as hostname"
+// fallback exists so users who have configured their SSH client
+// (via /etc/hosts, ~/.ssh/config, or local DNS) can use the peer's
+// dotkeeper name as the SSH target without needing a configured
+// resolver inside dotkeeper itself.
+func resolveBareInitAddress(ctx context.Context, p config.PeerEntry, override string, resolvers []transport.Resolver) (addr, source string, err error) {
+	if override != "" {
+		return override, "override", nil
+	}
+	peer := transport.Peer{Name: p.Name, DeviceID: p.DeviceID, Hostname: p.Name}
+	for _, r := range resolvers {
+		if !r.Available() {
+			continue
+		}
+		a, rerr := r.Resolve(ctx, peer)
+		if rerr == nil {
+			return a, r.Name(), nil
+		}
+		// ErrPeerUnknown is the expected "this resolver doesn't
+		// know about this peer" signal; we move on to the next
+		// resolver. Other errors (ErrResolverUnavailable, etc.)
+		// also fall through; a future revision may log differently
+		// to distinguish "resolver broken" from "resolver doesn't
+		// know peer."
+		_ = rerr
+	}
+	// Last-resort fallback: assume the peer name itself is an
+	// SSH-reachable hostname. Works for fleets with /etc/hosts
+	// entries, ~/.ssh/config Host blocks, or LAN-local DNS.
+	return p.Name, "name-as-hostname", nil
+}
+
+// shellQuote returns s wrapped in single quotes with embedded
+// single-quotes escaped. We use it for paths passed to remote
+// shells via ssh, where the path becomes one argument to remote
+// `sh -c "..."` after SSH's own argument concatenation. Without
+// quoting, a path with spaces (like macOS's "/Users/me/My
+// Documents") would split across multiple remote arguments.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // transportCmd surfaces the v1.0.0 multi-transport state to operators.

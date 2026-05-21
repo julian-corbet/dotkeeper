@@ -13,16 +13,19 @@ import (
 )
 
 // GitSSHTransport carries dotkeeper-managed commits to a peer via
-// `git push` over SSH. The peer-side endpoint is a bare repository
-// at a path the operator has provisioned ahead of time (typically
-// `~/.local/share/dotkeeper/repos/<folder-id>.git` on the peer); see
-// docs/gitssh-setup.md (v1.1+) for the auto-provisioning helper.
+// `git push` over SSH. The peer-side endpoint is the peer's working
+// tree at the same absolute path as on the local host (the v1.0.0
+// mirror-paths convention, enforced by dotkeeper's `scan_roots`
+// discovery). The peer-side repo must be configured with
+// `receive.denyCurrentBranch=updateInstead` so a push to the
+// currently-checked-out branch atomically updates the working tree
+// — `dotkeeper bare-init` sets that config in one step.
 //
-// Variants of this transport differ only in how they resolve
-// peer-name → ssh-reachable address. Each variant is a separate
-// concrete instance with its own Resolver. v1.0.0 ships the
-// Tailscale variant; mDNS and static-hub variants are tracked for
-// follow-up releases.
+// Variants of this transport differ only in how they resolve a
+// peer's name to an SSH-reachable address. Each variant is a
+// separate concrete instance with its own Resolver. v1.0.0 ships
+// one resolver (Tailscale); the Resolver interface is the seam for
+// mDNS and static-hub variants in follow-up releases.
 type GitSSHTransport struct {
 	// resolver maps Peer to address. Its Name() is used as the
 	// transport-name suffix ("git-ssh+tailscale").
@@ -38,9 +41,10 @@ type GitSSHTransport struct {
 	probeTimeout time.Duration
 
 	// pushTimeout bounds each PropagateChange call. Git push of a
-	// small commit over Tailscale-class latency is well under a
-	// second; 30 seconds accommodates initial-push cases where
-	// the peer's bare repo just got provisioned.
+	// small commit over typical low-latency SSH is well under a
+	// second; 30 seconds accommodates initial-push cases where the
+	// peer just had its first commit cycle and is materialising
+	// the working tree from scratch.
 	pushTimeout time.Duration
 }
 
@@ -202,18 +206,24 @@ func (g *GitSSHTransport) Probe(ctx context.Context, peer Peer) (time.Duration, 
 	return d, nil
 }
 
-// PropagateChange pushes change.CommitHash to the peer's git remote.
-// The remote was added by an earlier EnsurePeerReachability call;
-// if it doesn't exist, the push fails and the manager logs the
-// error (recovery is for the operator to investigate why the
-// remote went missing).
+// PropagateChange pushes the change to the peer via git push over
+// SSH. The remote was added by an earlier EnsurePeerReachability
+// call; if it doesn't exist, the push fails and the manager logs
+// the error (recovery is for the operator to investigate).
 //
-// Requires a bare repository at the resolved address. Setting up
-// the peer-side bare is the operator's responsibility in v1.0.0;
-// `dotkeeper bare-init` (v1.1+) will automate it. When the push
-// fails because the bare doesn't exist, git's error message
-// contains "repository ... not found" or similar, which the
-// applier logs verbatim so the user knows what to fix.
+// Pushes against the peer's working tree directly using git's
+// `receive.denyCurrentBranch=updateInstead` semantics — when the
+// peer-side repo has that setting (provisioned via
+// `dotkeeper bare-init`), a push to the currently-checked-out
+// branch updates the peer's working tree on the spot. No separate
+// bare repo, no post-receive hook, no second authoritative copy
+// of the data.
+//
+// The push targets HEAD's branch on the peer (in practice always
+// main/master for dotkeeper-managed repos). We use HEAD:refs/heads/HEAD
+// when the commit hash is unknown — this works when the local
+// checkout is on the same branch as the peer's checkout, which is
+// the dotkeeper convention.
 //
 // Idempotent: pushing a commit that already exists on the peer is
 // a fast-forward no-op for git.
@@ -222,16 +232,30 @@ func (g *GitSSHTransport) PropagateChange(ctx context.Context, change Change, pe
 	pctx, cancel := context.WithTimeout(ctx, g.pushTimeout)
 	defer cancel()
 
-	args := []string{"push", remoteName}
+	// Determine the source ref. If the caller supplied a commit hash,
+	// push exactly that hash to the peer's current branch. Otherwise
+	// push the local HEAD, which is the right default for the
+	// "dotkeeper just committed something" flow.
+	srcRef := "HEAD"
 	if change.CommitHash != "" {
-		args = append(args, change.CommitHash+":refs/heads/main")
+		srcRef = change.CommitHash
 	}
+	// We push to refs/heads/<branch> where <branch> is the same name
+	// as the local checkout. Determining the local branch requires a
+	// separate git invocation; for v1.0 we assume "main" because
+	// dotkeeper-tracked repos default to that. Reading the branch
+	// name from .dotkeeper.toml is a planned extension for repos
+	// that diverge from the default.
+	dstRef := "refs/heads/main"
+
+	args := []string{"push", remoteName, srcRef + ":" + dstRef}
 	out, err := g.runner.Run(pctx, change.Folder.Path, "git", args...)
 	if err != nil {
-		// Surface git's stderr verbatim — "remote: error" lines
-		// from the peer side often tell the operator exactly
-		// what's wrong (missing bare repo, permission denied,
-		// non-fast-forward).
+		// Surface git's stderr verbatim. The most common failure
+		// mode is "remote: error: refusing to update checked out
+		// branch" — happens when the peer-side hasn't been
+		// configured with denyCurrentBranch=updateInstead, which
+		// is what `dotkeeper bare-init` fixes.
 		return fmt.Errorf("GitSSHTransport.PropagateChange: push to %s: %w: %s", remoteName, err, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -263,11 +287,18 @@ func (g *GitSSHTransport) remoteName(peer Peer) string {
 	return "dk+" + g.resolver.Name() + "+" + sanitised
 }
 
-// remoteURL builds the SSH URL the git remote points at. Format:
-// "ssh://[user@]host/~/.local/share/dotkeeper/repos/<folder-id>.git".
-// The standardised path is the v1.0.0 convention for peer-side
-// bare repos; documented and consumed by `dotkeeper bare-init`
-// (v1.1+).
+// remoteURL builds the SSH URL the git remote points at. v1.0.0
+// targets the peer's WORKING TREE directly (not a separate bare
+// repo) and relies on `receive.denyCurrentBranch=updateInstead` —
+// provisioned via `dotkeeper bare-init` — so a push to the checked-
+// out branch updates the working tree atomically.
+//
+// Path convention: peer's working tree lives at the same absolute
+// path on the peer as on this machine. This is the v1.0.0
+// constraint; the dotkeeper folder discovery enforces consistent
+// paths under scan_roots already, so for the common case the
+// constraint is invisible. A per-peer path map for users with
+// diverging layouts is a planned extension.
 //
 // Falls back to including the user explicitly when peer.User is
 // set; otherwise SSH uses the local user from the operator's SSH
@@ -277,13 +308,14 @@ func (g *GitSSHTransport) remoteURL(addr string, peer Peer, folder Folder) strin
 	if peer.User != "" {
 		host = peer.User + "@" + addr
 	}
-	return "ssh://" + host + "/~/.local/share/dotkeeper/repos/" + folder.ID + ".git"
+	return "ssh://" + host + folder.Path
 }
 
-// ErrPushFailed wraps git push failures to make them programmatically
-// identifiable. Reserved for v1.1+ when the manager may treat
-// recoverable push errors (bare repo missing, peer offline)
-// differently from unrecoverable ones (non-fast-forward).
+// ErrPushFailed wraps git push failures to make them
+// programmatically identifiable. Reserved for follow-up work that
+// distinguishes recoverable push errors (peer offline,
+// updateInstead not configured) from unrecoverable ones
+// (non-fast-forward).
 var ErrPushFailed = errors.New("git push failed")
 
 // _ verifies GitSSHTransport satisfies the Transport interface at

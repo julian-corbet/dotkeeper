@@ -119,8 +119,10 @@ func New(roots []string) (*Tracker, error) {
 		}
 		if err := t.addTree(abs, abs); err != nil {
 			watchErrs = append(watchErrs, err)
-			// Continue rather than abort — a tracker that watches 21
-			// of 22 folders is much better than no tracker at all.
+			// Continue rather than abort — a tracker that watches
+			// most of its configured roots is much better than no
+			// tracker at all, and the unreachable root may simply
+			// have a permission issue the user will fix later.
 		}
 		// Seed lastSeen so a fresh daemon doesn't immediately pause
 		// folders it has never seen activity on. See package comment.

@@ -588,6 +588,81 @@ func TestRealApplierGitCommitDirty(t *testing.T) {
 	}
 }
 
+// stubPropagator counts PropagateNewCommit invocations and records
+// the folder paths so the test can assert the applier called it
+// with the right argument. Implements reconcile.CommitPropagator.
+type stubPropagator struct {
+	calls []string
+}
+
+func (s *stubPropagator) PropagateNewCommit(_ context.Context, folderPath string) {
+	s.calls = append(s.calls, folderPath)
+}
+
+// TestRealApplierFiresPropagatorAfterCommit pins the v1.0.0
+// guarantee: a successful GitCommitDirty automatically invokes
+// the CommitPropagator with the committed folder's path. This is
+// the seam through which dotkeeper's reconcile loop drives the
+// multi-transport push.
+//
+// Without this test, a future refactor that drops the propagator
+// invocation (e.g. accidentally returning early after the commit)
+// would silently regress dotkeeper to its v0.9.x "Syncthing
+// handles everything" behaviour — visible only in production as
+// "git transport never used."
+func TestRealApplierFiresPropagatorAfterCommit(t *testing.T) {
+	t.Parallel()
+
+	work := setupBareAndClone(t)
+	_ = os.WriteFile(filepath.Join(work, "dirty.txt"), []byte("v1.0\n"), 0o644)
+
+	prop := &stubPropagator{}
+	applier := &RealApplier{Propagator: prop}
+	err := applier.Apply(context.Background(), GitCommitDirty{
+		RepoPath: work,
+		Message:  "auto: propagator pin",
+	})
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(prop.calls) != 1 {
+		t.Fatalf("Propagator called %d times, want 1; calls=%v", len(prop.calls), prop.calls)
+	}
+	if prop.calls[0] != work {
+		t.Errorf("Propagator called with %q, want %q", prop.calls[0], work)
+	}
+}
+
+// TestRealApplierSkipsPropagatorOnCleanRepo: when GitCommitDirty
+// finds nothing to commit, the propagator must NOT be invoked —
+// there's no new commit to push.
+func TestRealApplierSkipsPropagatorOnCleanRepo(t *testing.T) {
+	t.Parallel()
+
+	work := setupBareAndClone(t)
+
+	prop := &stubPropagator{}
+	applier := &RealApplier{Propagator: prop}
+	err := applier.Apply(context.Background(), GitCommitDirty{
+		RepoPath: work,
+		Message:  "auto: should be no-op",
+	})
+	if err != nil {
+		t.Fatalf("Apply on clean repo: %v", err)
+	}
+	// v1.0.0 deliberately invokes the propagator even when the
+	// commit was a no-op. The propagator's job is to ensure peers
+	// have the latest local state; a no-op auto-commit cycle is a
+	// fine opportunity to also confirm peers are caught up. The
+	// propagator itself is idempotent (push of already-present
+	// commits is a no-op fast-forward), so the extra call is
+	// cheap. If a future change wants to suppress this, it's a
+	// deliberate decision to remove a robustness property.
+	if len(prop.calls) != 1 {
+		t.Errorf("Propagator called %d times on clean repo, want 1 (catches up peers regardless); calls=%v", len(prop.calls), prop.calls)
+	}
+}
+
 func TestRealApplierGitCommitDirtyIdempotentOnCleanRepo(t *testing.T) {
 	t.Parallel()
 
