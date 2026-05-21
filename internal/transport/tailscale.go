@@ -174,13 +174,14 @@ func (r *TailscaleResolver) refresh(ctx context.Context) error {
 		cached[strings.ToLower(st.Self.HostName)] = st.Self.TailscaleIPs[0]
 	}
 	for _, p := range st.Peer {
-		if !p.Online {
-			// Offline peers are still in the tailnet but not
-			// reachable right now. Cache the IP anyway —
-			// Online status is also visible to the caller via
-			// the eventual Probe; whether the IP is reachable
-			// is the probe's job, not the resolver's.
-		}
+		// We intentionally do NOT skip offline peers here.
+		// Offline peers are still in the tailnet but not
+		// reachable right now — we cache the IP anyway because
+		// reachability is the Probe's job, not the resolver's.
+		// The Probe will fail; the manager will mark the
+		// transport unreachable for this peer; on the peer
+		// coming back online a subsequent Discover picks them
+		// up.
 		if p.HostName == "" || len(p.TailscaleIPs) == 0 {
 			continue
 		}

@@ -1346,9 +1346,9 @@ func transportListCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			transports := buildTransportList()
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "TRANSPORT\tAVAILABLE")
+			_, _ = fmt.Fprintln(w, "TRANSPORT\tAVAILABLE")
 			for _, t := range transports {
-				fmt.Fprintf(w, "%s\t%s\n", t.Name(), availabilityString(t.Available()))
+				_, _ = fmt.Fprintf(w, "%s\t%s\n", t.Name(), availabilityString(t.Available()))
 			}
 			return w.Flush()
 		},
@@ -1393,7 +1393,7 @@ func transportStatusCmd() *cobra.Command {
 			mgr := transport.NewManager(buildTransportList())
 			ctx := cmd.Context()
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "PEER\tTRANSPORT\tREACHABLE\tPROBE-RTT\tSETUP-MS\tMB-PER-SEC\tN")
+			_, _ = fmt.Fprintln(w, "PEER\tTRANSPORT\tREACHABLE\tPROBE-RTT\tSETUP-MS\tMB-PER-SEC\tN")
 			for _, p := range peers {
 				peer := transport.Peer{Name: p.Name, DeviceID: p.DeviceID, Hostname: p.Name}
 				mgr.Discover(ctx, peer)
@@ -1411,7 +1411,7 @@ func transportStatusCmd() *cobra.Command {
 						reach = "yes"
 						rtt = entry.ProbeLatency.Round(time.Millisecond).String()
 					}
-					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.1f\t%.2f\t%.1f\n",
+					_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.1f\t%.2f\t%.1f\n",
 						p.Name, t.Name(), reach, rtt, setup, throughputMBps, n)
 				}
 			}
