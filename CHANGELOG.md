@@ -7,6 +7,64 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-05-21
+
+### Added
+
+- **`internal/transport` package — Transport abstraction for peer
+  change propagation.** Defines the `Transport` interface every
+  inter-peer transport implementation must satisfy: `Name`,
+  `Available`, `EnsurePeerReachability`, `RemovePeerReachability`,
+  `Probe` (RTT measurement), and `PropagateChange` (the active-push
+  path, a no-op for transports whose backing system gossips by
+  itself).
+
+  v0.9.9 ships exactly one implementation, `SyncthingTransport`,
+  which wraps the existing `stclient` calls so the seam is exercised
+  without changing user-visible behaviour. v1.0.0 will add a
+  `GitSSHTransport` plus a `TransportManager` that probes both for
+  each peer and picks the fastest reachable path.
+
+  The package's dependency surface is deliberately narrow: it owns a
+  small `SyncthingClient` interface defined in
+  `internal/transport/syncthing.go` rather than importing
+  `internal/stclient` directly. Compile-time conformance
+  (`var _ transport.SyncthingClient = (*stclient.Client)(nil)`) in
+  `cmd/dotkeeper/main.go` guarantees the real client satisfies the
+  abstraction; tests don't need a real Syncthing.
+
+### Changed
+
+- Daemon startup now logs `transports available: syncthing` after
+  Syncthing's API binds. Operator-facing surface for "what's
+  available right now" until the v1.0.0 `dotkeeper transport list`
+  CLI lands.
+
+### Design notes (for v1.0.0 readers)
+
+This release is intentionally a pure-refactor stepping stone. None
+of the reconcile action handlers have been migrated to call
+`Transport.EnsurePeerReachability` yet — they continue to invoke
+`stclient` directly. The migration happens in v1.0.0 alongside the
+introduction of multiple transports, where the choice "which
+transport for this peer" becomes a real decision.
+
+The Transport interface boundary is "anything that talks to a
+**peer**" — Syncthing folder-device lists, SSH endpoints. Operations
+that talk to the **local Syncthing** (pause/unpause/schedule/
+rescan) stay in `internal/stclient` regardless. Cleanly separating
+these two concerns is the structural payoff of the refactor.
+
+### Tests
+
+- `internal/transport/syncthing_test.go` — 12 test cases covering:
+  Name/Available, EnsurePeerReachability idempotency, the "folder
+  not found" path, empty DeviceID rejection, nil-client safety,
+  RemovePeerReachability idempotency, Probe round-trip
+  measurement, ErrUnreachable when the client is unset, ping
+  error propagation, no-op PropagateChange, SetConfig error
+  propagation, and a compile-time interface-conformance assertion.
+
 ## [0.9.8] - 2026-05-21
 
 ### Fixed
