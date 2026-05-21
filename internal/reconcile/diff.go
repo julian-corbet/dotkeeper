@@ -343,6 +343,23 @@ func smartRescanAction(obs FolderObs, folderPath string, observed Observed) Acti
 	if observed.LastRescanByPath != nil {
 		lastRescan = observed.LastRescanByPath[folderPath]
 	}
+	// No history → don't fire backstop. Two paths land here:
+	//   - The daemon's rescan log hasn't been seeded yet (race during
+	//     startup; mainline path seeds before the first reconcile
+	//     completes).
+	//   - A caller like the one-shot `dotkeeper reconcile` CLI passes
+	//     LastRescanByPath=nil because no long-lived rescan log
+	//     exists outside the daemon.
+	// In both cases the conservative behaviour is to skip the backstop
+	// for this cycle and let the next informed reconcile decide. The
+	// alternative (treating zero time as "epoch, definitely overdue")
+	// caused the cold-start rescan storm we shipped in v0.9.7: a
+	// fresh daemon fired one RescanFolderNow per folder against
+	// Syncthing within seconds of startup, which on a 22-folder
+	// fleet briefly overwhelmed the REST endpoint.
+	if lastRescan.IsZero() {
+		return nil
+	}
 	if observed.Now.Sub(lastRescan) >= backstop {
 		if hasHealth && health.FilesystemReliable {
 			return mk("weekly backstop")
