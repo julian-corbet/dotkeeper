@@ -7,6 +7,134 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-05-21
+
+### Changed
+
+- **Periodic Syncthing-driven rescans replaced by dotkeeper-driven
+  reactive rescans.** Canonical `rescanIntervalS` flipped from
+  86400 (daily) to **0** (no Syncthing-side periodic scan). The
+  fsWatcher (inotify on Linux, FSEvents on macOS,
+  ReadDirectoryChangesW on Windows) remains the real-time signal.
+  Periodic safety-net rescans are now scheduled by dotkeeper itself
+  in response to detectable conditions, not on a calendar.
+
+  Existing folders carried over from any earlier release are
+  migrated to the new value on first reconcile after upgrade by
+  the v0.9.5 drift detector (extended to cover the new canonical).
+
+### Added
+
+- **Cross-platform filesystem-event-API reliability detection.**
+  New `internal/watchhealth` package classifies each managed
+  folder's storage backend at registration time:
+  - **Linux**: `statfs(2)` magic number lookup. Reliable set:
+    ext{2,3,4}, btrfs, xfs, zfs, tmpfs, f2fs, squashfs, overlayfs.
+    Unreliable set: nfs, cifs, smbfs, 9p, fuse, fuseblk, virtiofs,
+    reiserfs.
+  - **macOS**: `statfs(2)` `Fstypename`. Reliable: apfs, hfs,
+    msdos, exfat. Unreliable: nfs, smbfs, afpfs, webdav, autofs,
+    osxfuse, macfuse. (Apple's FSEvents documentation explicitly
+    states events are not generated for network mounts.)
+  - **Windows**: `GetVolumeInformation` for the FS name plus
+    `GetDriveType` to catch SMB-via-redirector cases where the
+    name reports as "NTFS" but the volume is remote. Reliable:
+    NTFS, ReFS, FAT32, exFAT. Unreliable: CIFS/SMB/NFS/WebDAV or
+    any volume with `DRIVE_REMOTE`.
+  - **Other (BSDs)**: returns `FilesystemUnknown`, which falls
+    through to the conservative "treat as unreliable" branch in
+    reconcile/diff. Future per-platform expansion is a one-file
+    addition.
+
+- **Watcher-overflow and watch-limit detection.** The watchhealth
+  tracker accepts `MarkOverflow(path)` and `MarkWatchLimitHit(path)`
+  signals; reconcile reads them via the `HealthQuerier` interface
+  and emits one-shot `RescanFolderNow` actions. The signals are
+  cleared after a successful rescan via the new `HealthResetter`
+  interface so each detected miss triggers exactly one recovery
+  rescan.
+
+  v0.9.7 wires the watchhealth tracker into the daemon but does not
+  yet plumb the overflow signal from fsnotify (Linux
+  `IN_Q_OVERFLOW`, Windows `ERROR_NOTIFY_ENUM_DIR`) into
+  `MarkOverflow`. The infrastructure is in place; the producer-side
+  hook is a v0.9.8 finishing touch. In the meantime overflow
+  recovery relies on the backstop interval.
+
+- **Cross-platform suspend/resume detection** via a portable
+  heartbeat goroutine that fires on the returned channel whenever
+  the wall clock advances more than 2× the heartbeat interval
+  between two consecutive ticks. Catches laptop suspend, VM pause,
+  container clock jump, and host-side OS sleep with zero
+  per-platform dependencies (no D-Bus, no Cocoa, no Win32). Misses
+  precisely-timed wakes shorter than 2× the interval; with the
+  default 30s heartbeat that means we miss a 50-second sleep but
+  catch any 61-second-or-longer one — fine for real-world laptop
+  suspends which are minutes to hours.
+
+- **Backstop intervals.** Even when no watcher signal has fired,
+  dotkeeper emits a `RescanFolderNow` for each folder on a
+  classification-dependent interval:
+  - **Reliable filesystems**: 7 days. Covers detector blind spots
+    (unknown kernel bug, peer rewriting via a tool that bypassed
+    the local kernel).
+  - **Unreliable filesystems**: 24 hours. The only signal driving
+    change detection on these mounts; there's no fsWatcher to fall
+    back on.
+
+- **`stclient.Client.ScheduleRescan(folderID)`** posts to
+  Syncthing's `/rest/db/scan?folder=ID` endpoint. URL-encodes the
+  folder ID so IDs containing slashes/special characters don't
+  break the request.
+
+- **`reconcile.RescanFolderNow` action** carries `FolderID`, `Path`
+  (for the watchhealth Reset callback), and `Reason` (verbatim in
+  the Describe() output, so log evidence cites the trigger:
+  "rescan Syncthing folder X (reason: event queue overflow)").
+
+### Tests
+
+- `internal/watchhealth/tracker_test.go`:
+  - Register classifies a real tmpfs/apfs/NTFS path as not-
+    Unreliable (host-fs-resilient assertion).
+  - Re-Register preserves pending flags (OverflowSeen,
+    WatchLimitHit) — re-classification must not silently swallow a
+    pending recovery signal.
+  - Reset clears one-shot flags but preserves FilesystemType and
+    LastReliableEventAt (facts, not pending signals).
+  - Mark* on an unknown path is a no-op (race during startup
+    between watcher registration and tracker registration).
+  - SleepDetector inner loop tested with an injected synthetic
+    tick channel so the test doesn't depend on wall-clock
+    behaviour that real time.Ticker can't exhibit in CI (host
+    doesn't suspend its own test runner).
+
+- `internal/reconcile/diff_test.go`:
+  - New `TestDiffSmartRescan` — 11-case matrix covering the
+    state machine: wake-event priority, overflow, watch-limit-hit,
+    reliable-FS backstop (weekly), unreliable-FS backstop (daily),
+    unknown-FS-defaults-to-untrusted, paused folder never
+    rescanned, first-cycle-with-no-history.
+  - `TestDiffEmitsUpdateScheduleOnDrift` updated for the new
+    canonical: 0 is now correct, 86400 is now drift.
+
+- `fakeST` test double extended with `ScheduleRescan` and a
+  `RescanRequested` audit log.
+
+### Known limitations / deferred work
+
+- **Overflow signal not yet plumbed from fsnotify**. The activity
+  tracker drains fsnotify errors silently. Wiring those errors
+  into `watchhealth.MarkOverflow` is mechanical but enough surface
+  area that it gets its own change in v0.9.8.
+- **In-memory rescan log resets on daemon restart**. After a
+  restart every folder appears as "never rescanned" and the
+  backstop fires on the first reconcile — one extra rescan per
+  folder per restart. Benign; persisting to state.toml is v0.9.8.
+- **Folder set captured at startup**. Same trade-off as v0.9.6:
+  folders added after startup don't get watchhealth classification
+  until the next service restart.
+
 ## [0.9.6] - 2026-05-21
 
 ### Added

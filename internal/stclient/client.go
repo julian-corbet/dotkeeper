@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -241,15 +242,26 @@ func (c *Client) GetFolderStatus(folderID string) (*FolderStatus, error) {
 // Syncthing folder. Centralised so the diff (which detects drift) and
 // the applier (which writes the desired values) share one definition.
 //
-// rescanIntervalS=86400 (daily). fsWatcher carries real-time changes
-// via inotify on Linux; the periodic rescan is the inotify-drop safety
-// net. The prior 60s default forced ~one full tree walk per minute per
-// folder, dominating the daemon's CPU on multi-folder fleets without
-// any operational benefit. See v0.9.4 CHANGELOG for the original
-// switch; v0.9.5 added the drift detector so existing installs migrate
-// even when the folder otherwise looks correct to the reconciler.
+// rescanIntervalS=0 (Syncthing's "fsWatcher only, no periodic rescan"
+// mode). dotkeeper drives rescans reactively via the watchhealth
+// package: when an event-queue overflow, watch-limit hit,
+// suspend/resume, or untrusted-filesystem condition is detected, the
+// diff emits a RescanFolderNow action that calls
+// POST /rest/db/scan?folder=ID. A weekly backstop rescan covers
+// detector blind spots.
+//
+// Migration history of this constant:
+//
+//   - pre-v0.9.4: 60 (one full tree walk per minute, dominated CPU)
+//   - v0.9.4: 86400 (daily safety-net rescan; covered most failure
+//     modes but burned CPU on healthy hosts)
+//   - v0.9.7: 0 (dotkeeper-driven; see internal/watchhealth)
+//
+// The drift detector in internal/reconcile actively migrates folders
+// carried over from any prior value on first reconcile after
+// upgrade, so the constant change here is the only update needed.
 const (
-	CanonicalRescanIntervalS  = 86400
+	CanonicalRescanIntervalS  = 0
 	CanonicalFsWatcherEnabled = true
 	CanonicalFsWatcherDelayS  = 1
 )
@@ -368,6 +380,44 @@ func (c *Client) put(endpoint string, data any) error {
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		return fmt.Errorf("API returned %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// ScheduleRescan requests an immediate full rescan of the named
+// folder via Syncthing's POST /rest/db/scan?folder=ID endpoint.
+// Used by the v0.9.7 watchhealth-driven rescheduler: when the
+// filesystem-event API is suspected to have missed something
+// (queue overflow, suspend/resume, untrusted FS hit a backstop
+// interval), reconcile emits a RescanFolderNow action that calls
+// this method.
+//
+// The Syncthing endpoint returns 200 with no body on success or
+// 500 with an error message on failure (e.g. folder ID unknown,
+// folder currently paused). We surface the 500 body verbatim so
+// operators get an actionable error.
+func (c *Client) ScheduleRescan(folderID string) error {
+	if folderID == "" {
+		return fmt.Errorf("ScheduleRescan: empty folder ID")
+	}
+	// /rest/db/scan accepts ?folder=<id> with no body. The endpoint
+	// is a POST per the Syncthing REST docs; SetConfig elsewhere
+	// uses PUT, so we inline the request rather than introduce a
+	// generic post helper used by exactly one call site.
+	endpoint := url.PathEscape(folderID)
+	req, err := http.NewRequest("POST", c.baseURL+"/rest/db/scan?folder="+endpoint, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-API-Key", c.apiKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ScheduleRescan %q: HTTP %d: %s", folderID, resp.StatusCode, bytes.TrimSpace(body))
 	}
 	return nil
 }

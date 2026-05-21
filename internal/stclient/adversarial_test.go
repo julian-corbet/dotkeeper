@@ -4,6 +4,7 @@
 package stclient
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -163,12 +164,14 @@ func TestAddOrUpdateFolderMergesExisting(t *testing.T) {
 	}
 
 	// Migration assertion: the pre-existing rescanIntervalS=60 must be
-	// overwritten to 86400. If a future change reverts dotkeeper to
-	// "preserve user customisations" semantics for the scheduler fields,
-	// existing v0.9.3-and-earlier installs would stay at 60s forever and
-	// the user would not see the perf improvement on upgrade.
-	if !strings.Contains(putRaw, `"rescanIntervalS":86400`) {
-		t.Errorf("expected rescanIntervalS=86400 in PUT body, got:\n%s", putRaw)
+	// overwritten to the current canonical value. Asserting against
+	// the constant keeps this test resilient across changes to the
+	// canonical default — what we're really proving is that the
+	// stale value gets replaced, not that any specific replacement
+	// value is in place.
+	wantKey := fmt.Sprintf(`"rescanIntervalS":%d`, CanonicalRescanIntervalS)
+	if !strings.Contains(putRaw, wantKey) {
+		t.Errorf("expected %s in PUT body, got:\n%s", wantKey, putRaw)
 	}
 	if strings.Contains(putRaw, `"rescanIntervalS":60`) {
 		t.Errorf("pre-existing rescanIntervalS=60 not migrated; full PUT body:\n%s", putRaw)

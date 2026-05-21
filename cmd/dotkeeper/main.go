@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"text/tabwriter"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/julian-corbet/dotkeeper/internal/service"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 	"github.com/julian-corbet/dotkeeper/internal/stengine"
+	"github.com/julian-corbet/dotkeeper/internal/watchhealth"
 )
 
 // Version is dotkeeper's release version. It overrides Syncthing's embedded
@@ -397,8 +399,27 @@ func startCmd() *cobra.Command {
 				}
 			}()
 
+			// Spin up the smart-rescan support: watchhealth tracker
+			// (per-folder filesystem classification + overflow flags),
+			// sleep/wake detector (heartbeat-based, no D-Bus/Cocoa
+			// dependency), and the rescan-timestamp recorder used by
+			// the backstop check. All three are cheap to leave running;
+			// if reconcile decides nothing's drifted, no rescans fire.
+			health := startWatchHealth(ctx, logger)
+			healthAd := newHealthAdapter(health)
+			wakeFlag := startWakeDetector(ctx, logger)
+			rescanLog := newRescanLog()
+
+			// Forward activity events into the watchhealth tracker so
+			// LastReliableEventAt advances. Tracker already drives the
+			// auto-pause loop; this just teaches it to also feed
+			// watchhealth's liveness clock.
+			if tracker != nil && health != nil {
+				go forwardActivityToHealth(ctx, tracker, health)
+			}
+
 			// Start the reconcile daemon alongside Syncthing.
-			startReconcileDaemon(ctx, logger, tracker)
+			startReconcileDaemon(ctx, logger, tracker, healthAd, wakeFlag, rescanLog)
 
 			eng := engine()
 			if err := eng.Start(ctx); err != nil {
@@ -986,6 +1007,121 @@ func buildDoctorChecks() []doctor.Check {
 
 // unused keeps the time import live for the statusCmd's time.Time formatting.
 var _ = time.Time{}
+
+// forwardActivityToHealth subscribes to the activity tracker's
+// Hints channel and forwards each event into the watchhealth
+// tracker as MarkEventDelivered. This keeps LastReliableEventAt
+// fresh on every watched folder so the "watcher has been silent
+// for too long" liveness check (planned for v0.9.8) has accurate
+// data. v0.9.7 doesn't yet branch on this field but populating it
+// avoids a "missing data" issue when the check is added later.
+func forwardActivityToHealth(ctx context.Context, tracker *activity.Tracker, health *watchhealth.Tracker) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case root, ok := <-tracker.Hints():
+			if !ok {
+				return
+			}
+			health.MarkEventDelivered(root, time.Now())
+		}
+	}
+}
+
+// startWatchHealth instantiates the watchhealth.Tracker and
+// pre-classifies every currently-managed folder. Returns the
+// tracker (typed pointer rather than interface) so callers can
+// supply it both as a HealthQuerier to the provider and as a
+// HealthResetter to the applier.
+//
+// Reclassification on the fly (folders added after startup) is
+// deferred to v0.9.8 — same trade-off as the activity tracker:
+// folders added post-startup don't get smart rescan until next
+// service restart, which is recoverable.
+func startWatchHealth(ctx context.Context, logger *slog.Logger) *watchhealth.Tracker {
+	wh := watchhealth.New()
+	for _, root := range managedFolderPathsV5() {
+		st := wh.Register(root)
+		logger.InfoContext(ctx, "watchhealth classified folder",
+			"path", root,
+			"fs", st.FilesystemType,
+			"kind", st.Kind.String())
+	}
+	return wh
+}
+
+// startWakeDetector spawns the heartbeat-based suspend/resume
+// detector and returns a WakeFlag adapter that the provider can
+// Take() once per cycle. The detector runs at 30s ticks and emits
+// when wall-clock advances by >60s between ticks.
+func startWakeDetector(ctx context.Context, logger *slog.Logger) reconcileWakeFlag {
+	events := watchhealth.StartSleepDetector(ctx, 30*time.Second)
+	wf := &wakeFlag{}
+	go func() {
+		for ev := range events {
+			logger.InfoContext(ctx, "suspend/resume detected", "gap", ev.Gap.String())
+			wf.set()
+		}
+	}()
+	return wf
+}
+
+// wakeFlag is a one-shot bool consumed by reconcile via Take().
+// The detector goroutine sets it; the provider consumes it once
+// per cycle.
+type wakeFlag struct {
+	mu  sync.Mutex
+	hot bool
+}
+
+func (w *wakeFlag) set() {
+	w.mu.Lock()
+	w.hot = true
+	w.mu.Unlock()
+}
+
+func (w *wakeFlag) Take() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	v := w.hot
+	w.hot = false
+	return v
+}
+
+// reconcileWakeFlag is a local interface alias matching reconcile's
+// WakeFlag so the public API stays narrow.
+type reconcileWakeFlag interface {
+	Take() bool
+}
+
+// rescanLog is the in-memory store of last-rescan timestamps per
+// folder path. Implements both reconcile.LastRescanRecorder (called
+// by the applier on successful rescan) and reconcile.LastRescanQuerier
+// (called by the provider when populating Observed). Resets on
+// daemon restart — the cost is one extra rescan per folder after
+// each restart, which is benign.
+type rescanLog struct {
+	mu      sync.RWMutex
+	entries map[string]time.Time
+}
+
+func newRescanLog() *rescanLog {
+	return &rescanLog{entries: make(map[string]time.Time)}
+}
+
+func (r *rescanLog) RecordRescan(path string, at time.Time) {
+	r.mu.Lock()
+	r.entries[path] = at
+	r.mu.Unlock()
+}
+
+func (r *rescanLog) LastRescan(path string) (time.Time, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	v, ok := r.entries[path]
+	return v, ok
+}
 
 // startActivityTracker creates an activity.Tracker over every
 // currently-managed folder root. Returns nil (auto-pause disabled)

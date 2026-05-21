@@ -4,6 +4,7 @@
 package reconcile
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -807,6 +808,152 @@ func containsString(items []string, want string) bool {
 	return false
 }
 
+// TestDiffSmartRescan covers the v0.9.7 RescanFolderNow state
+// machine. Trigger priority (highest first): SleepWakeSeen,
+// per-folder OverflowSeen, WatchLimitHit, backstop interval. A
+// folder that's paused is never rescanned.
+func TestDiffSmartRescan(t *testing.T) {
+	t.Parallel()
+
+	const path = "/repo"
+	const folderID = "dk-repo"
+	now := time.Date(2026, 5, 21, 10, 0, 0, 0, time.UTC)
+
+	mkObs := func(paused bool, health *FolderHealth, sleepWake bool, lastRescan time.Time) Observed {
+		obs := Observed{
+			ManagedFolders: []FolderObs{
+				{
+					SyncthingFolderID: folderID,
+					Path:              path,
+					Devices:           []string{"DEV-A"},
+					RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+					FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+					Paused:            paused,
+				},
+			},
+			TrackedRepos: []RepoObs{
+				{Path: path, IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
+			},
+			SleepWakeSeen:    sleepWake,
+			LastRescanByPath: map[string]time.Time{path: lastRescan},
+			Now:              now,
+		}
+		if health != nil {
+			obs.WatchHealthByPath = map[string]FolderHealth{path: *health}
+		}
+		return obs
+	}
+
+	desired := Desired{
+		Repos: map[string]RepoDesired{
+			path: {Path: path, SyncthingFolderID: folderID, ShareWith: []string{"DEV-A"}},
+		},
+	}
+
+	cases := []struct {
+		name        string
+		obs         Observed
+		wantRescan  bool
+		wantReason  string // substring match in Action.Describe(); "" means "don't assert"
+	}{
+		{
+			name:       "wake event → rescan, reason cites suspend/resume",
+			obs:        mkObs(false, &FolderHealth{FilesystemReliable: true}, true, now.Add(-time.Hour)),
+			wantRescan: true,
+			wantReason: "suspend/resume",
+		},
+		{
+			name:       "overflow flag → rescan",
+			obs:        mkObs(false, &FolderHealth{FilesystemReliable: true, OverflowSeen: true}, false, now.Add(-time.Hour)),
+			wantRescan: true,
+			wantReason: "overflow",
+		},
+		{
+			name:       "watch-limit hit → rescan",
+			obs:        mkObs(false, &FolderHealth{FilesystemReliable: true, WatchLimitHit: true}, false, now.Add(-time.Hour)),
+			wantRescan: true,
+			wantReason: "watch limit",
+		},
+		{
+			name:       "reliable FS, just rescanned → no action",
+			obs:        mkObs(false, &FolderHealth{FilesystemReliable: true}, false, now.Add(-time.Hour)),
+			wantRescan: false,
+		},
+		{
+			name:       "reliable FS, weekly backstop exceeded → rescan",
+			obs:        mkObs(false, &FolderHealth{FilesystemReliable: true}, false, now.Add(-8*24*time.Hour)),
+			wantRescan: true,
+			wantReason: "weekly backstop",
+		},
+		{
+			name:       "unreliable FS, last-rescan within 24h → no action",
+			obs:        mkObs(false, &FolderHealth{FilesystemReliable: false}, false, now.Add(-12*time.Hour)),
+			wantRescan: false,
+		},
+		{
+			name:       "unreliable FS, last-rescan >24h → rescan",
+			obs:        mkObs(false, &FolderHealth{FilesystemReliable: false}, false, now.Add(-25*time.Hour)),
+			wantRescan: true,
+			wantReason: "untrusted filesystem",
+		},
+		{
+			name:       "missing health entry, recent rescan → no action (unknown FS uses daily backstop)",
+			obs:        mkObs(false, nil, false, now.Add(-12*time.Hour)),
+			wantRescan: false,
+		},
+		{
+			name:       "missing health entry, old rescan → rescan via daily backstop",
+			obs:        mkObs(false, nil, false, now.Add(-25*time.Hour)),
+			wantRescan: true,
+			wantReason: "untrusted filesystem",
+		},
+		{
+			name:       "paused folder is never rescanned even with overflow",
+			obs:        mkObs(true, &FolderHealth{FilesystemReliable: true, OverflowSeen: true}, true, now.Add(-30*24*time.Hour)),
+			wantRescan: false,
+		},
+		{
+			name: "first-cycle (LastRescanByPath nil, no health) → rescan via backstop",
+			obs: Observed{
+				ManagedFolders: []FolderObs{
+					{
+						SyncthingFolderID: folderID,
+						Path:              path,
+						Devices:           []string{"DEV-A"},
+						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+					},
+				},
+				TrackedRepos: []RepoObs{
+					{Path: path, IgnoreFileContent: config.SyncIgnoreFileContent(nil)},
+				},
+				Now: now,
+			},
+			wantRescan: true,
+			wantReason: "untrusted filesystem",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := Diff(desired, tc.obs)
+			var rescan *RescanFolderNow
+			for i := range plan {
+				if r, ok := plan[i].(RescanFolderNow); ok && r.FolderID == folderID {
+					rescan = &r
+					break
+				}
+			}
+			if (rescan != nil) != tc.wantRescan {
+				t.Fatalf("RescanFolderNow emitted=%v want=%v (plan=%v)", rescan != nil, tc.wantRescan, plan)
+			}
+			if rescan != nil && tc.wantReason != "" && !strings.Contains(rescan.Reason, tc.wantReason) {
+				t.Errorf("Reason = %q, want substring %q", rescan.Reason, tc.wantReason)
+			}
+		})
+	}
+}
+
 // TestDiffAutoPause is the v0.9.6 spec test for the auto-pause
 // state machine. The four canonical transitions:
 //
@@ -1000,12 +1147,31 @@ func TestDiffEmitsUpdateScheduleOnDrift(t *testing.T) {
 			want: true,
 		},
 		{
-			name: "rescanIntervalS=0 (inotify-only) — still emit, not canonical",
+			// v0.9.7: 0 became the canonical value (dotkeeper-driven
+			// rescans replace Syncthing's periodic ones). Updated
+			// from the v0.9.5 expectation that 0 should still be
+			// flagged as drifted.
+			name: "rescanIntervalS=0 matches canonical — no action",
 			obs: FolderObs{
 				SyncthingFolderID: "dk-x",
 				Path:              "/x",
 				Devices:           []string{"DEV-A"},
 				RescanIntervalS:   0,
+				FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+			},
+			want: false,
+		},
+		{
+			// v0.9.4-style 86400 is now drift relative to v0.9.7's
+			// canonical 0 — the drift detector migrates folders
+			// upgraded from earlier releases just as v0.9.5
+			// migrated them from 60s.
+			name: "rescanIntervalS=86400 (v0.9.4-v0.9.6 baseline) — emit",
+			obs: FolderObs{
+				SyncthingFolderID: "dk-x",
+				Path:              "/x",
+				Devices:           []string{"DEV-A"},
+				RescanIntervalS:   86400,
 				FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
 			},
 			want: true,
