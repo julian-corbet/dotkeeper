@@ -81,6 +81,34 @@ type RealApplier struct {
 	// restart, which causes one extra rescan per folder per restart
 	// — acceptable cost given restarts are rare).
 	LastRescanRecorder LastRescanRecorder
+
+	// Propagator, when non-nil, is invoked after every successful
+	// GitCommitDirty to push the new commit to every paired peer
+	// via the v1.0.0 multi-transport Manager. Best-effort: any
+	// per-peer failure is logged but does not fail the action,
+	// because the local commit is the system of record and peers
+	// will catch up on the next reconcile cycle (or via Syncthing's
+	// universal fallback).
+	Propagator CommitPropagator
+}
+
+// CommitPropagator is the minimum surface RealApplier needs from the
+// transport-manager wiring at the daemon level. Kept as an
+// interface so the reconcile package stays independent of
+// internal/transport's concrete types (which import Folder/Peer/
+// Change values that would otherwise leak into reconcile).
+//
+// Implementation lives in cmd/dotkeeper/main.go where it has the
+// real Manager + peer roster from machine.toml.
+type CommitPropagator interface {
+	// PropagateNewCommit is called once per successful auto-commit.
+	// folderPath identifies the folder (its absolute working-tree
+	// path on this host); the implementation resolves the
+	// dotkeeper folder ID from that path and fans out to every
+	// peer in the daemon's roster, picks a transport via
+	// Manager.Route, executes the push, and feeds observed
+	// elapsed back to Manager.RecordTransfer.
+	PropagateNewCommit(ctx context.Context, folderPath string)
 }
 
 // LastRescanRecorder records the timestamp at which dotkeeper asked
@@ -121,7 +149,24 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 	case EnsureFolderMarker:
 		return applyEnsureFolderMarker(act)
 	case GitCommitDirty:
-		return applyGitCommitDirty(act)
+		if err := applyGitCommitDirty(act); err != nil {
+			return err
+		}
+		// After a successful local commit, propagate to peers via
+		// the v1.0.0 transport manager. This is best-effort: a
+		// per-peer push failure does not fail the GitCommitDirty
+		// action because the local commit is canonical state and
+		// peers eventually catch up via Syncthing's universal
+		// fallback. The action is also re-fired on the next
+		// reconcile cycle if there are further changes.
+		if a.Propagator != nil {
+			// Folder ID isn't on the action; the daemon-side
+			// propagator resolves it from RepoPath via the
+			// dotkeeper-managed folder map. Passing the path is
+			// sufficient — the action's identity is its repo.
+			a.Propagator.PropagateNewCommit(ctx, act.RepoPath)
+		}
+		return nil
 	case GitPushRepo:
 		return applyGitPushRepo(act)
 	case TrackRepo:

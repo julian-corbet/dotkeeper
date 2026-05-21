@@ -60,8 +60,9 @@ type Folder struct {
 // reachable via multiple transports; the TransportManager pairs the
 // Peer with each available Transport when probing.
 type Peer struct {
-	// Name is the human-readable label ("CACHYOS-Elitebook"). Used
-	// in logs and CLI output. Never used as a transport address.
+	// Name is the human-readable label (e.g. "laptop",
+	// "desktop"). Used in logs and CLI output. Never used as a
+	// transport address.
 	Name string
 
 	// DeviceID is the Syncthing device ID. Empty for peers known
@@ -106,9 +107,9 @@ type Change struct {
 	SizeHint int64
 
 	// Kind classifies the payload semantically. Currently
-	// informational — kept for v1.1+ when classification (text
-	// vs binary, code vs media) may inform routing in addition to
-	// size. Optional; zero value is fine.
+	// informational — reserved for future routing policies that
+	// branch on classification (text vs binary, code vs media)
+	// in addition to size. Optional; zero value is fine.
 	Kind ChangeKind
 }
 

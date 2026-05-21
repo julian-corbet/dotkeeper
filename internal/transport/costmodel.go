@@ -81,8 +81,10 @@ type CostModel struct {
 // influence shrinks proportionally.
 //
 // priorSetupMS: typical small-payload time (size ~ 0). Examples:
-//   - git+ssh over Tailscale: ~150ms (SSH handshake + branch ref)
-//   - Syncthing local LAN: ~1500ms (BEP gossip + block scheduling)
+//   - git+ssh on a low-latency network: ~150ms (SSH handshake +
+//     branch ref negotiation)
+//   - Syncthing on a local LAN: ~1500ms (BEP gossip + block
+//     scheduling)
 //
 // priorMSPerByte: 1 / (bytes/ms throughput). Examples:
 //   - git+ssh: 1/5000 = 0.0002 ms/byte (~5 MB/s effective)

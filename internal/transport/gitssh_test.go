@@ -243,8 +243,36 @@ func TestPropagateChangePushes(t *testing.T) {
 	if cmd.name != "git" || cmd.args[0] != "push" {
 		t.Errorf("expected git push, got %+v", cmd)
 	}
-	if !strings.Contains(strings.Join(cmd.args, " "), "abc123") {
-		t.Errorf("commit hash not in push args: %v", cmd.args)
+	// Push refspec must be "abc123:refs/heads/main" — push the
+	// supplied commit hash to the peer's main branch. updateInstead
+	// on the peer side then updates the working tree atomically.
+	joined := strings.Join(cmd.args, " ")
+	if !strings.Contains(joined, "abc123:refs/heads/main") {
+		t.Errorf("expected refspec abc123:refs/heads/main, got args: %v", cmd.args)
+	}
+}
+
+func TestPropagateChangeUsesHeadWhenCommitHashEmpty(t *testing.T) {
+	// dotkeeper's reconcile may invoke PropagateChange without
+	// knowing the specific commit hash (e.g. "push whatever we
+	// just committed"). Push HEAD in that case.
+	runner := &stubRunner{respond: func(_ string, _ []string) ([]byte, error) { return nil, nil }}
+	tr := newTestGitSSH(runner, &stubResolver{
+		name:      "tailscale",
+		available: true,
+		addresses: map[string]string{"laptop": "100.64.0.5"},
+	})
+
+	err := tr.PropagateChange(context.Background(),
+		Change{Folder: Folder{ID: "dk-x", Path: "/tmp/repo"}},
+		Peer{Name: "laptop"})
+	if err != nil {
+		t.Fatalf("PropagateChange: %v", err)
+	}
+	cmd := runner.commands[0]
+	joined := strings.Join(cmd.args, " ")
+	if !strings.Contains(joined, "HEAD:refs/heads/main") {
+		t.Errorf("expected refspec HEAD:refs/heads/main when no commit hash; got %v", cmd.args)
 	}
 }
 
@@ -274,8 +302,8 @@ func TestRemotePeerName(t *testing.T) {
 	tr := newTestGitSSH(&stubRunner{}, &stubResolver{name: "tailscale"})
 	// Name sanitisation: spaces become hyphens, alphanumerics
 	// preserve case.
-	got := tr.remoteName(Peer{Name: "CACHYOS-Elitebook"})
-	want := "dk+tailscale+CACHYOS-Elitebook"
+	got := tr.remoteName(Peer{Name: "WORK-Laptop"})
+	want := "dk+tailscale+WORK-Laptop"
 	if got != want {
 		t.Errorf("remoteName = %q, want %q", got, want)
 	}
@@ -287,15 +315,21 @@ func TestRemotePeerName(t *testing.T) {
 }
 
 func TestRemoteURL(t *testing.T) {
+	// v1.0.0: remoteURL points at the peer's working tree directly
+	// (mirrored path). dotkeeper bare-init configures the peer
+	// with receive.denyCurrentBranch=updateInstead so the push
+	// updates the working tree.
 	tr := newTestGitSSH(&stubRunner{}, &stubResolver{name: "tailscale"})
-	got := tr.remoteURL("100.64.0.5", Peer{Name: "laptop"}, Folder{ID: "dk-x"})
-	want := "ssh://100.64.0.5/~/.local/share/dotkeeper/repos/dk-x.git"
+	got := tr.remoteURL("100.64.0.5", Peer{Name: "laptop"},
+		Folder{ID: "dk-x", Path: "/home/richc/Documents/GitHub/dotkeeper"})
+	want := "ssh://100.64.0.5/home/richc/Documents/GitHub/dotkeeper"
 	if got != want {
 		t.Errorf("remoteURL = %q, want %q", got, want)
 	}
 	// With explicit user.
-	got = tr.remoteURL("100.64.0.5", Peer{Name: "laptop", User: "richc"}, Folder{ID: "dk-x"})
-	want = "ssh://richc@100.64.0.5/~/.local/share/dotkeeper/repos/dk-x.git"
+	got = tr.remoteURL("100.64.0.5", Peer{Name: "laptop", User: "richc"},
+		Folder{ID: "dk-x", Path: "/home/richc/Documents/GitHub/dotkeeper"})
+	want = "ssh://richc@100.64.0.5/home/richc/Documents/GitHub/dotkeeper"
 	if got != want {
 		t.Errorf("remoteURL with user = %q, want %q", got, want)
 	}

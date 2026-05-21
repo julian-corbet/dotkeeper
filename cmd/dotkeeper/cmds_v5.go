@@ -419,7 +419,7 @@ func loadMachineName() (string, error) {
 // Errors during construction are logged but never fatal — Syncthing must keep
 // running even if the reconcile daemon can't start.
 //
-// Optional v0.9.6/v0.9.7 inputs:
+// Optional v0.9.6/v0.9.7/v1.0.0 inputs:
 //
 //   - activityTracker: feeds LastActivityByPath and the immediate-
 //     unpause hint channel.
@@ -427,10 +427,13 @@ func loadMachineName() (string, error) {
 //   - wake: one-shot suspend/resume signal.
 //   - rescans: in-memory last-rescan-per-folder log used by the
 //     backstop check.
+//   - propagator: v1.0.0 transport-manager-driven peer
+//     propagation. When non-nil, every successful auto-commit
+//     fans out to every paired peer via Manager.Route.
 //
 // Any of these may be nil; reconcile/Diff degrades gracefully (no
-// rescan emissions, no auto-pause emissions), preserving the
-// pre-v0.9.6/v0.9.7 baseline.
+// rescan emissions, no auto-pause emissions, no transport-driven
+// peer push), preserving the previous-release baseline.
 func startReconcileDaemon(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -438,6 +441,7 @@ func startReconcileDaemon(
 	health healthForReconcile,
 	wake reconcileWakeFlag,
 	rescans *rescanLog,
+	propagator reconcile.CommitPropagator,
 ) {
 	machinePath := config.MachineConfigPath()
 	statePath := config.StateV2Path()
@@ -491,6 +495,7 @@ func startReconcileDaemon(
 		Logger:             logger,
 		Health:             healthResetter(health),
 		LastRescanRecorder: rescans,
+		Propagator:         propagator,
 	}
 
 	r := &reconcile.Reconciler{

@@ -68,18 +68,18 @@ func TestDefaultSyncIgnorePatternsCoversLanguageServerCaches(t *testing.T) {
 }
 
 // TestDefaultSyncIgnorePatternsAreConsolidated guards the v0.9.3
-// pattern-consolidation work against accidental re-expansion. A
-// profile showed ignore.Matcher.Match consuming 32.6% of the daemon's
-// CPU; the dominant per-pattern cost was glob matching, multiplied by
-// the variant explosion in the prior list (8 sqlite + 4 swap + 2 pyc
-// + 2 log enumerations).
+// pattern-consolidation work against accidental re-expansion.
+// Syncthing's ignore matcher pays a per-pattern cost dominated by
+// glob matching; the prior default list enumerated several variant
+// families (sqlite, swap, pyc, log) that all collapse to a single
+// glob each.
 //
 // Each "absent" check fails if anyone reintroduces an enumerated
 // variant; each "present" check confirms the consolidating glob is
-// still in place. If a future change has a documented reason to split
-// a family back out (e.g. a Syncthing matcher bug with a specific
-// glob class), update this test deliberately with a comment, don't
-// silently delete the guard.
+// still in place. If a future change has a documented reason to
+// split a family back out (e.g. a Syncthing matcher bug with a
+// specific glob class), update this test deliberately with a
+// comment — don't silently delete the guard.
 func TestDefaultSyncIgnorePatternsAreConsolidated(t *testing.T) {
 	t.Parallel()
 
