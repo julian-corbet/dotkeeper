@@ -353,10 +353,10 @@ func smartRescanAction(obs FolderObs, folderPath string, observed Observed) Acti
 	// In both cases the conservative behaviour is to skip the backstop
 	// for this cycle and let the next informed reconcile decide. The
 	// alternative (treating zero time as "epoch, definitely overdue")
-	// caused the cold-start rescan storm we shipped in v0.9.7: a
-	// fresh daemon fired one RescanFolderNow per folder against
-	// Syncthing within seconds of startup, which on a 22-folder
-	// fleet briefly overwhelmed the REST endpoint.
+	// caused the v0.9.7 cold-start rescan storm: a fresh daemon
+	// emitted one RescanFolderNow per managed folder within seconds
+	// of startup, which on multi-folder installs briefly
+	// overwhelmed Syncthing's REST endpoint.
 	if lastRescan.IsZero() {
 		return nil
 	}
