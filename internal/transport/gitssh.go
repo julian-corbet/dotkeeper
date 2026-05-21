@@ -48,17 +48,24 @@ type GitSSHTransport struct {
 	pushTimeout time.Duration
 }
 
-// commandRunner is the test seam for exec.CommandContext. Hidden
-// behind an interface so unit tests don't need to fork real
-// processes (which would slow CI and add platform-specific
-// dependencies on `ssh` and `git` being installed).
-type commandRunner interface {
+// CommandRunner is the test seam for exec.CommandContext. Exported
+// in v1.0 so the daemon-propagator e2e tests can wrap the default
+// exec runner with a URL-rewriter without standing up a real SSH
+// server. Production callers should use NewGitSSHTransport (which
+// uses the default runner); NewGitSSHTransportWithRunner exists
+// purely as a test seam.
+type CommandRunner interface {
 	// Run invokes name with args under ctx. Returns the combined
 	// stdout+stderr and any error. Matches exec.Cmd.CombinedOutput
 	// semantics closely enough that the default implementation is
 	// a one-line wrapper.
 	Run(ctx context.Context, dir, name string, args ...string) ([]byte, error)
 }
+
+// commandRunner is an internal alias kept for compatibility with
+// the GitSSHTransport.runner field declaration. New code should
+// reference CommandRunner.
+type commandRunner = CommandRunner
 
 type execRunner struct{}
 
@@ -68,14 +75,29 @@ func (execRunner) Run(ctx context.Context, dir, name string, args ...string) ([]
 	return cmd.CombinedOutput()
 }
 
+// NewExecRunner returns the default CommandRunner — a thin wrapper
+// over exec.CommandContext + CombinedOutput. Exported so tests can
+// layer wrappers (URL rewriters, latency injectors) without
+// re-implementing the exec plumbing.
+func NewExecRunner() CommandRunner { return execRunner{} }
+
 // NewGitSSHTransport constructs a GitSSHTransport that uses the
 // given resolver to map peers to addresses. resolver must be
 // non-nil; pass a no-op resolver if you want to disable the
 // transport.
 func NewGitSSHTransport(resolver Resolver) *GitSSHTransport {
+	return NewGitSSHTransportWithRunner(resolver, execRunner{})
+}
+
+// NewGitSSHTransportWithRunner is the test-seam constructor: same
+// as NewGitSSHTransport but accepts a custom CommandRunner.
+// Production callers should use NewGitSSHTransport; runner
+// injection exists so e2e tests can substitute a URL-rewriter that
+// points ssh:// at a local file:// destination.
+func NewGitSSHTransportWithRunner(resolver Resolver, runner CommandRunner) *GitSSHTransport {
 	return &GitSSHTransport{
 		resolver:     resolver,
-		runner:       execRunner{},
+		runner:       runner,
 		probeTimeout: 5 * time.Second,
 		pushTimeout:  30 * time.Second,
 	}
