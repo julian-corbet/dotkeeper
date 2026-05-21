@@ -29,8 +29,15 @@ import (
 	"github.com/julian-corbet/dotkeeper/internal/service"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 	"github.com/julian-corbet/dotkeeper/internal/stengine"
+	"github.com/julian-corbet/dotkeeper/internal/transport"
 	"github.com/julian-corbet/dotkeeper/internal/watchhealth"
 )
+
+// Compile-time conformance: stclient.Client must satisfy the
+// transport.SyncthingClient interface. If a future stclient change
+// renames or removes a method this transport relies on, the build
+// fails here before runtime ever touches the call site.
+var _ transport.SyncthingClient = (*stclient.Client)(nil)
 
 // Version is dotkeeper's release version. It overrides Syncthing's embedded
 // build.Version for BEP handshake purposes (see internal/stengine).
@@ -398,6 +405,18 @@ func startCmd() *cobra.Command {
 					_ = tracker.Close()
 				}
 			}()
+
+			// Instantiate the transport infrastructure. v0.9.9 ships
+			// exactly one implementation (SyncthingTransport) and
+			// uses it for nothing user-visible yet; v1.0.0 adds
+			// GitSSHTransport and the TransportManager that picks
+			// the fastest reachable transport per peer.
+			//
+			// Logging the available transports at startup means an
+			// operator looking at "why is dotkeeper not seeing my
+			// peer" has a definitive list of which transports the
+			// daemon believes are usable.
+			startTransports(ctx, logger)
 
 			// Spin up the smart-rescan support: watchhealth tracker
 			// (per-folder filesystem classification + overflow flags),
@@ -1011,6 +1030,28 @@ func buildDoctorChecks() []doctor.Check {
 
 // unused keeps the time import live for the statusCmd's time.Time formatting.
 var _ = time.Time{}
+
+// startTransports constructs every transport implementation that
+// dotkeeper supports and logs which are currently Available. v0.9.9
+// ships only SyncthingTransport; v1.0.0 will register the GitSSH
+// variants and a TransportManager that ranks them per peer.
+//
+// The startup log message is the operator-facing surface for
+// "what's available right now" until the v1.0.0 `dotkeeper transport
+// list` CLI lands.
+func startTransports(ctx context.Context, logger *slog.Logger) {
+	var transports []transport.Transport
+	if key, err := engine().APIKey(); err == nil {
+		transports = append(transports, transport.NewSyncthingTransport(stclient.New(key)))
+	}
+	available := make([]string, 0, len(transports))
+	for _, t := range transports {
+		if t.Available() {
+			available = append(available, t.Name())
+		}
+	}
+	logger.InfoContext(ctx, "transports available", "names", strings.Join(available, ","))
+}
 
 // forwardActivityToHealth subscribes to the activity tracker's
 // Hints channel and forwards each event into the watchhealth
