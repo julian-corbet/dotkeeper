@@ -6,6 +6,18 @@ updates:
       interval: weekly
     commit-message:
       prefix: "deps"
+    # Pin Syncthing to the v2.x line. The Go module is anchored to
+    # the upstream v2.1.0 commit via a pseudo-version because
+    # upstream's go.mod has no /v2/ suffix and the Go proxy refuses
+    # v2.1.0+incompatible (see ADR 0006). Dependabot reads the
+    # pseudo-version as a pre-release of v1.30.0 and would otherwise
+    # propose an "upgrade" to literal v1.30.0 — actually the April
+    # 2025 Gold Grasshopper release, predating v2 entirely.
+    # Ignoring the 1.x range keeps dependabot silent on syncthing
+    # until we manually bump the pinned commit hash for a new v2.x.
+    ignore:
+      - dependency-name: "github.com/syncthing/syncthing"
+        versions: ["1.x"]
     # Batch security updates separately so they can be prioritised.
     groups:
       go-security:
