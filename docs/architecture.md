@@ -1,4 +1,4 @@
-# dotkeeper v0.6 Architecture
+# dotkeeper Architecture
 
 A walkthrough of the current design decisions behind dotkeeper. The ADRs are
 the durable decision record; this document is the readable narrative.

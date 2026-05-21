@@ -56,7 +56,7 @@ QUIC remains disabled by default in dotkeeper's generated `config.xml` (TCP-only
 
 ### Current known advisories
 
-**None.** `govulncheck -tags noassets ./...` against v0.8.2 reports
+**None.** `govulncheck -tags noassets ./...` against v1.0.0 reports
 "No vulnerabilities found." The stdlib advisories that v0.8.0 carried
 (`net`, `net/http`, `net/mail`, `html/template`, …) cleared with the
-Go 1.26.3 toolchain bump in v0.8.2.
+Go 1.26.3 toolchain bump in v0.8.2 and have not regressed.
