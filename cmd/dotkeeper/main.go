@@ -1357,18 +1357,51 @@ func estimateLastCommitSize(folderPath string) int64 {
 		return 0
 	}
 	// shortstat format: " N files changed, X insertions(+), Y deletions(-)"
-	// We only use the insertion + deletion counts as a size proxy.
-	// One line of source is ~50 bytes average; multiply count by 50
-	// to get a bytes-ish number for the cost model.
+	// (singular forms "insertion(+)" / "deletion(-)" for X=1). We
+	// extract the integer immediately preceding each "insertion" /
+	// "deletion" token by walking backward through whitespace and
+	// digits. A regex would be cleaner but pulls in regexp for a
+	// one-off use; the walk-backward parser is ~10 lines and has
+	// no other dependencies.
 	s := string(out)
-	var inserts, deletes int64
-	if idx := strings.Index(s, "insertion"); idx > 0 {
-		_, _ = fmt.Sscanf(s[max(0, idx-10):idx], "%d", &inserts)
-	}
-	if idx := strings.Index(s, "deletion"); idx > 0 {
-		_, _ = fmt.Sscanf(s[max(0, idx-10):idx], "%d", &deletes)
-	}
+	inserts := numberBefore(s, "insertion")
+	deletes := numberBefore(s, "deletion")
+	// 50 bytes/line is a rough proxy for the cost model — the model's
+	// per-byte coefficient is learned online, so any consistent
+	// scaling factor works equivalently. We pick 50 because it's a
+	// reasonable average source-line length and produces sizes in
+	// the same order of magnitude as actual transfer payloads.
 	return (inserts + deletes) * 50
+}
+
+// numberBefore returns the integer immediately preceding `marker`
+// in `s`, or 0 when the marker is absent or no integer precedes it.
+// Walks backward from the marker, skipping a single whitespace
+// character (e.g. between "10" and "insertions"), then accumulates
+// consecutive digits.
+func numberBefore(s, marker string) int64 {
+	idx := strings.Index(s, marker)
+	if idx <= 0 {
+		return 0
+	}
+	// Walk backward over whitespace.
+	end := idx
+	for end > 0 && (s[end-1] == ' ' || s[end-1] == '\t') {
+		end--
+	}
+	// Walk backward over digits.
+	start := end
+	for start > 0 && s[start-1] >= '0' && s[start-1] <= '9' {
+		start--
+	}
+	if start == end {
+		return 0
+	}
+	var n int64
+	for i := start; i < end; i++ {
+		n = n*10 + int64(s[i]-'0')
+	}
+	return n
 }
 
 // rescanLog is the in-memory store of last-rescan timestamps per
@@ -1566,14 +1599,9 @@ func bareInitCmd() *cobra.Command {
 				for _, folder := range folders {
 					_, _ = fmt.Fprintf(out, "peer %q (%s via %s) folder %q: configuring receive.denyCurrentBranch=updateInstead\n",
 						p.Name, addr, source, folder)
-					sshCmd := exec.CommandContext(ctx, "ssh",
-						"-o", "BatchMode=yes",
-						"-o", "ConnectTimeout=5",
-						"-o", "StrictHostKeyChecking=accept-new",
-						addr,
+					output, err := bareInitSSHRunner(ctx, addr,
 						"git", "-C", shellQuote(folder),
 						"config", "receive.denyCurrentBranch", "updateInstead")
-					output, err := sshCmd.CombinedOutput()
 					if err != nil {
 						_, _ = fmt.Fprintf(out, "  FAILED: %v: %s\n", err, strings.TrimSpace(string(output)))
 						anyErr = true
@@ -1591,6 +1619,22 @@ func bareInitCmd() *cobra.Command {
 	cmd.Flags().StringVar(&peerName, "peer", "", "configure only this peer (default: every peer)")
 	cmd.Flags().StringVar(&hostOverride, "host", "", "SSH target address (USER@ADDR or just ADDR); overrides all resolvers")
 	return cmd
+}
+
+// bareInitSSHRunner is the function bareInitCmd uses to execute
+// the remote `git config` command via ssh. Package-level var so
+// tests can swap in a stub returning controlled output and errors.
+// The default implementation forks a real `ssh` binary; production
+// callers never override it.
+var bareInitSSHRunner = func(ctx context.Context, target string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "ssh",
+		append([]string{
+			"-o", "BatchMode=yes",
+			"-o", "ConnectTimeout=5",
+			"-o", "StrictHostKeyChecking=accept-new",
+			target,
+		}, args...)...)
+	return cmd.CombinedOutput()
 }
 
 // resolveBareInitAddress walks the address-resolution ladder
@@ -1653,6 +1697,14 @@ func shellQuote(s string) string {
 // fresh probe), `prefer <peer> <transport>` (sticky operator
 // override), and `parameters <transport> <peer>` (show learned
 // cost-model coefficients with sample counts).
+// transportSource is the production transport-list builder used
+// by the CLI commands. Defined as a package var so tests can swap
+// in a stub returning controlled transports — the default
+// buildTransportList depends on a live Syncthing API key and a
+// configured Tailscale binary, neither of which is appropriate
+// for unit tests.
+var transportSource = buildTransportList
+
 func transportCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "transport",
@@ -1677,7 +1729,7 @@ func transportListCmd() *cobra.Command {
 			"see what could be configured) but are skipped by the\n" +
 			"router until their prerequisites become satisfied.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			transports := buildTransportList()
+			transports := transportSource()
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "TRANSPORT\tAVAILABLE")
 			for _, t := range transports {
@@ -1723,7 +1775,7 @@ func transportStatusCmd() *cobra.Command {
 				peers = filtered
 			}
 
-			mgr := transport.NewManager(buildTransportList())
+			mgr := transport.NewManager(transportSource())
 			ctx := cmd.Context()
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(w, "PEER\tTRANSPORT\tREACHABLE\tPROBE-RTT\tSETUP-MS\tMB-PER-SEC\tN")

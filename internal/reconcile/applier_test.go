@@ -634,8 +634,12 @@ func TestRealApplierFiresPropagatorAfterCommit(t *testing.T) {
 }
 
 // TestRealApplierSkipsPropagatorOnCleanRepo: when GitCommitDirty
-// finds nothing to commit, the propagator must NOT be invoked —
-// there's no new commit to push.
+// finds nothing to commit, the propagator must NOT be invoked.
+// Pre/post-HEAD comparison in the applier suppresses the call,
+// which prevents the daemon-side daemonPropagator from feeding
+// the cost model phantom transfers (stale HEAD~1..HEAD diff +
+// near-zero push elapsed) every reconcile tick where the repo
+// happened to be dirty-but-no-real-changes.
 func TestRealApplierSkipsPropagatorOnCleanRepo(t *testing.T) {
 	t.Parallel()
 
@@ -650,16 +654,8 @@ func TestRealApplierSkipsPropagatorOnCleanRepo(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Apply on clean repo: %v", err)
 	}
-	// v1.0.0 deliberately invokes the propagator even when the
-	// commit was a no-op. The propagator's job is to ensure peers
-	// have the latest local state; a no-op auto-commit cycle is a
-	// fine opportunity to also confirm peers are caught up. The
-	// propagator itself is idempotent (push of already-present
-	// commits is a no-op fast-forward), so the extra call is
-	// cheap. If a future change wants to suppress this, it's a
-	// deliberate decision to remove a robustness property.
-	if len(prop.calls) != 1 {
-		t.Errorf("Propagator called %d times on clean repo, want 1 (catches up peers regardless); calls=%v", len(prop.calls), prop.calls)
+	if len(prop.calls) != 0 {
+		t.Errorf("Propagator called %d times on clean repo, want 0 (HEAD didn't advance, nothing to propagate); calls=%v", len(prop.calls), prop.calls)
 	}
 }
 

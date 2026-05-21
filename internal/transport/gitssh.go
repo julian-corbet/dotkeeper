@@ -127,8 +127,7 @@ func (g *GitSSHTransport) EnsurePeerReachability(ctx context.Context, folder Fol
 	// across versions that we can branch on it. Falling back
 	// unconditionally on any set-url failure would mask real
 	// errors (permission denied, repo missing).
-	if !strings.Contains(strings.ToLower(string(out)), "no such remote") &&
-		!strings.Contains(strings.ToLower(string(out)), "no such remote ref") {
+	if !strings.Contains(strings.ToLower(string(out)), "no such remote") {
 		return fmt.Errorf("GitSSHTransport.EnsurePeerReachability: set-url %s: %w (%s)", remoteName, err, strings.TrimSpace(string(out)))
 	}
 	out, err = g.runner.Run(ctx, folder.Path, "git", "remote", "add", remoteName, remoteURL)
@@ -219,11 +218,10 @@ func (g *GitSSHTransport) Probe(ctx context.Context, peer Peer) (time.Duration, 
 // bare repo, no post-receive hook, no second authoritative copy
 // of the data.
 //
-// The push targets HEAD's branch on the peer (in practice always
-// main/master for dotkeeper-managed repos). We use HEAD:refs/heads/HEAD
-// when the commit hash is unknown — this works when the local
-// checkout is on the same branch as the peer's checkout, which is
-// the dotkeeper convention.
+// The refspec is `<src>:refs/heads/main` — v1.0 assumes the
+// peer's checked-out branch is `main`, matching dotkeeper's
+// scan-roots convention. Repos that use a different branch name
+// need the planned per-repo branch override.
 //
 // Idempotent: pushing a commit that already exists on the peer is
 // a fast-forward no-op for git.
@@ -300,13 +298,21 @@ func (g *GitSSHTransport) remoteName(peer Peer) string {
 // constraint is invisible. A per-peer path map for users with
 // diverging layouts is a planned extension.
 //
+// IPv6 addresses are bracketed (`ssh://[fe80::1]/path`) per
+// RFC 3986. The Tailscale resolver typically returns IPv4 first,
+// but operators using IPv6-only mesh setups still get a
+// well-formed URL.
+//
 // Falls back to including the user explicitly when peer.User is
 // set; otherwise SSH uses the local user from the operator's SSH
 // config (the standard, less surprising default).
 func (g *GitSSHTransport) remoteURL(addr string, peer Peer, folder Folder) string {
 	host := addr
+	if strings.Contains(addr, ":") && !strings.HasPrefix(addr, "[") {
+		host = "[" + addr + "]"
+	}
 	if peer.User != "" {
-		host = peer.User + "@" + addr
+		host = peer.User + "@" + host
 	}
 	return "ssh://" + host + folder.Path
 }

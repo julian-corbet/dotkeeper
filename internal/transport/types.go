@@ -2,21 +2,26 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package transport abstracts the mechanism by which managed folders'
-// changes propagate between peers. The interface is the foundation
-// for v1.0.0's intelligent transport selection: today's dotkeeper has
-// exactly one implementation (SyncthingTransport, wrapping the
-// embedded Syncthing instance); tomorrow's will gain a
-// GitSSHTransport, a TransportManager that probes both for each
-// peer, and a microbenchmark-driven pick of the fastest reachable
-// path per peer.
+// changes propagate between peers. dotkeeper ships two
+// implementations:
+//
+//   - SyncthingTransport wraps the embedded Syncthing instance.
+//     Always available; PropagateChange is a no-op because
+//     Syncthing's BEP gossip handles propagation transparently.
+//
+//   - GitSSHTransport runs `git push` over SSH against the peer's
+//     working tree. Available iff a Resolver (Tailscale ships
+//     in v1.0; mDNS and static-hub are planned) can map the peer
+//     to an SSH-reachable address.
+//
+// Manager owns both and routes per change via a cost model that
+// learns from observed transfer durations.
 //
 // Boundary of "transport" in this package:
 //
 //   - In scope: configuring a peer to receive changes ("add to the
 //     folder's device list", "git remote add"), measuring reachability
-//     and latency to a peer, actively propagating a known change
-//     (a no-op for Syncthing — its BEP gossip handles it — but a
-//     real `git push` for GitSSH).
+//     and latency to a peer, actively propagating a known change.
 //
 //   - Out of scope: local Syncthing folder management (pause/unpause,
 //     schedule rewrites, manual rescans). Those are local-daemon
@@ -98,12 +103,13 @@ type Change struct {
 	// transport will need to move. Used by Manager.Route to
 	// choose between transports — small payloads prefer
 	// fast-setup transports (git+ssh), large payloads prefer
-	// fast-throughput ones (Syncthing block-level transfer, or
-	// annex for very large content). Zero means "unknown"; the
-	// Manager treats unknown as "use the transport prior's
-	// crossover prediction with no payload-specific bias," which
-	// in practice means Syncthing wins because its high-throughput
-	// prior beats git-ssh on the median payload size.
+	// fast-throughput ones (Syncthing block-level transfer).
+	// Zero means "unknown"; with the v1.0 priors, the cost model
+	// at size=0 reduces to the setup cost alone, so the
+	// fastest-setup transport wins (typically git-ssh). Callers
+	// that don't actually know the size should leave this at
+	// zero rather than guessing — incorrect size hints feed
+	// the cost model's regression with noise.
 	SizeHint int64
 
 	// Kind classifies the payload semantically. Currently
@@ -201,10 +207,12 @@ type Transport interface {
 	// cycle and re-probe next time" rather than as evidence the
 	// transport is broken.
 	//
-	// Used by TransportManager to rank transports per peer.
-	// Implementations should keep the probe cheap and bounded
-	// (the v1.0.0 manager calls it on a 5-minute cycle multiplied
-	// by every transport × every peer).
+	// Used by Manager to rank transports per peer. Manager only
+	// invokes Probe on discovery events (startup, wake from
+	// suspend, explicit rediscover) — never on a periodic timer
+	// — but implementations should still keep the probe cheap and
+	// bounded so a wake event doesn't stall behind a slow
+	// transport.
 	Probe(ctx context.Context, peer Peer) (time.Duration, error)
 
 	// PropagateChange actively delivers change to peer. A no-op for

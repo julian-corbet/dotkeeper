@@ -314,6 +314,36 @@ func TestRemotePeerName(t *testing.T) {
 	}
 }
 
+func TestRemoteURLBracketsIPv6(t *testing.T) {
+	tr := newTestGitSSH(&stubRunner{}, &stubResolver{name: "tailscale"})
+	cases := []struct {
+		addr string
+		user string
+		want string
+	}{
+		// IPv4 stays as-is.
+		{"100.64.0.5", "", "ssh://100.64.0.5/repo"},
+		{"100.64.0.5", "alice", "ssh://alice@100.64.0.5/repo"},
+		// IPv6 must be bracketed per RFC 3986. Without brackets,
+		// the URL parser would treat the embedded colons as
+		// host:port separators and the path would lose its
+		// leading slash. Real-world impact: Tailscale operators
+		// running IPv6-only mesh setups would see "ssh: Could
+		// not resolve hostname fe80" failures.
+		{"fe80::1", "", "ssh://[fe80::1]/repo"},
+		{"fe80::1", "alice", "ssh://alice@[fe80::1]/repo"},
+		{"fd7a:115c:a1e0::1", "", "ssh://[fd7a:115c:a1e0::1]/repo"},
+		// Already-bracketed addresses must not be re-bracketed.
+		{"[fe80::1]", "", "ssh://[fe80::1]/repo"},
+	}
+	for _, c := range cases {
+		got := tr.remoteURL(c.addr, Peer{Name: "p", User: c.user}, Folder{ID: "x", Path: "/repo"})
+		if got != c.want {
+			t.Errorf("remoteURL(%q, user=%q) = %q, want %q", c.addr, c.user, got, c.want)
+		}
+	}
+}
+
 func TestRemoteURL(t *testing.T) {
 	// v1.0.0: remoteURL points at the peer's working tree directly
 	// (mirrored path). dotkeeper bare-init configures the peer

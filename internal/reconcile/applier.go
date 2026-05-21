@@ -149,21 +149,27 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 	case EnsureFolderMarker:
 		return applyEnsureFolderMarker(act)
 	case GitCommitDirty:
+		// Capture HEAD before the commit attempt. applyGitCommitDirty
+		// may take a fast path that returns successfully without
+		// creating a new commit (e.g., `git add -A` produced no
+		// staged changes because the dirty state was undone between
+		// observe and apply). We only want to invoke the propagator
+		// when an ACTUAL new commit landed — otherwise the
+		// daemon-side daemonPropagator would compute an estimated
+		// transfer size from a stale HEAD~1..HEAD diff and feed
+		// the cost model bogus observations.
+		preHead := gitHeadHash(act.RepoPath)
 		if err := applyGitCommitDirty(act); err != nil {
 			return err
 		}
-		// After a successful local commit, propagate to peers via
-		// the v1.0.0 transport manager. This is best-effort: a
-		// per-peer push failure does not fail the GitCommitDirty
-		// action because the local commit is canonical state and
-		// peers eventually catch up via Syncthing's universal
-		// fallback. The action is also re-fired on the next
-		// reconcile cycle if there are further changes.
-		if a.Propagator != nil {
-			// Folder ID isn't on the action; the daemon-side
-			// propagator resolves it from RepoPath via the
-			// dotkeeper-managed folder map. Passing the path is
-			// sufficient — the action's identity is its repo.
+		postHead := gitHeadHash(act.RepoPath)
+		if a.Propagator != nil && preHead != postHead {
+			// New commit exists; fan out to peers via the v1.0.0
+			// transport manager. Best-effort: per-peer push
+			// failures are logged but don't fail the action,
+			// because the local commit is canonical state and
+			// peers eventually catch up via Syncthing's universal
+			// fallback or the next reconcile cycle.
 			a.Propagator.PropagateNewCommit(ctx, act.RepoPath)
 		}
 		return nil
@@ -458,6 +464,27 @@ func applyGitCommitDirty(act GitCommitDirty) error {
 	}
 
 	return nil
+}
+
+// gitHeadHash returns the current HEAD commit hash for the repo at
+// repoPath, or the empty string when HEAD can't be resolved (no
+// commits yet, repo missing, permission denied, …). Used to detect
+// whether applyGitCommitDirty actually produced a new commit: pre
+// vs post comparison.
+//
+// Returns "" rather than an error because the only consumer
+// (GitCommitDirty handling) treats both pre and post equally and
+// only branches on equality. A read failure that returns "" on
+// both sides correctly resolves to "no new commit," which matches
+// the safe behaviour (skip the propagator).
+func gitHeadHash(repoPath string) string {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = repoPath
+	out, err := procnice.Output(cmd)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // stagedDeletionsApplier returns paths currently staged for deletion in the
