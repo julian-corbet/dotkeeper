@@ -77,6 +77,17 @@ func TestGitSSHUnavailableWhenResolverUnavailable(t *testing.T) {
 	}
 }
 
+// GitSSHTransport runs `git push` inline and only returns after the
+// remote ACKs. The elapsed duration of PropagateChange is therefore
+// a real measurement of work done and a valid input to the cost
+// model. PropagatesSynchronously must report true.
+func TestGitSSHPropagatesSynchronouslyIsTrue(t *testing.T) {
+	tr := newTestGitSSH(&stubRunner{}, &stubResolver{name: "tailscale", available: true})
+	if !tr.PropagatesSynchronously() {
+		t.Error("GitSSHTransport.PropagatesSynchronously must be true; PropagateChange blocks on git push")
+	}
+}
+
 func TestEnsurePeerSetsRemoteOnExisting(t *testing.T) {
 	runner := &stubRunner{respond: func(_ string, _ []string) ([]byte, error) { return nil, nil }}
 	tr := newTestGitSSH(runner, &stubResolver{

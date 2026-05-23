@@ -227,4 +227,21 @@ type Transport interface {
 	// already-present commit is a no-op fast-forward; Syncthing's
 	// no-op is genuinely free).
 	PropagateChange(ctx context.Context, change Change, peer Peer) error
+
+	// PropagatesSynchronously reports whether PropagateChange runs
+	// the actual transfer inline and returns a duration that
+	// reflects real work. True for transports that block until the
+	// peer has acknowledged (GitSSHTransport: `git push` returns
+	// after the remote ACKs). False for transports whose work
+	// happens asynchronously in a background system
+	// (SyncthingTransport: PropagateChange returns in microseconds
+	// because BEP gossip in the embedded daemon does the actual
+	// propagation later).
+	//
+	// Callers that feed observed-duration samples into a cost model
+	// must skip the update for transports that return false here —
+	// the ~µs no-op duration would otherwise teach the model that
+	// the transport is infinitely fast and bias every future
+	// routing decision toward it.
+	PropagatesSynchronously() bool
 }

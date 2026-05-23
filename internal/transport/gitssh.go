@@ -119,6 +119,12 @@ func (g *GitSSHTransport) Available() bool {
 	return g.resolver.Available()
 }
 
+// PropagatesSynchronously implements Transport. Always true:
+// `git push` blocks until the remote ACKs receipt of the packfile,
+// so the elapsed duration of PropagateChange reflects real work
+// and is meaningful input to the cost model.
+func (g *GitSSHTransport) PropagatesSynchronously() bool { return true }
+
 // EnsurePeerReachability registers the peer as a git remote in the
 // folder's working tree. The remote name is composed from the
 // dotkeeper folder ID and the resolver name, so each

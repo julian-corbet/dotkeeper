@@ -91,6 +91,20 @@ func TestSyncthingNameAndAvailable(t *testing.T) {
 	}
 }
 
+// SyncthingTransport.PropagateChange is a no-op (BEP gossip in the
+// embedded daemon does the work), so its elapsed duration is
+// microseconds regardless of the actual propagation time. The cost
+// model would learn "this transport is infinitely fast" if we fed
+// that observation in. PropagatesSynchronously must report false so
+// callers (the propagator) know to skip RecordTransfer for this
+// transport.
+func TestSyncthingPropagatesSynchronouslyIsFalse(t *testing.T) {
+	tr := NewSyncthingTransport(newFakeST())
+	if tr.PropagatesSynchronously() {
+		t.Error("SyncthingTransport.PropagatesSynchronously must be false; PropagateChange is a no-op")
+	}
+}
+
 func TestEnsurePeerAddsDeviceWhenAbsent(t *testing.T) {
 	fake := newFakeST()
 	seedFolder(fake, "dk-x", nil)
