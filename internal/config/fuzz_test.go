@@ -4,8 +4,21 @@
 package config
 
 import (
+	"sync"
 	"testing"
 )
+
+// fuzzMachineConfigMu serialises FuzzMachineConfigV2RoundTrip's
+// body across concurrent goroutines within a single fuzz worker
+// process. The body mutates the process-global
+// $XDG_CONFIG_HOME via t.Setenv and then does file I/O underneath
+// it; with the default GOMAXPROCS workers running in parallel
+// within one process, two callbacks would race on the env var and
+// each could end up reading the OTHER worker's tmp directory.
+// Fuzz still benefits from true parallelism across worker
+// PROCESSES — the harness spawns multiple workers — but
+// within-process the env-mutation step must be sequential.
+var fuzzMachineConfigMu sync.Mutex
 
 // FuzzMachineConfigV2RoundTrip tests that WriteMachineConfigV2 → LoadMachineConfigV2
 // never panics for arbitrary machine names and slot values.
@@ -27,6 +40,10 @@ func FuzzMachineConfigV2RoundTrip(f *testing.F) {
 		if len(name) > 4096 {
 			return
 		}
+
+		// Serialise within-process: see fuzzMachineConfigMu comment.
+		fuzzMachineConfigMu.Lock()
+		defer fuzzMachineConfigMu.Unlock()
 
 		tmp := t.TempDir()
 		t.Setenv("XDG_CONFIG_HOME", tmp)
