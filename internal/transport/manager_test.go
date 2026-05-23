@@ -264,6 +264,48 @@ func TestRecordTransferAcceptsUnknownTransportName(t *testing.T) {
 	}
 }
 
+// TestDiscoverWithCancelledContextStillCompletes pins that
+// Discover doesn't panic, deadlock, or corrupt route state when
+// the caller's context is already cancelled. In production this
+// path fires on suspend-then-resume races: Discover is invoked
+// from a context that was created before suspend and is dead by
+// the time the resume handler runs. The function must produce a
+// well-formed (probably-unreachable) Routes entry rather than
+// silently abort, so the next Discover from a live context can
+// repopulate cleanly.
+func TestDiscoverWithCancelledContextStillCompletes(t *testing.T) {
+	m := NewManager([]Transport{
+		&fakeTransport{name: "t1", available: true, probeLatency: 5 * time.Millisecond},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel: every probe sees a dead context.
+
+	// Must return, not block. A bounded retry of up to 1s would
+	// be acceptable; what we're protecting against is a hang.
+	done := make(chan struct{})
+	go func() {
+		m.Discover(ctx, Peer{Name: "suspended"})
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Discover did not return within 2s on cancelled ctx — likely deadlocked")
+	}
+
+	// Route table must be well-formed (entry exists for each
+	// transport) so a subsequent live-context Discover can
+	// overwrite it without nil-map panics.
+	routes, ok := m.RoutesFor("suspended")
+	if !ok {
+		t.Fatal("RoutesFor returned ok=false; Discover should populate the table even with cancelled ctx")
+	}
+	if _, hasEntry := routes.Entries["t1"]; !hasEntry {
+		t.Errorf("routes.Entries missing t1; got %v", routes.Entries)
+	}
+}
+
 func TestDiscoverConcurrencySafe(t *testing.T) {
 	// Stress test: many goroutines calling Discover for the same
 	// peer simultaneously must not panic, race, or corrupt state.

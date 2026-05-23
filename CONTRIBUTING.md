@@ -163,6 +163,47 @@ Open a GitHub issue describing the use case, the proposed behaviour, and any alt
 - **Breaking changes** to the CLI, config file format, or on-disk layout require a major version bump and a migration path documented in the release notes.
 - **Large PRs** (>500 lines) are likely to be sent back for splitting. Splitting is healthy — it gives each change its own review pass.
 
+## Release process
+
+dotkeeper follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Releases are cut by pushing an annotated git tag matching `v*` to `main`; the [`Release` workflow](.github/workflows/release.yml) does the rest.
+
+### Pre-release checklist
+
+1. **CI green on `main`.** Every workflow in the required-checks set (`build`, `lint`, `multipeer-e2e`, `fuzz-smoke`, `Analyze (go)`) must be passing for the commit you're about to tag.
+2. **CHANGELOG entry written.** Add a `## [X.Y.Z] - YYYY-MM-DD` section under `## [Unreleased]` summarising what changed. Keep [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) section ordering: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`.
+3. **SECURITY.md supported-versions table** updated if a major or minor version is dropping out of support.
+4. **`gofmt` and `go vet`** clean (the CI gate enforces this, but local check catches it sooner).
+
+### Cutting the tag
+
+```bash
+git checkout main
+git pull
+git tag -a vX.Y.Z -m "vX.Y.Z — short summary"
+git push origin vX.Y.Z
+```
+
+The tag must be annotated (`-a`), not lightweight: the release workflow consumes the tag's commit metadata. Push the tag itself, not a `--all` push that bundles other refs.
+
+### What the release workflow does
+
+A tag push to `v*` triggers in parallel:
+
+- **`Release` workflow** — builds binaries for Linux (amd64, arm64, armv7, 386, riscv64, ppc64le, s390x), macOS (amd64, arm64), and Windows (amd64), generates SHA256 checksums, creates the GitHub release with auto-generated notes plus the CHANGELOG section, and uploads the artifacts.
+- **`Publish to AUR`** — pushes a refreshed PKGBUILD to the `dotkeeper-bin` AUR package.
+- **`Publish to Homebrew tap`** — bumps the formula in `julian-corbet/homebrew-tap`.
+- **`Docker`** — builds and pushes the `ghcr.io/julian-corbet/dotkeeper:vX.Y.Z` and `:latest` images.
+
+If any of these fail post-tag, fix forward (cut a follow-up patch release) rather than retag — published artifacts on AUR / Homebrew / GHCR persist independent of the GitHub release.
+
+### After release
+
+Move the released entry's content from `## [Unreleased]` to its versioned section (if you hadn't already) and verify:
+
+- `gh release list --limit 1` shows the new tag as `Latest`.
+- AUR (`https://aur.archlinux.org/packages/dotkeeper-bin`) reflects the new `pkgver`.
+- The `Latest` badge in the README now points at the new tag.
+
 ## Governance
 
 dotkeeper is currently maintained by [@julian-corbet](https://github.com/julian-corbet). Decisions about scope, direction, and releases are the maintainer's call. As the project matures, governance may move to a multi-maintainer model; that change will be announced in the repo.
