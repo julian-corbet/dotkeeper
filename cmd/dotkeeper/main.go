@@ -1228,37 +1228,47 @@ type reconcileWakeFlag interface {
 // (defensive — reconcile degrades to "no peer propagation," same
 // as releases before v1.0.0).
 //
-// Reads machine.toml for the peer roster and managed folders;
-// constructs transport.Folder values from each tracked path so
-// the propagator can fan out via Manager.Route without
-// re-resolving folder identity on the hot path.
+// Both the peer roster and the managed-folder set are queried
+// FRESH on every PropagateNewCommit call. machine.toml is small
+// and managedFolderPathsV5 walks the same in-process state that
+// reconcile updates, so the per-commit cost is dominated by the
+// existing push work, not the lookups. The freshness matters
+// because dotkeeper users edit machine.toml or run `dotkeeper
+// track` without restarting the daemon and reasonably expect the
+// next commit to find the change.
 func buildPropagator(mgr *transport.Manager, logger *slog.Logger) reconcile.CommitPropagator {
 	if mgr == nil {
 		return nil
 	}
-	machine, err := config.LoadMachineConfigV2()
-	if err != nil || machine == nil {
-		return nil
+	peersSource := func() []transport.Peer {
+		machine, err := config.LoadMachineConfigV2()
+		if err != nil || machine == nil {
+			return nil
+		}
+		peers := make([]transport.Peer, 0, len(machine.Peers))
+		for _, p := range machine.Peers {
+			peers = append(peers, transport.Peer{
+				Name:     p.Name,
+				DeviceID: p.DeviceID,
+				Hostname: p.Name,
+			})
+		}
+		return peers
 	}
-	peers := make([]transport.Peer, 0, len(machine.Peers))
-	for _, p := range machine.Peers {
-		peers = append(peers, transport.Peer{
-			Name:     p.Name,
-			DeviceID: p.DeviceID,
-			Hostname: p.Name,
-		})
+	foldersSource := func() map[string]transport.Folder {
+		roots := managedFolderPathsV5()
+		byPath := make(map[string]transport.Folder, len(roots))
+		for _, root := range roots {
+			// Folder ID derived from the repo basename — matches
+			// the reconcile convention.
+			byPath[root] = transport.Folder{
+				ID:   filepath.Base(root),
+				Path: root,
+			}
+		}
+		return byPath
 	}
-	folders := make([]transport.Folder, 0)
-	for _, root := range managedFolderPathsV5() {
-		// Folder ID derived from the repo basename — matches the
-		// reconcile convention. Reconcile's own folder map could
-		// expose this directly in a follow-up to avoid duplication.
-		folders = append(folders, transport.Folder{
-			ID:   filepath.Base(root),
-			Path: root,
-		})
-	}
-	return newDaemonPropagator(mgr, peers, folders, logger)
+	return newDaemonPropagatorWithSources(mgr, peersSource, foldersSource, logger)
 }
 
 // daemonPropagator implements reconcile.CommitPropagator on top of
@@ -1272,32 +1282,76 @@ func buildPropagator(mgr *transport.Manager, logger *slog.Logger) reconcile.Comm
 // not propagate to the caller, because the local commit is
 // canonical state and peers eventually catch up via Syncthing's
 // universal fallback or via subsequent reconcile cycles.
+//
+// Freshness: the peer roster and folder map are queried via the
+// peersSource / foldersSource callbacks on every PropagateNewCommit
+// invocation. This means peers added to machine.toml or folders
+// added via `dotkeeper track` after daemon startup are picked up on
+// the very next commit cycle, rather than only after a daemon
+// restart. The previous design captured both at construction and
+// silently skipped late-added peers/folders — a real source of
+// "I added the peer, why isn't it receiving pushes?" friction.
 type daemonPropagator struct {
 	mgr    *transport.Manager
-	peers  []transport.Peer
 	logger *slog.Logger
 
-	// folderByPath resolves a working-tree path to the dotkeeper
-	// folder identity used by Manager.Route. Captured at daemon
-	// startup; folders added later are picked up on the next
-	// daemon restart (same convention as the v0.9.6/v0.9.7
-	// trackers).
-	folderByPath map[string]transport.Folder
+	// peersSource returns the current peer roster. Called on each
+	// PropagateNewCommit; cost is one machine.toml read which is
+	// noise on the post-commit hot path.
+	peersSource func() []transport.Peer
+
+	// foldersSource returns the current managed-folder map keyed by
+	// absolute working-tree path. Same freshness contract as
+	// peersSource.
+	foldersSource func() map[string]transport.Folder
 }
 
+// newDaemonPropagator constructs a propagator with fixed peer and
+// folder snapshots — the historical "captured at startup" semantics
+// preserved for the tests that pass explicit slices. Production
+// callers should use newDaemonPropagatorWithSources so peer/folder
+// additions become visible on the next commit, not the next restart.
 func newDaemonPropagator(mgr *transport.Manager, peers []transport.Peer, folders []transport.Folder, logger *slog.Logger) *daemonPropagator {
 	byPath := make(map[string]transport.Folder, len(folders))
 	for _, f := range folders {
 		byPath[f.Path] = f
 	}
-	return &daemonPropagator{mgr: mgr, peers: peers, folderByPath: byPath, logger: logger}
+	return newDaemonPropagatorWithSources(mgr,
+		func() []transport.Peer { return peers },
+		func() map[string]transport.Folder { return byPath },
+		logger)
+}
+
+// newDaemonPropagatorWithSources is the source-based constructor:
+// the propagator calls peersSource and foldersSource fresh on every
+// PropagateNewCommit. nil callbacks are treated as "no peers / no
+// folders" — propagator becomes a no-op, which is the right
+// degenerate behaviour when machine state isn't loadable.
+func newDaemonPropagatorWithSources(mgr *transport.Manager, peersSource func() []transport.Peer, foldersSource func() map[string]transport.Folder, logger *slog.Logger) *daemonPropagator {
+	return &daemonPropagator{
+		mgr:           mgr,
+		logger:        logger,
+		peersSource:   peersSource,
+		foldersSource: foldersSource,
+	}
 }
 
 func (p *daemonPropagator) PropagateNewCommit(ctx context.Context, folderPath string) {
-	if p.mgr == nil || len(p.peers) == 0 {
+	if p.mgr == nil {
 		return
 	}
-	folder, ok := p.folderByPath[folderPath]
+	var peers []transport.Peer
+	if p.peersSource != nil {
+		peers = p.peersSource()
+	}
+	if len(peers) == 0 {
+		return
+	}
+	var folders map[string]transport.Folder
+	if p.foldersSource != nil {
+		folders = p.foldersSource()
+	}
+	folder, ok := folders[folderPath]
 	if !ok {
 		p.logger.DebugContext(ctx, "propagator: no folder known for path", "path", folderPath)
 		return
@@ -1315,7 +1369,7 @@ func (p *daemonPropagator) PropagateNewCommit(ctx context.Context, folderPath st
 		Kind:     transport.ChangeKindUnknown,
 	}
 
-	for _, peer := range p.peers {
+	for _, peer := range peers {
 		t, err := p.mgr.Route(change, peer.Name)
 		if err != nil {
 			p.logger.WarnContext(ctx, "propagator: no route to peer",
