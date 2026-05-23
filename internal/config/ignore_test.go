@@ -67,6 +67,28 @@ func TestDefaultSyncIgnorePatternsCoversLanguageServerCaches(t *testing.T) {
 	}
 }
 
+// TestDefaultSyncIgnorePatternsCoversAIAgentEphemera pins the
+// presence of agent-related ephemera that, when left to Syncthing,
+// produce log-spam on every peer. `.claude/worktrees/` is the
+// canonical example: Claude Code creates one transient nested-git
+// worktree per agent run; without this ignore entry Syncthing
+// tries to replicate them across peers and then perpetually flaps
+// on "delete directory contains ignored files" warnings every time
+// an agent finishes locally. Future agent tools that create
+// repo-local ephemera belong here too.
+func TestDefaultSyncIgnorePatternsCoversAIAgentEphemera(t *testing.T) {
+	t.Parallel()
+
+	required := []string{
+		".claude/worktrees",
+	}
+	for _, want := range required {
+		if !containsPattern(DefaultSyncIgnorePatterns, want) {
+			t.Fatalf("DefaultSyncIgnorePatterns missing %q — agent worktrees must not propagate via Syncthing", want)
+		}
+	}
+}
+
 // TestDefaultSyncIgnorePatternsAreConsolidated guards the v0.9.3
 // pattern-consolidation work against accidental re-expansion.
 // Syncthing's ignore matcher pays a per-pattern cost dominated by
