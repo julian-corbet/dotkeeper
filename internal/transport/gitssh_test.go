@@ -221,8 +221,38 @@ func TestProbeReturnsUnreachableWhenSSHFails(t *testing.T) {
 	}
 }
 
+// branchProbeResponder builds a stubRunner respond function that
+// answers `symbolic-ref --short HEAD` with branchName and forwards
+// any other invocation to the supplied inner responder (nil-safe:
+// returns nil/nil when no inner). Used by tests that exercise
+// PropagateChange's two-step (resolve-branch, then push) flow.
+func branchProbeResponder(branchName string, inner func(name string, args []string) ([]byte, error)) func(string, []string) ([]byte, error) {
+	return func(name string, args []string) ([]byte, error) {
+		if name == "git" && len(args) >= 1 && args[0] == "symbolic-ref" {
+			return []byte(branchName + "\n"), nil
+		}
+		if inner == nil {
+			return nil, nil
+		}
+		return inner(name, args)
+	}
+}
+
+// findCommand returns the first stubCmd whose first arg equals
+// firstArg, or nil if none was recorded. Used by tests to assert
+// on the `push` invocation independently of any `symbolic-ref`
+// probe that ran first.
+func findCommand(cmds []stubCmd, firstArg string) *stubCmd {
+	for i := range cmds {
+		if cmds[i].name == "git" && len(cmds[i].args) >= 1 && cmds[i].args[0] == firstArg {
+			return &cmds[i]
+		}
+	}
+	return nil
+}
+
 func TestPropagateChangePushes(t *testing.T) {
-	runner := &stubRunner{respond: func(_ string, _ []string) ([]byte, error) { return nil, nil }}
+	runner := &stubRunner{respond: branchProbeResponder("main", nil)}
 	tr := newTestGitSSH(runner, &stubResolver{
 		name:      "tailscale",
 		available: true,
@@ -236,19 +266,16 @@ func TestPropagateChangePushes(t *testing.T) {
 		t.Fatalf("PropagateChange: %v", err)
 	}
 
-	if len(runner.commands) != 1 {
-		t.Fatalf("expected 1 git command, got %d", len(runner.commands))
-	}
-	cmd := runner.commands[0]
-	if cmd.name != "git" || cmd.args[0] != "push" {
-		t.Errorf("expected git push, got %+v", cmd)
+	push := findCommand(runner.commands, "push")
+	if push == nil {
+		t.Fatalf("no git push recorded; commands=%+v", runner.commands)
 	}
 	// Push refspec must be "abc123:refs/heads/main" — push the
 	// supplied commit hash to the peer's main branch. updateInstead
 	// on the peer side then updates the working tree atomically.
-	joined := strings.Join(cmd.args, " ")
+	joined := strings.Join(push.args, " ")
 	if !strings.Contains(joined, "abc123:refs/heads/main") {
-		t.Errorf("expected refspec abc123:refs/heads/main, got args: %v", cmd.args)
+		t.Errorf("expected refspec abc123:refs/heads/main, got args: %v", push.args)
 	}
 }
 
@@ -256,7 +283,7 @@ func TestPropagateChangeUsesHeadWhenCommitHashEmpty(t *testing.T) {
 	// dotkeeper's reconcile may invoke PropagateChange without
 	// knowing the specific commit hash (e.g. "push whatever we
 	// just committed"). Push HEAD in that case.
-	runner := &stubRunner{respond: func(_ string, _ []string) ([]byte, error) { return nil, nil }}
+	runner := &stubRunner{respond: branchProbeResponder("main", nil)}
 	tr := newTestGitSSH(runner, &stubResolver{
 		name:      "tailscale",
 		available: true,
@@ -269,10 +296,84 @@ func TestPropagateChangeUsesHeadWhenCommitHashEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PropagateChange: %v", err)
 	}
-	cmd := runner.commands[0]
-	joined := strings.Join(cmd.args, " ")
+	push := findCommand(runner.commands, "push")
+	if push == nil {
+		t.Fatalf("no git push recorded; commands=%+v", runner.commands)
+	}
+	joined := strings.Join(push.args, " ")
 	if !strings.Contains(joined, "HEAD:refs/heads/main") {
-		t.Errorf("expected refspec HEAD:refs/heads/main when no commit hash; got %v", cmd.args)
+		t.Errorf("expected refspec HEAD:refs/heads/main when no commit hash; got %v", push.args)
+	}
+}
+
+// TestPropagateChangePushesToLocalBranchName proves the v1.0.1
+// fix: when the local checkout is on a branch other than `main`,
+// PropagateChange must push to the matching branch on the peer.
+// Pre-fix the destination was hardcoded to `refs/heads/main`, which
+// silently bricked propagation for any repo on master/dev/etc. —
+// updateInstead on the peer never fired because the push landed
+// on a stale main rather than the peer's checked-out branch.
+func TestPropagateChangePushesToLocalBranchName(t *testing.T) {
+	runner := &stubRunner{respond: branchProbeResponder("dev", nil)}
+	tr := newTestGitSSH(runner, &stubResolver{
+		name:      "tailscale",
+		available: true,
+		addresses: map[string]string{"laptop": "100.64.0.5"},
+	})
+
+	err := tr.PropagateChange(context.Background(),
+		Change{Folder: Folder{ID: "dk-x", Path: "/tmp/repo"}, CommitHash: "abc123"},
+		Peer{Name: "laptop"})
+	if err != nil {
+		t.Fatalf("PropagateChange: %v", err)
+	}
+
+	push := findCommand(runner.commands, "push")
+	if push == nil {
+		t.Fatalf("no git push recorded; commands=%+v", runner.commands)
+	}
+	joined := strings.Join(push.args, " ")
+	if !strings.Contains(joined, "abc123:refs/heads/dev") {
+		t.Errorf("expected refspec abc123:refs/heads/dev for repo on `dev` branch; got args: %v", push.args)
+	}
+}
+
+// TestPropagateChangeFallsBackToMainOnDetachedHEAD pins the
+// conservative fallback: when `git symbolic-ref` fails (detached
+// HEAD, not a repo, runner error), PropagateChange must still
+// attempt a push — to `refs/heads/main` — rather than abort. An
+// explicit error path would prevent every detached-HEAD scenario
+// from ever propagating; the better failure mode is to push and
+// let the peer reject if the branch is wrong, which the operator
+// will see in the push error.
+func TestPropagateChangeFallsBackToMainOnDetachedHEAD(t *testing.T) {
+	runner := &stubRunner{respond: func(name string, args []string) ([]byte, error) {
+		if name == "git" && len(args) >= 1 && args[0] == "symbolic-ref" {
+			return []byte("fatal: ref HEAD is not a symbolic ref\n"),
+				errors.New("exit status 128")
+		}
+		return nil, nil
+	}}
+	tr := newTestGitSSH(runner, &stubResolver{
+		name:      "tailscale",
+		available: true,
+		addresses: map[string]string{"laptop": "100.64.0.5"},
+	})
+
+	err := tr.PropagateChange(context.Background(),
+		Change{Folder: Folder{ID: "dk-x", Path: "/tmp/repo"}, CommitHash: "abc123"},
+		Peer{Name: "laptop"})
+	if err != nil {
+		t.Fatalf("PropagateChange should fall back to main, not surface symbolic-ref failure: %v", err)
+	}
+
+	push := findCommand(runner.commands, "push")
+	if push == nil {
+		t.Fatalf("no git push recorded after symbolic-ref failure; commands=%+v", runner.commands)
+	}
+	joined := strings.Join(push.args, " ")
+	if !strings.Contains(joined, "abc123:refs/heads/main") {
+		t.Errorf("expected fallback refspec abc123:refs/heads/main; got args: %v", push.args)
 	}
 }
 

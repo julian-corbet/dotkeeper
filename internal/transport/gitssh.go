@@ -218,10 +218,16 @@ func (g *GitSSHTransport) Probe(ctx context.Context, peer Peer) (time.Duration, 
 // bare repo, no post-receive hook, no second authoritative copy
 // of the data.
 //
-// The refspec is `<src>:refs/heads/main` — v1.0 assumes the
-// peer's checked-out branch is `main`, matching dotkeeper's
-// scan-roots convention. Repos that use a different branch name
-// need the planned per-repo branch override.
+// The refspec is `<src>:refs/heads/<branch>` where `<branch>` is
+// resolved from the local checkout via `git symbolic-ref --short
+// HEAD`. Both peers are clones of the same repo by construction, so
+// the local branch is also the peer's checked-out branch — pushing
+// to that branch combined with the peer-side
+// `receive.denyCurrentBranch=updateInstead` (set by
+// `dotkeeper bare-init`) atomically updates the peer's working
+// tree. When HEAD is detached or the branch lookup fails for any
+// other reason, falls back to `main` so the historic v1.0 default
+// behaviour is preserved.
 //
 // Idempotent: pushing a commit that already exists on the peer is
 // a fast-forward no-op for git.
@@ -238,13 +244,9 @@ func (g *GitSSHTransport) PropagateChange(ctx context.Context, change Change, pe
 	if change.CommitHash != "" {
 		srcRef = change.CommitHash
 	}
-	// We push to refs/heads/<branch> where <branch> is the same name
-	// as the local checkout. Determining the local branch requires a
-	// separate git invocation; for v1.0 we assume "main" because
-	// dotkeeper-tracked repos default to that. Reading the branch
-	// name from .dotkeeper.toml is a planned extension for repos
-	// that diverge from the default.
-	dstRef := "refs/heads/main"
+
+	branch := g.localBranchName(pctx, change.Folder.Path)
+	dstRef := "refs/heads/" + branch
 
 	args := []string{"push", remoteName, srcRef + ":" + dstRef}
 	out, err := g.runner.Run(pctx, change.Folder.Path, "git", args...)
@@ -257,6 +259,26 @@ func (g *GitSSHTransport) PropagateChange(ctx context.Context, change Change, pe
 		return fmt.Errorf("GitSSHTransport.PropagateChange: push to %s: %w: %s", remoteName, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// localBranchName resolves the current checkout's branch name from
+// the working tree at dir, falling back to "main" when the lookup
+// fails (detached HEAD, non-repo, runner error). The fallback keeps
+// the historic v1.0 behaviour for any environment where the
+// resolver doesn't return a clean answer; an explicit error path
+// would force every detached-HEAD push to fail, which is worse than
+// pushing to refs/heads/main and letting the peer reject it if the
+// branch is wrong.
+func (g *GitSSHTransport) localBranchName(ctx context.Context, dir string) string {
+	out, err := g.runner.Run(ctx, dir, "git", "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return "main"
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" {
+		return "main"
+	}
+	return branch
 }
 
 // remoteName composes the git remote name from the peer. Format:
