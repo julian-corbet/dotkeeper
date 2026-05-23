@@ -43,6 +43,7 @@ func (f *fakeTransport) PropagateChange(_ context.Context, _ Change, _ Peer) err
 	f.propagateCalls.Add(1)
 	return nil
 }
+func (f *fakeTransport) PropagatesSynchronously() bool { return true }
 
 func TestDiscoverPopulatesRoutes(t *testing.T) {
 	gitssh := &fakeTransport{name: "git-ssh+test", available: true, probeLatency: 5 * time.Millisecond}

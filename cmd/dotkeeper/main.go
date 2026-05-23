@@ -1329,12 +1329,25 @@ func (p *daemonPropagator) PropagateNewCommit(ctx context.Context, folderPath st
 			continue
 		}
 		elapsed := time.Since(start)
-		p.mgr.RecordTransfer(t.Name(), peer.Name, sizeBytes, elapsed)
-		p.logger.InfoContext(ctx, "propagator: pushed",
-			"peer", peer.Name,
-			"transport", t.Name(),
-			"bytes", sizeBytes,
-			"elapsed", elapsed.Round(time.Millisecond).String())
+		// Only synchronous transports produce a duration that
+		// reflects real work. SyncthingTransport.PropagateChange
+		// is a no-op (BEP gossip handles the actual propagation in
+		// the background), so its ~µs elapsed would teach the cost
+		// model that it's infinitely fast — defeating Manager.Route
+		// for every subsequent decision.
+		if t.PropagatesSynchronously() {
+			p.mgr.RecordTransfer(t.Name(), peer.Name, sizeBytes, elapsed)
+			p.logger.InfoContext(ctx, "propagator: pushed",
+				"peer", peer.Name,
+				"transport", t.Name(),
+				"bytes", sizeBytes,
+				"elapsed", elapsed.Round(time.Millisecond).String())
+		} else {
+			p.logger.InfoContext(ctx, "propagator: queued for async transport",
+				"peer", peer.Name,
+				"transport", t.Name(),
+				"bytes", sizeBytes)
+		}
 	}
 }
 

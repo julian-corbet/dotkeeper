@@ -49,6 +49,7 @@ func (f *fakeTransport) Probe(_ context.Context, _ transport.Peer) (time.Duratio
 func (f *fakeTransport) PropagateChange(_ context.Context, _ transport.Change, _ transport.Peer) error {
 	return nil
 }
+func (f *fakeTransport) PropagatesSynchronously() bool { return true }
 
 // fakeResolver implements transport.Resolver — used by the
 // resolveBareInitAddress tests below.
