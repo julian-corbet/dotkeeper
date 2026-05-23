@@ -22,13 +22,13 @@ import (
 //
 // The stale-peer-revert pattern this catches:
 //
-//   1. Local repo lands content X (commit C2) via a normal git
-//      operation. HEAD is now C2.
-//   2. A peer that's still at content Y (commit C1, earlier) comes
-//      online and Syncthing surfaces Y as a sync-conflict file.
-//   3. The resolver runs. If it merges Y into HEAD (which has X
-//      content), the resulting auto-commit's blob is Y again —
-//      which already exists at C1. THAT'S THE BUG.
+//  1. Local repo lands content X (commit C2) via a normal git
+//     operation. HEAD is now C2.
+//  2. A peer that's still at content Y (commit C1, earlier) comes
+//     online and Syncthing surfaces Y as a sync-conflict file.
+//  3. The resolver runs. If it merges Y into HEAD (which has X
+//     content), the resulting auto-commit's blob is Y again —
+//     which already exists at C1. THAT'S THE BUG.
 //
 // The safeguard (refuse the merge when `ours == base`) means: if
 // the local file matches HEAD's blob, no merge happens, no
