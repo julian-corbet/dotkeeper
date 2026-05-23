@@ -232,6 +232,71 @@ func TestResolveTextMergeConflictMarkers(t *testing.T) {
 	}
 }
 
+// TestResolveTextMergeKeepsWhenLocalMatchesHEAD pins the
+// stale-peer-revert safeguard: if the local file matches HEAD
+// exactly (no local edit) and the conflict file differs, do NOT
+// auto-apply the conflict. `git merge-file ours base theirs` with
+// ours==base would otherwise treat theirs as a clean merge and
+// silently overwrite landed git content with a peer's older
+// version.
+//
+// Incident: during a release that touched ~20 files, a peer
+// holding pre-release content briefly came online before catching
+// up. Syncthing produced sync-conflict files of each pre-release
+// version against the just-merged local; without this safeguard
+// the resolver merged them and committed a long string of
+// `auto: resolve sync conflict in X` reverts that effectively
+// undid the entire release locally.
+func TestResolveTextMergeKeepsWhenLocalMatchesHEAD(t *testing.T) {
+	repo := gitInit(t, t.TempDir())
+	gitCommit(t, repo, "hello.txt", "current canonical content\n", "landed")
+
+	// Local file is unchanged from HEAD — this is the dangerous
+	// case the safeguard catches.
+	local := filepath.Join(repo, "hello.txt")
+	// (no write to local; gitCommit already wrote and committed it)
+
+	// Theirs has older content (simulating a stale peer that hadn't
+	// pulled the latest commit).
+	c := makeConflict(t, repo, "hello.txt")
+	if err := os.WriteFile(c.Path, []byte("older peer content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := ResolveTextMerge(testCtx(t), c, repo)
+	if err != nil {
+		t.Fatalf("ResolveTextMerge: %v", err)
+	}
+	if got != ActionKeep {
+		t.Fatalf("Action = %q, want %q (safeguard must refuse the merge)", got, ActionKeep)
+	}
+
+	// Local file must be unchanged.
+	b, err := os.ReadFile(local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "current canonical content\n" {
+		t.Errorf("local was modified despite safeguard: %q", b)
+	}
+
+	// Conflict file should still exist for user-visible inspection.
+	if _, err := os.Stat(c.Path); err != nil {
+		t.Errorf("conflict file should still exist after refused merge: %v", err)
+	}
+
+	// Most importantly: no `auto: resolve sync conflict` commit
+	// should have landed.
+	logCmd := exec.Command("git", "-C", repo, "log", "-1", "--pretty=format:%s")
+	out, err := logCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git log: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "auto: resolve sync conflict") {
+		t.Errorf("safeguard failed: auto-revert commit landed:\n%s", out)
+	}
+}
+
 // TestResolveTextMergeBinaryKept — a file with a NUL in the first 8KB
 // must bypass the merge and return ActionKeep. Binary merge is out of
 // scope for Phase 2.
