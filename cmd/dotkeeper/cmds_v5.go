@@ -524,6 +524,18 @@ func startReconcileDaemon(
 		"watch_paths", len(watchPaths),
 	)
 
+	// Peer-presence tracker: refresh state.LastSeenPeers from
+	// Syncthing's live connection table on every reconcile tick.
+	// Decoupled from reconcile itself (own goroutine) so a slow
+	// Syncthing API call can't stall the reconcile cycle, and a
+	// reconcile failure can't drop a presence update. Best-effort;
+	// failures log and skip rather than crash. Started only when
+	// the Syncthing client is wired up — without it the tracker is
+	// a no-op that would burn ticks.
+	if stClient != nil {
+		go runPeerPresenceTracker(ctx, stClient, reconcileInterval, logger)
+	}
+
 	startReconcileLoop(ctx, r, reconcileInterval, watchPaths, logger)
 
 	// Fan activity hints into the reconcile-trigger channel so a
