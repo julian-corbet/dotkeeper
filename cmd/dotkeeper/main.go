@@ -66,6 +66,7 @@ func main() {
 	root.AddCommand(versionCmd())
 	root.AddCommand(initCmd())
 	root.AddCommand(statusCmd())
+	root.AddCommand(healthCmd())
 	root.AddCommand(startCmd())
 	root.AddCommand(conflictCmd())
 	root.AddCommand(doctorCmd())
