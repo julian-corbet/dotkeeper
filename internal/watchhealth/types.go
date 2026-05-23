@@ -9,17 +9,17 @@
 // The question is platform-specific because the underlying API is:
 //
 //   - Linux:   inotify (per-subdirectory watches, kernel queue with
-//              overflow signal, per-user watch + instance limits,
-//              well-defined behaviour on each filesystem)
+//     overflow signal, per-user watch + instance limits,
+//     well-defined behaviour on each filesystem)
 //   - macOS:   FSEvents (per-tree subscription, coalesces events with
-//              configurable latency, persistent history buffer for
-//              missed events, *does not fire on network mounts at all*)
+//     configurable latency, persistent history buffer for
+//     missed events, *does not fire on network mounts at all*)
 //   - Windows: ReadDirectoryChangesW (per-handle, optional recursion,
-//              fixed user-mode buffer that returns
-//              ERROR_NOTIFY_ENUM_DIR on overflow, limited support on
-//              SMB shares)
+//     fixed user-mode buffer that returns
+//     ERROR_NOTIFY_ENUM_DIR on overflow, limited support on
+//     SMB shares)
 //   - BSDs:    kqueue + EVFILT_VNODE (per-fd; hits fd limits faster
-//              than Linux hits watch limits)
+//     than Linux hits watch limits)
 //
 // The package abstracts these into a single Status type and exposes
 // detectors that the reconcile diff can consult without knowing

@@ -168,7 +168,7 @@ type e2eFixedResolver struct {
 	address string
 }
 
-func (r *e2eFixedResolver) Name() string  { return "fixed" }
+func (r *e2eFixedResolver) Name() string    { return "fixed" }
 func (r *e2eFixedResolver) Available() bool { return true }
 func (r *e2eFixedResolver) Resolve(_ context.Context, _ transport.Peer) (string, error) {
 	return r.address, nil

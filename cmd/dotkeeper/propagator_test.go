@@ -49,7 +49,7 @@ type recordingTransport struct {
 	async bool
 }
 
-func (t *recordingTransport) Name() string  { return t.name }
+func (t *recordingTransport) Name() string    { return t.name }
 func (t *recordingTransport) Available() bool { return true }
 func (t *recordingTransport) EnsurePeerReachability(_ context.Context, _ transport.Folder, _ transport.Peer) error {
 	return nil
