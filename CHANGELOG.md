@@ -7,6 +7,27 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-05-24
+
+Closes the loop on the v1.1.1 health-command work: the daemon now
+populates `state.LastSeenPeers` so forensic queries ("when did I
+last sync with peer X?") have a useful answer even when the
+daemon is down.
+
+### Added
+
+- **Peer-presence tracker.** On every reconcile tick the daemon
+  queries Syncthing's `/rest/system/connections`, identifies the
+  currently-connected peers, and persists their device IDs +
+  observation timestamp to `state.LastSeenPeers` via
+  `MutateStateV2`. Runs in its own goroutine so a slow API call
+  can't stall reconcile; best-effort so a flaky API can't crash
+  the daemon.
+  Combined with the v1.1.1 live-connection lookup,
+  `dotkeeper health` now always shows useful peer freshness data:
+  live observation when the daemon is up, cached state observation
+  when the daemon (or Syncthing) is down.
+
 ## [1.1.1] - 2026-05-24
 
 Same-day follow-up to v1.1.0: fixes a misleading "never seen"
