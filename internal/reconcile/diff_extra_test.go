@@ -33,8 +33,8 @@ func TestParseGitInterval(t *testing.T) {
 		// Garbage → 0 (caller substitutes a default).
 		{"banana", 0},
 		{"forever", 0},
-		{"1 week", 0},     // space-separated, ParseDuration rejects
-		{"yearly", 0},     // not a documented keyword
+		{"1 week", 0},               // space-separated, ParseDuration rejects
+		{"yearly", 0},               // not a documented keyword
 		{"-30s", -30 * time.Second}, // ParseDuration accepts negatives; caller's `interval <= 0` guard catches it
 	}
 	for _, tc := range cases {

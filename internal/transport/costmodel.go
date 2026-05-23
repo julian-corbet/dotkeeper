@@ -50,22 +50,22 @@ type CostModel struct {
 	// supplies its own priors based on typical real-world
 	// performance — SSH+git is fast-setup-slow-throughput,
 	// Syncthing is slow-setup-fast-throughput.
-	priorSetupMS    float64
-	priorMSPerByte  float64
-	priorWeight     float64 // pseudo-count of synthetic observations
+	priorSetupMS   float64
+	priorMSPerByte float64
+	priorWeight    float64 // pseudo-count of synthetic observations
 
 	// Decay half-life in seconds. Older observations contribute
 	// less weight to the current fit.
 	halfLifeSec float64
 
 	// Mutable state, guarded by mu.
-	mu             sync.Mutex
-	weightedN      float64 // effective sample count after decay
-	weightedSumX   float64 // sum of weight * x (where x = size in bytes)
-	weightedSumY   float64 // sum of weight * y (where y = observed ms)
-	weightedSumXX  float64 // sum of weight * x^2
-	weightedSumXY  float64 // sum of weight * x*y
-	lastUpdate     time.Time
+	mu            sync.Mutex
+	weightedN     float64 // effective sample count after decay
+	weightedSumX  float64 // sum of weight * x (where x = size in bytes)
+	weightedSumY  float64 // sum of weight * y (where y = observed ms)
+	weightedSumXX float64 // sum of weight * x^2
+	weightedSumXY float64 // sum of weight * x*y
+	lastUpdate    time.Time
 
 	// Cached fitted parameters; recomputed after each Record.
 	// Reading Predict() takes the lock, evaluates from cache.

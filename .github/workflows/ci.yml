@@ -88,6 +88,19 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: gofmt
+        # gofmt drift is silent without a CI gate. golangci-lint doesn't
+        # enforce gofmt by default, so run it explicitly here. Any file
+        # that would be rewritten by `gofmt -w` fails the job and prints
+        # the offending paths.
+        run: |
+          changed=$(gofmt -l $(git ls-files '*.go'))
+          if [ -n "$changed" ]; then
+            echo "::error::gofmt would rewrite the following files; run \`gofmt -w\` and commit:"
+            echo "$changed"
+            exit 1
+          fi
+
       - name: golangci-lint
         # Baseline is clean (PR #15); lint is now a hard gate.
         # Version pinned for reproducibility; Dependabot bumps it.

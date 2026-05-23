@@ -16,7 +16,7 @@ import (
 	"github.com/julian-corbet/dotkeeper/internal/transport"
 )
 
-func mkdirAll(dir string, perm uint32) error    { return os.MkdirAll(dir, os.FileMode(perm)) }
+func mkdirAll(dir string, perm uint32) error { return os.MkdirAll(dir, os.FileMode(perm)) }
 func writeFile(path string, data []byte, perm uint32) error {
 	return os.WriteFile(path, data, os.FileMode(perm))
 }
@@ -26,13 +26,13 @@ func writeFile(path string, data []byte, perm uint32) error {
 // formatting and routing without standing up real Syncthing or
 // real SSH.
 type fakeTransport struct {
-	name        string
-	available   bool
+	name         string
+	available    bool
 	probeLatency time.Duration
-	probeErr    error
+	probeErr     error
 }
 
-func (f *fakeTransport) Name() string  { return f.name }
+func (f *fakeTransport) Name() string    { return f.name }
 func (f *fakeTransport) Available() bool { return f.available }
 func (f *fakeTransport) EnsurePeerReachability(_ context.Context, _ transport.Folder, _ transport.Peer) error {
 	return nil
@@ -60,7 +60,7 @@ type fakeResolver struct {
 	err       error             // when set, returned for every Resolve
 }
 
-func (f *fakeResolver) Name() string  { return f.name }
+func (f *fakeResolver) Name() string    { return f.name }
 func (f *fakeResolver) Available() bool { return f.available }
 func (f *fakeResolver) Resolve(_ context.Context, peer transport.Peer) (string, error) {
 	if f.err != nil {
@@ -363,7 +363,7 @@ type spyingResolver struct {
 	hit   *bool
 }
 
-func (s *spyingResolver) Name() string  { return s.inner.Name() }
+func (s *spyingResolver) Name() string    { return s.inner.Name() }
 func (s *spyingResolver) Available() bool { return s.inner.Available() }
 func (s *spyingResolver) Resolve(ctx context.Context, peer transport.Peer) (string, error) {
 	*s.hit = true

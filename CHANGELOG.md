@@ -7,6 +7,86 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-05-23
+
+Patch release. Four production bugs surfaced in the v1.0.0 multi-transport
+pipe after real-world use; this release fixes all of them, hardens the
+test surface against regression, and tightens CI's gofmt enforcement.
+
+### Fixed
+
+- **Cost-model poisoning by SyncthingTransport.** Syncthing's
+  `PropagateChange` is a no-op (BEP gossip runs in the embedded daemon),
+  so the call returns in microseconds regardless of how long the actual
+  propagation takes. The propagator was feeding that ~µs elapsed into
+  `Manager.RecordTransfer`, which taught `CostModel` that Syncthing is
+  infinitely fast. After one observation `Manager.Route` picked Syncthing
+  for every change, defeating the v1.0 router. `Transport` now exposes
+  `PropagatesSynchronously() bool`; the propagator skips `RecordTransfer`
+  for transports that report false.
+
+- **GitSSHTransport hardcoded `refs/heads/main`.** Pushes to peers were
+  always landing on `refs/heads/main` regardless of the local branch.
+  For any repo on `master`, `dev`, or any other branch, the peer's
+  working tree silently stopped receiving updates via this transport
+  (Syncthing still kept files in sync but the git ref diverged). Now
+  resolves the destination via `git symbolic-ref --short HEAD` and falls
+  back to `main` only when HEAD is detached.
+
+- **`remoteURL` over-bracketed `host:port` addresses.** Single-colon
+  addresses were treated as IPv6 literals and wrapped in brackets,
+  producing `ssh://[host:port]/path` which SSH treats as unresolvable.
+  Current shipping resolvers (Tailscale) never emit a port so this never
+  bit, but any future static-config resolver returning `host:port` would
+  have hit it. Bracket only when `Count(addr, ":") >= 2` (IPv6 always
+  has at least two colons).
+
+- **`.claude/worktrees/` propagating via Syncthing.** Each Claude Code
+  agent run creates a nested `git worktree` under `.claude/worktrees/`.
+  Without an anchored ignore entry, Syncthing tried to replicate the
+  transient worktrees across peers and then perpetually flapped on
+  `delete dir: directory has been deleted on a remote device but
+  contains ignored files` warnings every time an agent finished
+  locally. Added `.claude/worktrees` to `DefaultSyncIgnorePatterns`; the
+  rest of `.claude/` (settings.json, agents/, hooks/, CLAUDE.md) keeps
+  syncing normally.
+
+### Added
+
+- **gofmt as a hard CI gate.** The lint workflow now runs
+  `gofmt -l $(git ls-files '*.go')` and fails on any non-empty output.
+  `golangci-lint` doesn't enforce gofmt by default, so drift was
+  accumulating silently.
+
+- **CI status badge in README.** Visible signal that `main` is currently
+  passing without clicking through to Actions.
+
+- **End-to-end propagator test** wires the real `Manager`, real
+  `GitSSHTransport`, real `git push`, real `daemonPropagator`, and real
+  `estimateLastCommitSize` against two real git repos, then asserts the
+  destination's working tree contains the new file with the right
+  content. Catches regressions across every layer of the multi-transport
+  pipe.
+
+- **Regression tests** pinning each fix above so a future refactor has
+  to update the test deliberately rather than reintroduce the bug
+  silently.
+
+### Changed
+
+- **`Transport` interface gains `PropagatesSynchronously() bool`.**
+  Required addition for the cost-model fix; implementations must declare
+  whether their `PropagateChange` returns a meaningful duration.
+
+- **SECURITY.md supported versions table** updated to cover 0.9.x and
+  1.0.x.
+
+- **Repo-wide `gofmt`** applied to clear pre-existing drift.
+
+- **Test fixtures in `internal/transport/gitssh_test.go`** scrubbed of a
+  personal home directory and username; replaced with synthetic
+  `/srv/example/repo` and `alice`.
+
 ## [1.0.0] - 2026-05-21
 
 **dotkeeper goes multi-transport.** The Syncthing-only era ends with
