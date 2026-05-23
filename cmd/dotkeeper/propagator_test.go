@@ -244,6 +244,86 @@ func TestDaemonPropagatorContinuesPastPeerWithoutRoute(t *testing.T) {
 	}
 }
 
+// TestDaemonPropagatorPicksUpPeerAddedAfterConstruction pins the
+// freshness contract introduced in v1.0.2: peers added to the
+// machine roster (machine.toml) after the daemon started must
+// receive pushes on the next commit, without waiting for a
+// restart. Before the fix the propagator captured the peer slice
+// at construction and silently skipped late-added peers.
+func TestDaemonPropagatorPicksUpPeerAddedAfterConstruction(t *testing.T) {
+	tr := &recordingTransport{name: "stub"}
+	mgr := transport.NewManager([]transport.Transport{tr})
+	folder := transport.Folder{ID: "x", Path: "/p"}
+
+	// peers is mutated mid-test to simulate a roster change.
+	var peers []transport.Peer
+	prop := newDaemonPropagatorWithSources(mgr,
+		func() []transport.Peer { return peers },
+		func() map[string]transport.Folder {
+			return map[string]transport.Folder{folder.Path: folder}
+		},
+		quietLogger())
+
+	// Initial commit with empty roster — must be a no-op.
+	prop.PropagateNewCommit(context.Background(), folder.Path)
+	tr.mu.Lock()
+	initial := len(tr.recordedPeers)
+	tr.mu.Unlock()
+	if initial != 0 {
+		t.Fatalf("expected no fanout for empty roster; got %d calls", initial)
+	}
+
+	// Add a peer post-construction. Discover it so Manager.Route
+	// has a reachable transport entry.
+	later := transport.Peer{Name: "late-joiner"}
+	mgr.Discover(context.Background(), later)
+	peers = []transport.Peer{later}
+
+	// Next commit must push to the new peer.
+	prop.PropagateNewCommit(context.Background(), folder.Path)
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if len(tr.recordedPeers) != 1 || tr.recordedPeers[0] != "late-joiner" {
+		t.Errorf("expected push to late-joiner; recordedPeers=%v", tr.recordedPeers)
+	}
+}
+
+// TestDaemonPropagatorPicksUpFolderAddedAfterConstruction is the
+// folder-side analogue of the peer-freshness pin. A folder added
+// to the managed set after daemon start must propagate on its
+// first commit cycle.
+func TestDaemonPropagatorPicksUpFolderAddedAfterConstruction(t *testing.T) {
+	tr := &recordingTransport{name: "stub"}
+	mgr := transport.NewManager([]transport.Transport{tr})
+	peer := transport.Peer{Name: "a"}
+	mgr.Discover(context.Background(), peer)
+
+	folders := make(map[string]transport.Folder)
+	prop := newDaemonPropagatorWithSources(mgr,
+		func() []transport.Peer { return []transport.Peer{peer} },
+		func() map[string]transport.Folder { return folders },
+		quietLogger())
+
+	// Folder unknown at first call.
+	prop.PropagateNewCommit(context.Background(), "/p")
+	tr.mu.Lock()
+	initial := len(tr.recordedPeers)
+	tr.mu.Unlock()
+	if initial != 0 {
+		t.Fatalf("expected no push for unknown folder; got %d calls", initial)
+	}
+
+	// Add the folder post-construction.
+	folders["/p"] = transport.Folder{ID: "x", Path: "/p"}
+
+	prop.PropagateNewCommit(context.Background(), "/p")
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if len(tr.recordedPeers) != 1 {
+		t.Errorf("expected push after folder added; recordedPeers=%v", tr.recordedPeers)
+	}
+}
+
 // --- estimateLastCommitSize tests ---
 
 func setupTestRepo(t *testing.T) string {
