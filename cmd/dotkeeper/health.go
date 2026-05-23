@@ -16,7 +16,40 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
+	"github.com/julian-corbet/dotkeeper/internal/stclient"
 )
+
+// liveConnectionsProvider returns the set of peer device IDs that
+// Syncthing currently reports as connected, with the observation
+// timestamp. Returns nil/nil when no API client is available — the
+// health command must degrade gracefully when Syncthing is down
+// or its API key isn't readable.
+//
+// Indirection via a package-level var (rather than a direct call
+// to apiClient()) lets tests inject a stub without spinning up a
+// real Syncthing instance.
+var liveConnectionsProvider = func() (map[string]time.Time, error) {
+	eng := engine()
+	key, err := eng.APIKey()
+	if err != nil {
+		// API key unreadable → daemon almost certainly not
+		// running. Fall back to whatever state.toml has.
+		return nil, nil //nolint:nilerr // intentional graceful degradation
+	}
+	c := stclient.New(key)
+	conns, err := c.GetConnections()
+	if err != nil {
+		return nil, nil //nolint:nilerr // same: daemon unreachable, not a hard failure
+	}
+	out := make(map[string]time.Time)
+	now := time.Now()
+	for deviceID, conn := range conns.Connections {
+		if conn.Connected {
+			out[deviceID] = now
+		}
+	}
+	return out, nil
+}
 
 // healthCmd returns the `dotkeeper health` subcommand: an
 // at-a-glance operational dashboard that surfaces silent
@@ -232,16 +265,34 @@ func summarisePeers(machine *config.MachineConfigV2, state *config.StateV2, now 
 		return
 	}
 	rep.Peers.Known = len(machine.Peers)
-	var lastSeen map[string]time.Time
+
+	// Three potential sources of "when was this peer last seen?":
+	//
+	//  1. Live Syncthing connections (best — proves the peer is
+	//     reachable RIGHT NOW; timestamp is the call time).
+	//  2. state.LastSeenPeers cache (good — what the daemon last
+	//     observed during a prior reconcile cycle).
+	//  3. Nothing (fallback — render "never seen").
+	//
+	// Merge in priority order: live observation wins over cache
+	// because we're certain it's correct as of the call, whereas
+	// the cache may be hours stale. When neither is available the
+	// peer is listed as "never seen" which is the operationally
+	// honest answer.
+	live, _ := liveConnectionsProvider() // nil on error; safe to range over
+
+	var cache map[string]time.Time
 	if state != nil {
-		lastSeen = state.LastSeenPeers
+		cache = state.LastSeenPeers
 	}
-	// machine.toml has the authoritative peer roster; state.toml
-	// has the runtime last-seen timestamps. Cross-reference so
-	// the output names every configured peer, even ones the
-	// daemon has never observed.
+
 	for _, p := range machine.Peers {
-		when := lastSeen[p.DeviceID] // zero value = never seen
+		when := time.Time{}
+		if t, ok := live[p.DeviceID]; ok {
+			when = t
+		} else if t, ok := cache[p.DeviceID]; ok {
+			when = t
+		}
 		ageS := float64(0)
 		if !when.IsZero() {
 			ageS = now.Sub(when).Seconds()

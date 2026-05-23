@@ -25,6 +25,13 @@ func setupHealthFixture(t *testing.T) (stateDir, configDir string) {
 	st := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	t.Setenv("XDG_STATE_HOME", st)
+	// Default to "no live data" so tests that don't care about
+	// the live-connections path see consistent state. Tests that
+	// DO want live data override liveConnectionsProvider after
+	// calling setupHealthFixture.
+	old := liveConnectionsProvider
+	liveConnectionsProvider = func() (map[string]time.Time, error) { return nil, nil }
+	t.Cleanup(func() { liveConnectionsProvider = old })
 	return st, cfg
 }
 
@@ -229,6 +236,75 @@ func TestHealthScansRecentActivityFromLog(t *testing.T) {
 	}
 	if r.RecentActivity.ConflictResolved != 1 {
 		t.Errorf("ConflictResolved=%d, want 1", r.RecentActivity.ConflictResolved)
+	}
+}
+
+// TestHealthPrefersLiveConnectionsOverStateCache pins the priority
+// order in summarisePeers: a peer that Syncthing reports as
+// currently connected should show a fresh timestamp even if
+// state.LastSeenPeers has an older one. The "live > cache" rule
+// is the whole reason for the indirection through
+// liveConnectionsProvider.
+func TestHealthPrefersLiveConnectionsOverStateCache(t *testing.T) {
+	setupHealthFixture(t)
+
+	const id = "AAAAAAA-BBBBBBB-CCCCCCC-DDDDDDD-EEEEEEE-FFFFFFF-GGGGGGG-HHHHHHH"
+	writeMachineToml(t, "host", []config.PeerEntry{
+		{Name: "live-peer", DeviceID: id, LearnedAt: time.Now()},
+	})
+
+	// Cache has a 24h-old timestamp; live says "connected now".
+	staleCache := time.Now().Add(-24 * time.Hour)
+	writeStateToml(t, &config.StateV2{
+		SchemaVersion: 2,
+		LastSeenPeers: map[string]time.Time{id: staleCache},
+	})
+
+	freshLive := time.Now()
+	liveConnectionsProvider = func() (map[string]time.Time, error) {
+		return map[string]time.Time{id: freshLive}, nil
+	}
+
+	r, err := collectHealth(true)
+	if err != nil {
+		t.Fatalf("collectHealth: %v", err)
+	}
+	if len(r.Peers.LastSeen) != 1 {
+		t.Fatalf("expected 1 peer row, got %d", len(r.Peers.LastSeen))
+	}
+	if r.Peers.LastSeen[0].Since.Before(staleCache.Add(time.Hour)) {
+		t.Errorf("expected live timestamp (~now), got %v which is no fresher than the 24h-old cache",
+			r.Peers.LastSeen[0].Since)
+	}
+}
+
+// TestHealthFallsBackToCacheWhenLiveUnavailable — opposite of the
+// previous: live provider returns nil (Syncthing unreachable); the
+// command must still report the cached last-seen.
+func TestHealthFallsBackToCacheWhenLiveUnavailable(t *testing.T) {
+	setupHealthFixture(t)
+
+	const id = "AAAAAAA-BBBBBBB-CCCCCCC-DDDDDDD-EEEEEEE-FFFFFFF-GGGGGGG-HHHHHHH"
+	writeMachineToml(t, "host", []config.PeerEntry{
+		{Name: "cached-peer", DeviceID: id, LearnedAt: time.Now()},
+	})
+	cached := time.Now().Add(-2 * time.Hour)
+	writeStateToml(t, &config.StateV2{
+		SchemaVersion: 2,
+		LastSeenPeers: map[string]time.Time{id: cached},
+	})
+	// liveConnectionsProvider is the setupHealthFixture default
+	// (returns nil, nil). Don't override.
+
+	r, _ := collectHealth(true)
+	if len(r.Peers.LastSeen) != 1 {
+		t.Fatalf("expected 1 peer row, got %d", len(r.Peers.LastSeen))
+	}
+	// TOML datetime serialisation drops sub-second precision, so
+	// compare at second resolution. Cross-tz comparison is fine
+	// because both sides represent the same absolute instant.
+	if !r.Peers.LastSeen[0].Since.Truncate(time.Second).Equal(cached.Truncate(time.Second)) {
+		t.Errorf("expected cached timestamp %v, got %v", cached, r.Peers.LastSeen[0].Since)
 	}
 }
 
