@@ -851,10 +851,10 @@ func TestDiffSmartRescan(t *testing.T) {
 	}
 
 	cases := []struct {
-		name        string
-		obs         Observed
-		wantRescan  bool
-		wantReason  string // substring match in Action.Describe(); "" means "don't assert"
+		name       string
+		obs        Observed
+		wantRescan bool
+		wantReason string // substring match in Action.Describe(); "" means "don't assert"
 	}{
 		{
 			name:       "wake event → rescan, reason cites suspend/resume",
@@ -1062,8 +1062,8 @@ func TestDiffAutoPause(t *testing.T) {
 			wantPause: false, wantUnp: false,
 		},
 		{
-			name:      "tracker has no entry for folder → no action",
-			obs:       Observed{
+			name: "tracker has no entry for folder → no action",
+			obs: Observed{
 				ManagedFolders: []FolderObs{
 					{
 						SyncthingFolderID: folderID,

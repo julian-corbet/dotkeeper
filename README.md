@@ -1,6 +1,7 @@
 # dotkeeper
 
 [![Release](https://img.shields.io/github/v/release/julian-corbet/dotkeeper?sort=semver&logo=github)](https://github.com/julian-corbet/dotkeeper/releases/latest)
+[![CI](https://github.com/julian-corbet/dotkeeper/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/julian-corbet/dotkeeper/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/julian-corbet/dotkeeper)](LICENSE)
 [![Go Reference](https://pkg.go.dev/badge/github.com/julian-corbet/dotkeeper.svg)](https://pkg.go.dev/github.com/julian-corbet/dotkeeper)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12584/badge)](https://www.bestpractices.dev/projects/12584)

@@ -107,9 +107,9 @@ func TestSleepDetectorFiresOnLargeGap(t *testing.T) {
 	go runSleepDetector(ctx, ticks, 100*time.Millisecond, events)
 
 	base := time.Date(2026, 5, 21, 9, 0, 0, 0, time.UTC)
-	ticks <- base                          // baseline; no event
+	ticks <- base                            // baseline; no event
 	ticks <- base.Add(50 * time.Millisecond) // below threshold; no event
-	ticks <- base.Add(10 * time.Minute)    // huge gap; expect event
+	ticks <- base.Add(10 * time.Minute)      // huge gap; expect event
 
 	select {
 	case ev := <-events:

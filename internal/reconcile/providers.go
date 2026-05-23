@@ -677,12 +677,12 @@ func isDevWorkflowActive(repoPath string) bool {
 		gitDir = filepath.Join(repoPath, gitDir)
 	}
 	for _, marker := range []string{
-		"rebase-merge",      // interactive rebase or `git merge --rebase`
-		"rebase-apply",      // `git am` / classic rebase
-		"MERGE_HEAD",        // `git merge` paused on conflict
-		"CHERRY_PICK_HEAD",  // `git cherry-pick` paused
-		"REVERT_HEAD",       // `git revert` paused
-		"BISECT_LOG",        // `git bisect` in progress
+		"rebase-merge",     // interactive rebase or `git merge --rebase`
+		"rebase-apply",     // `git am` / classic rebase
+		"MERGE_HEAD",       // `git merge` paused on conflict
+		"CHERRY_PICK_HEAD", // `git cherry-pick` paused
+		"REVERT_HEAD",      // `git revert` paused
+		"BISECT_LOG",       // `git bisect` in progress
 	} {
 		if _, err := os.Stat(filepath.Join(gitDir, marker)); err == nil {
 			return true

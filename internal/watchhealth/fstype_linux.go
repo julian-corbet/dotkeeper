@@ -19,7 +19,7 @@ import "golang.org/x/sys/unix"
 // unreliable FS as reliable is silent peer divergence — the
 // failure mode that started this whole investigation.
 var linuxReliableMagic = map[int64]string{
-	0xef53:     "ext4",      // also matches ext2, ext3 — same magic
+	0xef53:     "ext4", // also matches ext2, ext3 — same magic
 	0x9123683e: "btrfs",
 	0x58465342: "xfs",
 	0x2fc12fc1: "zfs",
@@ -34,8 +34,8 @@ var linuxUnreliableMagic = map[int64]string{
 	0x6969:     "nfs",
 	0xff534d42: "cifs",
 	0x517b:     "smbfs",
-	0x01021997: "v9fs",     // 9p
-	0x65735546: "fuse",     // generic FUSE; some fuse FS work, some don't, treat as unreliable
+	0x01021997: "v9fs", // 9p
+	0x65735546: "fuse", // generic FUSE; some fuse FS work, some don't, treat as unreliable
 	0x65735543: "fuseblk",
 	0x73757245: "virtiofs", // host-driven; guest's inotify may or may not see host writes
 	0x52654973: "reiserfs", // events have historical issues; safer to rescan

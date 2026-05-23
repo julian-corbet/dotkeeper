@@ -36,11 +36,11 @@ type TailscaleResolver struct {
 	// disappearing from the tailnet shows up within half a minute.
 	cacheTTL time.Duration
 
-	mu         sync.Mutex
-	cached     map[string]string // hostname -> tailscale IP
-	cachedAt   time.Time
-	cachedErr  error // sticky error from the last fetch, if any
-	unavailable bool // set when the CLI is provably absent
+	mu          sync.Mutex
+	cached      map[string]string // hostname -> tailscale IP
+	cachedAt    time.Time
+	cachedErr   error // sticky error from the last fetch, if any
+	unavailable bool  // set when the CLI is provably absent
 }
 
 // NewTailscaleResolver returns a resolver with default settings:

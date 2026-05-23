@@ -15,17 +15,17 @@ import (
 // fully controlled by the test: which probes succeed, what latency
 // they report, whether Available() returns true. No I/O.
 type fakeTransport struct {
-	name        string
-	available   bool
-	probeErr    error
+	name         string
+	available    bool
+	probeErr     error
 	probeLatency time.Duration
 
-	ensureCalls  atomic.Int32
-	probeCalls   atomic.Int32
+	ensureCalls    atomic.Int32
+	probeCalls     atomic.Int32
 	propagateCalls atomic.Int32
 }
 
-func (f *fakeTransport) Name() string { return f.name }
+func (f *fakeTransport) Name() string    { return f.name }
 func (f *fakeTransport) Available() bool { return f.available }
 func (f *fakeTransport) EnsurePeerReachability(_ context.Context, _ Folder, _ Peer) error {
 	f.ensureCalls.Add(1)

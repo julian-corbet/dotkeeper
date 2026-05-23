@@ -36,9 +36,9 @@ type Manager struct {
 	transports []Transport
 
 	mu          sync.RWMutex
-	routes      map[string]Routes      // peerName -> reachability snapshot
+	routes      map[string]Routes       // peerName -> reachability snapshot
 	models      map[modelKey]*CostModel // (transportName, peerName) -> cost model
-	priorsByTpt map[string]CostPrior   // transport.Name() -> prior, used when constructing new models
+	priorsByTpt map[string]CostPrior    // transport.Name() -> prior, used when constructing new models
 }
 
 // CostPrior captures the bootstrap parameters for a single Transport's

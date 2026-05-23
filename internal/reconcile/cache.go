@@ -39,10 +39,10 @@ type machineEntry struct {
 }
 
 type stateEntry struct {
-	mtime    time.Time
-	size     int64
-	value    *config.StateV2
-	tracked  []string
+	mtime   time.Time
+	size    int64
+	value   *config.StateV2
+	tracked []string
 	// notFound is true when a stat showed the file does not exist; we cache
 	// the absence so we don't re-stat every tick during first-run.
 	notFound bool

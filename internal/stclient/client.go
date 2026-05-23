@@ -39,11 +39,11 @@ type Client struct {
 	apiKey  string
 	http    *http.Client
 
-	mu                sync.Mutex
-	cachedConfigJSON  []byte
-	cachedStatus      *SystemStatus
-	cachedConns       *Connections
-	cachedConnsAt     time.Time
+	mu               sync.Mutex
+	cachedConfigJSON []byte
+	cachedStatus     *SystemStatus
+	cachedConns      *Connections
+	cachedConnsAt    time.Time
 }
 
 // connectionsCacheTTL bounds how long /rest/system/connections is cached.

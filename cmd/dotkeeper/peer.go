@@ -141,4 +141,3 @@ func mergedPeersForDisplay() []peerDisplay {
 	}
 	return out
 }
-

@@ -180,7 +180,7 @@ func TestModelComparesTransportsCorrectly(t *testing.T) {
 	// model with low setup should predict less. For a 100MB change,
 	// the model with high throughput should predict less. This is
 	// the crossover behaviour the router depends on.
-	gitssh := NewCostModel(150, 0.0002, 8, 86400)    // low setup, low throughput
+	gitssh := NewCostModel(150, 0.0002, 8, 86400)      // low setup, low throughput
 	syncthing := NewCostModel(1500, 0.00002, 8, 86400) // high setup, high throughput
 
 	if gitssh.Predict(1) >= syncthing.Predict(1) {

@@ -42,7 +42,7 @@ type stubResolver struct {
 	resolveErr error             // when set, returned for every Resolve
 }
 
-func (s *stubResolver) Name() string  { return s.name }
+func (s *stubResolver) Name() string    { return s.name }
 func (s *stubResolver) Available() bool { return s.available }
 func (s *stubResolver) Resolve(_ context.Context, peer Peer) (string, error) {
 	if s.resolveErr != nil {
