@@ -7,6 +7,55 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-24
+
+Minor release: new operational-health CLI command, hardened CI,
+and baseline microbenchmarks for hot paths.
+
+### Added
+
+- **`dotkeeper health`** — operational health snapshot. Where
+  `dotkeeper status` answers "is this configured correctly?",
+  `health` answers "is the configured state actually working?".
+  Shows repo freshness (age buckets: fresh / 1–7d stale / >7d
+  stale / never), per-peer last-seen timestamps, and a 24h tail
+  of the syncthing.log for conflict-resolve / push-failure /
+  ERROR / WARN counts. Supports `--json` for downstream tooling
+  and exits nonzero when degraded so it can be wrapped in
+  systemd timers or `... || alert-me` chains. Designed so that
+  silent-degradation classes (the cost-model poisoning, the
+  stale-peer revert) would surface in a daily health report
+  rather than only at audit time.
+
+- **Microbenchmarks for daemon hot paths.**
+  `internal/transport/bench_test.go` and
+  `internal/config/bench_test.go` pin order-of-magnitude targets
+  for `CostModelPredict` (<100 ns), `Manager.Route` (<1 µs),
+  `RecordTransfer` (<500 ns), `LoadMachineConfigV2` (<200 µs).
+  The repo had no benchmarks at all before this; future
+  refactors that add a syscall or O(n) loop to a hot path will
+  show up at review time.
+
+- **Coverage fill for paths flagged by the v1.0.3 audit**:
+  `RemovePeerReachability` idempotent + non-recoverable paths,
+  simultaneous peer+folder freshness pickup, conflict-file
+  vanish-during-read.
+
+### Changed
+
+- **Fuzz smoke per-target budget** bumped from 20s → 30s.
+  Intermittent "context deadline exceeded" with the 20s budget
+  on `FuzzMachineConfigV2RoundTrip` /
+  `FuzzExpandContractPath` — the harness's internal deadline
+  raced with the last iteration's completion. 30s leaves
+  enough slack while keeping the smoke job under 5 minutes
+  total.
+
+- **`FuzzMachineConfigV2RoundTrip` hardened** against silent
+  stalls: `name` input bounded at 4096 bytes, env-mutation
+  section serialised with a process-local mutex to prevent
+  GOMAXPROCS goroutines from racing on `t.Setenv`.
+
 ## [1.0.3] - 2026-05-23
 
 Third patch on release day. Tightens info-leak hygiene and
