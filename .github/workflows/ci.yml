@@ -125,7 +125,16 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Fuzz each target (20s each)
+      - name: Fuzz each target (30s each)
+        # Per-target budget bumped from 20s to 30s after intermittent
+        # "context deadline exceeded" failures on FuzzMachineConfigV2RoundTrip
+        # and FuzzExpandContractPath: with -fuzztime=20s the harness's
+        # internal deadline races with the last fuzz iteration's
+        # completion, and a worker still finishing an exec at the 20s
+        # mark trips the failure even though no real bug was found.
+        # 30s leaves enough slack that legitimate completions land
+        # inside the budget while keeping the smoke job under 5min
+        # total (~6 targets * 30s + overhead).
         run: |
           set -e
           for pkg in $(go list -tags noassets ./...); do
@@ -133,7 +142,7 @@ jobs:
             fuzz_targets=$(go test -tags noassets -list '^Fuzz' "$pkg" 2>/dev/null | grep '^Fuzz' || true)
             for target in $fuzz_targets; do
               echo "::group::fuzz $pkg $target"
-              go test -tags noassets -run='^$' -fuzz="^${target}$" -fuzztime=20s "$pkg"
+              go test -tags noassets -run='^$' -fuzz="^${target}$" -fuzztime=30s "$pkg"
               echo "::endgroup::"
             done
           done
