@@ -16,6 +16,18 @@ func FuzzMachineConfigV2RoundTrip(f *testing.F) {
 	f.Add("日本語-host", uint(15))
 
 	f.Fuzz(func(t *testing.T, name string, slot uint) {
+		// Bound the input to keep the per-iteration cost predictable.
+		// Without this, the fuzzer eventually generates multi-MB
+		// `name` strings; the TOML write/parse round-trip then
+		// dominates the per-fuzz budget and slow CI runners hit the
+		// fuzz harness's per-target deadline, failing the smoke
+		// suite for reasons unrelated to a real bug. Real machine
+		// names are well under this limit (Tailscale caps at 63
+		// per DNS-label, machine.toml convention is similar).
+		if len(name) > 4096 {
+			return
+		}
+
 		tmp := t.TempDir()
 		t.Setenv("XDG_CONFIG_HOME", tmp)
 
