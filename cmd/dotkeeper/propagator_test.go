@@ -42,6 +42,11 @@ type recordingTransport struct {
 	// every call. Used to exercise the propagator's error-handling
 	// branch.
 	pushErr error
+	// async, when true, makes PropagatesSynchronously report false —
+	// used to exercise the propagator's "skip RecordTransfer for
+	// async transports" path. Defaults to synchronous (true via the
+	// zero-value inversion in the method below).
+	async bool
 }
 
 func (t *recordingTransport) Name() string  { return t.name }
@@ -62,6 +67,7 @@ func (t *recordingTransport) PropagateChange(_ context.Context, c transport.Chan
 	t.recordedPeers = append(t.recordedPeers, p.Name)
 	return t.pushErr
 }
+func (t *recordingTransport) PropagatesSynchronously() bool { return !t.async }
 
 // quietLogger discards everything. The propagator logs success
 // and failure paths; we don't care about the output, just the
@@ -157,6 +163,41 @@ func TestDaemonPropagatorRecordsObservationOnSuccess(t *testing.T) {
 	_, _, nAfter := mgr.ModelParametersFor("stub", "a")
 	if nAfter < 1 {
 		t.Errorf("propagator did not Record the transfer; effective-sample count = %.2f, want >= 1", nAfter)
+	}
+}
+
+func TestDaemonPropagatorSkipsRecordForAsyncTransport(t *testing.T) {
+	// Asynchronous transports (SyncthingTransport in production)
+	// return from PropagateChange in microseconds because the actual
+	// work runs in a background system. Feeding that ~µs elapsed
+	// into the cost model would teach Manager.Route that the
+	// transport is infinitely fast — every subsequent routing
+	// decision would then pick the async transport, even when a
+	// synchronous transport is the better choice for a small
+	// payload. This test pins the propagator's "skip RecordTransfer
+	// when PropagatesSynchronously()=false" guard.
+	tr := &recordingTransport{name: "async-stub", async: true}
+	mgr := transport.NewManager([]transport.Transport{tr})
+	peer := transport.Peer{Name: "a"}
+	mgr.Discover(context.Background(), peer)
+
+	folder := transport.Folder{ID: "x", Path: "/p"}
+	prop := newDaemonPropagator(mgr, []transport.Peer{peer},
+		[]transport.Folder{folder}, quietLogger())
+	prop.PropagateNewCommit(context.Background(), folder.Path)
+
+	// Push must still have happened — the cost-model skip is
+	// independent of whether the transport's hand-off succeeded.
+	tr.mu.Lock()
+	calls := len(tr.recordedPeers)
+	tr.mu.Unlock()
+	if calls != 1 {
+		t.Errorf("expected 1 PropagateChange call, got %d", calls)
+	}
+
+	_, _, nAfter := mgr.ModelParametersFor("async-stub", "a")
+	if nAfter != 0 {
+		t.Errorf("async transport poisoned cost model; effective-sample count = %.2f, want 0", nAfter)
 	}
 }
 

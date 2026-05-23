@@ -178,3 +178,10 @@ func (s *SyncthingTransport) Probe(_ context.Context, _ Peer) (time.Duration, er
 func (s *SyncthingTransport) PropagateChange(_ context.Context, _ Change, _ Peer) error {
 	return nil
 }
+
+// PropagatesSynchronously implements Transport. SyncthingTransport
+// returns false: PropagateChange is a no-op and the call returns in
+// microseconds regardless of how long BEP gossip actually takes to
+// move the change. Feeding that elapsed time to the cost model
+// would teach it that this transport is infinitely fast.
+func (s *SyncthingTransport) PropagatesSynchronously() bool { return false }
