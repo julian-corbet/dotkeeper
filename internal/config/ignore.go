@@ -65,6 +65,17 @@ var DefaultSyncIgnorePatterns = []string{
 	".angular",
 	".sass-cache",
 
+	// AI-agent ephemera. Claude Code creates `.claude/worktrees/` for
+	// transient agent sandboxes — each one is a nested `git worktree`
+	// (so it contains a `.git` pointer file and may contain other
+	// already-ignored content). Without this entry Syncthing tries to
+	// replicate the worktree across peers, then perpetually flaps on
+	// "delete directory contains ignored files" warnings every time
+	// an agent finishes and the worktree is cleaned up locally.
+	// Anchored path pattern — `.claude/agents`, `.claude/hooks`, and
+	// `.claude/settings.json` stay synced.
+	".claude/worktrees",
+
 	// Language-server and tooling caches (plain strings).
 	".pytest_cache",
 	".mypy_cache",
