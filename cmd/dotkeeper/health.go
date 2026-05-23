@@ -349,50 +349,61 @@ func writeHealthJSON(w io.Writer, r *HealthReport) error {
 	return enc.Encode(r)
 }
 
+// hp wraps an io.Writer in helpers that drop the return values
+// from Fprintf/Fprintln. errcheck (configured in CI) flags every
+// unchecked fmt.Fprint*; routing all health-text output through
+// hp keeps the body readable instead of riddled with `_, _ =`.
+// Write errors on stdout/stderr are not recoverable anyway.
+type hp struct{ w io.Writer }
+
+func (p hp) Ln(s string)                          { _, _ = fmt.Fprintln(p.w, s) }
+func (p hp) F(format string, args ...interface{}) { _, _ = fmt.Fprintf(p.w, format, args...) }
+
 func writeHealthText(w io.Writer, r *HealthReport) {
-	fmt.Fprintln(w, "=== Machine ===")
+	p := hp{w}
+	p.Ln("=== Machine ===")
 	if r.Machine.Name == "" {
-		fmt.Fprintln(w, "  Not initialised (run 'dotkeeper init')")
+		p.Ln("  Not initialised (run 'dotkeeper init')")
 	} else {
-		fmt.Fprintf(w, "  Name: %s\n", r.Machine.Name)
-		fmt.Fprintf(w, "  Slot: %d\n", r.Machine.Slot)
+		p.F("  Name: %s\n", r.Machine.Name)
+		p.F("  Slot: %d\n", r.Machine.Slot)
 	}
 
-	fmt.Fprintf(w, "\n=== Repos (%d tracked) ===\n", r.Repos.Total)
-	fmt.Fprintf(w, "  Fresh (<24h):      %d\n", r.Repos.FreshLast24h)
-	fmt.Fprintf(w, "  Stale (1-7d):      %d\n", r.Repos.StaleOneToSeven)
-	fmt.Fprintf(w, "  Very stale (>7d):  %d\n", r.Repos.StaleOverSeven)
+	p.F("\n=== Repos (%d tracked) ===\n", r.Repos.Total)
+	p.F("  Fresh (<24h):      %d\n", r.Repos.FreshLast24h)
+	p.F("  Stale (1-7d):      %d\n", r.Repos.StaleOneToSeven)
+	p.F("  Very stale (>7d):  %d\n", r.Repos.StaleOverSeven)
 	if r.Repos.NeverBackedUp > 0 {
-		fmt.Fprintf(w, "  Never backed up:   %d\n", r.Repos.NeverBackedUp)
+		p.F("  Never backed up:   %d\n", r.Repos.NeverBackedUp)
 	}
 	if len(r.Repos.OldestBackup) > 0 {
-		fmt.Fprintln(w, "  Oldest backups:")
+		p.Ln("  Oldest backups:")
 		for _, row := range r.Repos.OldestBackup {
-			fmt.Fprintf(w, "    %s  (%s ago)\n", row.Path, durationHuman(time.Duration(row.AgeS)*time.Second))
+			p.F("    %s  (%s ago)\n", row.Path, durationHuman(time.Duration(row.AgeS)*time.Second))
 		}
 	}
 
-	fmt.Fprintf(w, "\n=== Peers (%d known) ===\n", r.Peers.Known)
-	for _, p := range r.Peers.LastSeen {
-		if p.Since.IsZero() {
-			fmt.Fprintf(w, "  %s  (never seen)\n", p.Name)
+	p.F("\n=== Peers (%d known) ===\n", r.Peers.Known)
+	for _, peer := range r.Peers.LastSeen {
+		if peer.Since.IsZero() {
+			p.F("  %s  (never seen)\n", peer.Name)
 			continue
 		}
-		fmt.Fprintf(w, "  %s  (last seen %s ago)\n", p.Name, durationHuman(time.Duration(p.AgeS)*time.Second))
+		p.F("  %s  (last seen %s ago)\n", peer.Name, durationHuman(time.Duration(peer.AgeS)*time.Second))
 	}
 
 	if r.RecentActivity != nil {
-		fmt.Fprintln(w, "\n=== Recent activity (last 24h, log tail) ===")
-		fmt.Fprintf(w, "  Conflicts auto-resolved: %d\n", r.RecentActivity.ConflictResolved)
-		fmt.Fprintf(w, "  Push failures:           %d\n", r.RecentActivity.PushFailures)
-		fmt.Fprintf(w, "  Errors in log:           %d\n", r.RecentActivity.ErrorCount)
-		fmt.Fprintf(w, "  Warnings in log:         %d\n", r.RecentActivity.WarnCount)
+		p.Ln("\n=== Recent activity (last 24h, log tail) ===")
+		p.F("  Conflicts auto-resolved: %d\n", r.RecentActivity.ConflictResolved)
+		p.F("  Push failures:           %d\n", r.RecentActivity.PushFailures)
+		p.F("  Errors in log:           %d\n", r.RecentActivity.ErrorCount)
+		p.F("  Warnings in log:         %d\n", r.RecentActivity.WarnCount)
 	}
 
 	if r.degraded() {
-		fmt.Fprintln(w, "\n[dotkeeper] degraded — see above")
+		p.Ln("\n[dotkeeper] degraded — see above")
 	} else {
-		fmt.Fprintln(w, "\n[dotkeeper] healthy")
+		p.Ln("\n[dotkeeper] healthy")
 	}
 }
 
