@@ -308,7 +308,15 @@ func (g *GitSSHTransport) remoteName(peer Peer) string {
 // config (the standard, less surprising default).
 func (g *GitSSHTransport) remoteURL(addr string, peer Peer, folder Folder) string {
 	host := addr
-	if strings.Contains(addr, ":") && !strings.HasPrefix(addr, "[") {
+	// Only IPv6 literals need RFC 3986 brackets — they always
+	// contain at least two colons (the address itself, e.g.
+	// `fe80::1` or `2001:db8::42`). A single-colon address is a
+	// `host:port` shape where bracketing would corrupt the
+	// authority and SSH would fail to resolve. The current
+	// resolvers (Tailscale) never produce a port, but a future
+	// static-config resolver might, and silently mis-bracketing
+	// would be a debugging nightmare.
+	if strings.Count(addr, ":") >= 2 && !strings.HasPrefix(addr, "[") {
 		host = "[" + addr + "]"
 	}
 	if peer.User != "" {

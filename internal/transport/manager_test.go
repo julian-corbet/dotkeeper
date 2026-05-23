@@ -238,6 +238,31 @@ func TestRecordTransferIsolatedPerTransportAndPeer(t *testing.T) {
 	}
 }
 
+// TestRecordTransferAcceptsUnknownTransportName pins that the
+// Manager doesn't panic when RecordTransfer is called for a
+// transport name that wasn't registered at construction. The
+// realistic scenario: a propagator built on top of a Manager
+// passes through a name from an external source (config, CLI
+// arg). The current contract is "create a model on first use with
+// the DefaultPriorFor fallback so the observation is absorbed
+// rather than dropped." Future refactors that tighten this (e.g.
+// reject unknown names) need an explicit decision and an updated
+// test.
+func TestRecordTransferAcceptsUnknownTransportName(t *testing.T) {
+	m := NewManager([]Transport{
+		&fakeTransport{name: "t1", available: true, probeLatency: 5 * time.Millisecond},
+	})
+
+	// Record under a name that was never registered. Must not
+	// panic and must absorb the observation under a fresh model.
+	m.RecordTransfer("never-registered", "peer-a", 1024, 1*time.Second)
+
+	_, _, n := m.ModelParametersFor("never-registered", "peer-a")
+	if n == 0 {
+		t.Error("RecordTransfer with unknown transport name silently dropped the observation; effective-sample count = 0")
+	}
+}
+
 func TestDiscoverConcurrencySafe(t *testing.T) {
 	// Stress test: many goroutines calling Discover for the same
 	// peer simultaneously must not panic, race, or corrupt state.

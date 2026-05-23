@@ -278,7 +278,7 @@ func TestPropagateChangeUsesHeadWhenCommitHashEmpty(t *testing.T) {
 
 func TestPropagateChangeSurfacesPushError(t *testing.T) {
 	runner := &stubRunner{respond: func(_ string, _ []string) ([]byte, error) {
-		return []byte("remote: fatal: repository '/home/richc/.local/share/dotkeeper/repos/dk-x.git' not found\n"),
+		return []byte("remote: fatal: repository '/srv/example/repos/dk-x.git' not found\n"),
 			errors.New("exit status 128")
 	}}
 	tr := newTestGitSSH(runner, &stubResolver{
@@ -323,7 +323,7 @@ func TestRemoteURLBracketsIPv6(t *testing.T) {
 	}{
 		// IPv4 stays as-is.
 		{"100.64.0.5", "", "ssh://100.64.0.5/repo"},
-		{"100.64.0.5", "richc", "ssh://richc@100.64.0.5/repo"},
+		{"100.64.0.5", "alice", "ssh://alice@100.64.0.5/repo"},
 		// IPv6 must be bracketed per RFC 3986. Without brackets,
 		// the URL parser would treat the embedded colons as
 		// host:port separators and the path would lose its
@@ -331,10 +331,17 @@ func TestRemoteURLBracketsIPv6(t *testing.T) {
 		// running IPv6-only mesh setups would see "ssh: Could
 		// not resolve hostname fe80" failures.
 		{"fe80::1", "", "ssh://[fe80::1]/repo"},
-		{"fe80::1", "richc", "ssh://richc@[fe80::1]/repo"},
+		{"fe80::1", "alice", "ssh://alice@[fe80::1]/repo"},
 		{"fd7a:115c:a1e0::1", "", "ssh://[fd7a:115c:a1e0::1]/repo"},
 		// Already-bracketed addresses must not be re-bracketed.
 		{"[fe80::1]", "", "ssh://[fe80::1]/repo"},
+		// host:port shape (one colon) must NOT be bracketed — that
+		// would produce ssh://[host:port]/path which SSH treats as
+		// an unresolvable IPv6 literal. A future static-config
+		// resolver might emit host:port; this case guards against
+		// the previous over-eager bracketing rule.
+		{"example.com:2222", "", "ssh://example.com:2222/repo"},
+		{"example.com:2222", "alice", "ssh://alice@example.com:2222/repo"},
 	}
 	for _, c := range cases {
 		got := tr.remoteURL(c.addr, Peer{Name: "p", User: c.user}, Folder{ID: "x", Path: "/repo"})
@@ -351,15 +358,15 @@ func TestRemoteURL(t *testing.T) {
 	// updates the working tree.
 	tr := newTestGitSSH(&stubRunner{}, &stubResolver{name: "tailscale"})
 	got := tr.remoteURL("100.64.0.5", Peer{Name: "laptop"},
-		Folder{ID: "dk-x", Path: "/home/richc/Documents/GitHub/dotkeeper"})
-	want := "ssh://100.64.0.5/home/richc/Documents/GitHub/dotkeeper"
+		Folder{ID: "dk-x", Path: "/srv/example/repo"})
+	want := "ssh://100.64.0.5/srv/example/repo"
 	if got != want {
 		t.Errorf("remoteURL = %q, want %q", got, want)
 	}
 	// With explicit user.
-	got = tr.remoteURL("100.64.0.5", Peer{Name: "laptop", User: "richc"},
-		Folder{ID: "dk-x", Path: "/home/richc/Documents/GitHub/dotkeeper"})
-	want = "ssh://richc@100.64.0.5/home/richc/Documents/GitHub/dotkeeper"
+	got = tr.remoteURL("100.64.0.5", Peer{Name: "laptop", User: "alice"},
+		Folder{ID: "dk-x", Path: "/srv/example/repo"})
+	want = "ssh://alice@100.64.0.5/srv/example/repo"
 	if got != want {
 		t.Errorf("remoteURL with user = %q, want %q", got, want)
 	}
