@@ -7,6 +7,53 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-05-23
+
+Second patch on release day. Two latent bugs surfaced during v1.0.1
+operation; both now fixed with regression tests, plus
+release-process documentation.
+
+### Fixed
+
+- **Stale-peer auto-revert in the conflict resolver.** When a
+  Syncthing sync-conflict file represents an older version of a
+  file from a peer that hasn't caught up yet, and the local file
+  is unchanged from HEAD, `git merge-file ours base theirs`
+  trivially treats `theirs` as a clean merge and silently
+  overwrites the canonical local content with the stale version,
+  committing the revert as `auto: resolve sync conflict in <file>`.
+  Symptom in the wild: during a multi-file release a not-yet-
+  caught-up peer briefly came online and produced a sync-conflict
+  per touched file; the resolver auto-merged every one and the
+  local tree ended up with a long string of revert commits.
+  Safeguard: when `ours == base`, return `ActionKeep` without
+  merging. Pinned by
+  `TestResolveTextMergeKeepsWhenLocalMatchesHEAD`.
+
+- **`daemonPropagator` peer and folder staleness.** Peers added to
+  `machine.toml` and folders added via `dotkeeper track` after the
+  daemon started were silently ignored by the propagator until
+  restart — `Syncthing` still carried changes via BEP gossip, but
+  the `git push` path never fired. Replaced the captured snapshots
+  with `peersSource` / `foldersSource` callbacks queried fresh on
+  every `PropagateNewCommit`. Pinned by
+  `TestDaemonPropagatorPicksUpPeerAddedAfterConstruction` and
+  `TestDaemonPropagatorPicksUpFolderAddedAfterConstruction`.
+
+### Added
+
+- **CONTRIBUTING.md "Release process" section** documenting the
+  pre-release checklist (CI green, CHANGELOG, SECURITY.md table),
+  the annotated-tag command, what each downstream workflow (AUR,
+  Homebrew, Docker) produces, and the post-release verification
+  steps.
+
+- **`TestDiscoverWithCancelledContextStillCompletes`** pins the
+  suspend-then-resume race: `Manager.Discover` called with a
+  pre-cancelled context must return promptly and leave the routes
+  table well-formed so the next live-context call can repopulate
+  cleanly.
+
 ## [1.0.1] - 2026-05-23
 
 Patch release. Four production bugs surfaced in the v1.0.0 multi-transport
