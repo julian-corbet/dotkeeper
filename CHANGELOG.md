@@ -7,6 +7,36 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.3] - 2026-05-23
+
+Third patch on release day. Tightens info-leak hygiene and
+stabilises the fuzz smoke harness.
+
+### Changed
+
+- **AUR committer identity scrubbed.** `.github/workflows/aur.yml`
+  switches the `git config user.email` and both PKGBUILD
+  `# Maintainer:` lines from `admin+aur@sys.corbet.ch` (a routing
+  alias on private infrastructure) to
+  `julian-corbet@users.noreply.github.com` (the canonical GitHub
+  identity for automated commits). Functionally equivalent; the
+  noreply form discloses less about the maintainer's
+  infrastructure to readers of public workflow logs and published
+  PKGBUILDs.
+
+### Fixed
+
+- **`FuzzMachineConfigV2RoundTrip` stalled CI smoke**. Without an
+  input-size bound the fuzzer eventually generated multi-MB
+  `name` strings whose TOML round-trip dominated the per-target
+  20s smoke deadline. Without intra-process serialisation of the
+  `t.Setenv("XDG_CONFIG_HOME", …)` call, the GOMAXPROCS goroutines
+  in a single fuzz worker raced on the process-global env var and
+  could end up doing file I/O under each other's tmp directories.
+  Bounded `name` to 4096 bytes (well above any realistic machine
+  name) and serialised the env-mutating section with a process-
+  local mutex; cross-process parallelism is preserved.
+
 ## [1.0.2] - 2026-05-23
 
 Second patch on release day. Two latent bugs surfaced during v1.0.1
