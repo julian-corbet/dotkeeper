@@ -324,6 +324,37 @@ func TestDaemonPropagatorPicksUpFolderAddedAfterConstruction(t *testing.T) {
 	}
 }
 
+// TestDaemonPropagatorSeesSimultaneousPeerAndFolderAdds — both
+// peer and folder added after construction must be visible on
+// the next PropagateNewCommit. Belt-and-braces on the freshness
+// pins: even if one source callback fires before the other in
+// real-world timing, the propagator picks up both.
+func TestDaemonPropagatorSeesSimultaneousPeerAndFolderAdds(t *testing.T) {
+	tr := &recordingTransport{name: "stub"}
+	mgr := transport.NewManager([]transport.Transport{tr})
+
+	var peers []transport.Peer
+	folders := make(map[string]transport.Folder)
+	prop := newDaemonPropagatorWithSources(mgr,
+		func() []transport.Peer { return peers },
+		func() map[string]transport.Folder { return folders },
+		quietLogger())
+
+	// Add both at once, post-construction.
+	later := transport.Peer{Name: "joiner"}
+	mgr.Discover(context.Background(), later)
+	peers = []transport.Peer{later}
+	folders["/p"] = transport.Folder{ID: "x", Path: "/p"}
+
+	prop.PropagateNewCommit(context.Background(), "/p")
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	if len(tr.recordedPeers) != 1 || tr.recordedPeers[0] != "joiner" {
+		t.Errorf("expected push to joiner with new folder; recordedPeers=%v", tr.recordedPeers)
+	}
+}
+
 // --- estimateLastCommitSize tests ---
 
 func setupTestRepo(t *testing.T) string {

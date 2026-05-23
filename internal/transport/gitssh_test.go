@@ -410,6 +410,46 @@ func TestPropagateChangeSurfacesPushError(t *testing.T) {
 	}
 }
 
+// TestRemovePeerReachabilityIsIdempotentOnUnknownRemote — calling
+// Remove against a remote that doesn't exist must succeed
+// silently. The contract is "post-condition: this remote does
+// not exist," which is already-true for an unknown remote.
+func TestRemovePeerReachabilityIsIdempotentOnUnknownRemote(t *testing.T) {
+	runner := &stubRunner{respond: func(_ string, _ []string) ([]byte, error) {
+		return []byte("error: No such remote 'dk+tailscale+ghost'\n"),
+			errors.New("exit status 128")
+	}}
+	tr := newTestGitSSH(runner, &stubResolver{name: "tailscale", available: true})
+
+	err := tr.RemovePeerReachability(context.Background(),
+		Folder{ID: "dk-x", Path: "/tmp/repo"}, Peer{Name: "ghost"})
+	if err != nil {
+		t.Errorf("RemovePeerReachability for unknown remote should be a no-op success; got %v", err)
+	}
+}
+
+// TestRemovePeerReachabilitySurfacesUnrelatedErrors — when
+// `git remote remove` fails for a reason other than "no such
+// remote" (e.g. not-a-repo, permission denied), the error must
+// propagate. Hiding it would mask config drift the operator
+// needs to fix.
+func TestRemovePeerReachabilitySurfacesUnrelatedErrors(t *testing.T) {
+	runner := &stubRunner{respond: func(_ string, _ []string) ([]byte, error) {
+		return []byte("fatal: not a git repository (or any of the parent directories): .git\n"),
+			errors.New("exit status 128")
+	}}
+	tr := newTestGitSSH(runner, &stubResolver{name: "tailscale", available: true})
+
+	err := tr.RemovePeerReachability(context.Background(),
+		Folder{ID: "dk-x", Path: "/tmp/not-a-repo"}, Peer{Name: "laptop"})
+	if err == nil {
+		t.Fatal("expected unrelated git error to propagate")
+	}
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Errorf("error should surface git's verbatim message; got %v", err)
+	}
+}
+
 func TestRemotePeerName(t *testing.T) {
 	tr := newTestGitSSH(&stubRunner{}, &stubResolver{name: "tailscale"})
 	// Name sanitisation: spaces become hyphens, alphanumerics
