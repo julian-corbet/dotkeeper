@@ -151,6 +151,31 @@ func ResolveTextMerge(ctx context.Context, c Conflict, repoRoot string) (Action,
 		return ActionKeep, fmt.Errorf("read conflict %s: %w", c.Path, err)
 	}
 
+	// 3a. Safeguard: if `ours == base` (local file matches the HEAD
+	// blob exactly), there is no local edit to merge `theirs` into.
+	// `git merge-file ours base theirs` in this state would
+	// trivially apply `theirs` as a clean merge, even when `theirs`
+	// is a stale older version of the file from a peer that hadn't
+	// pulled the latest commits yet. That auto-reverts work that
+	// already landed in git history.
+	//
+	// The historical incident: during a release that touched ~20
+	// files, a peer holding pre-release content briefly came online
+	// before catching up. Syncthing produced sync-conflict files of
+	// each pre-release version against the just-merged local; the
+	// resolver merged them and committed a long string of
+	// `auto: resolve sync conflict in X` reverts that effectively
+	// undid the entire release locally.
+	//
+	// Conservative response: keep both files in place and let the
+	// user resolve manually. Catches the dangerous case (stale peer
+	// shadowing landed work) at the cost of requiring manual
+	// intervention for the rare legitimate case (peer landed a new
+	// edit while local was exactly at HEAD).
+	if bytes.Equal(localData, ancestor) {
+		return ActionKeep, nil
+	}
+
 	tmpDir, err := os.MkdirTemp("", "dotkeeper-merge-")
 	if err != nil {
 		return ActionKeep, fmt.Errorf("mkdir temp: %w", err)
