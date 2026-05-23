@@ -7,6 +7,31 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-05-24
+
+Same-day follow-up to v1.1.0: fixes a misleading "never seen"
+peer status in `dotkeeper health` and adds a property pin on the
+v1.0.2 conflict-resolver safeguard.
+
+### Fixed
+
+- **`dotkeeper health` reported every peer as "never seen"** on
+  installs where the reconcile cycle hadn't populated
+  `state.LastSeenPeers`. The command now also queries
+  Syncthing's `/rest/system/connections`. Priority order is
+  live-observation > cached state > zero, so the timestamp
+  reflects current connectivity when the daemon is up and
+  falls back to whatever the cache has when the daemon is down.
+
+### Added
+
+- **`TestResolverNeverRevertsHistoricalContent`** —
+  property-style pin on the invariant the v1.0.2 stale-peer
+  safeguard exists to enforce: no auto-resolved commit may
+  contain content that already exists at an earlier commit in
+  the file's history. 30 random {history, theirs} iterations
+  per run, fixed PRNG seed so failures are reproducible.
+
 ## [1.1.0] - 2026-05-24
 
 Minor release: new operational-health CLI command, hardened CI,
