@@ -297,6 +297,43 @@ func TestResolveTextMergeKeepsWhenLocalMatchesHEAD(t *testing.T) {
 	}
 }
 
+// TestResolveTextMergeConflictFileVanishedBetweenScanAndRead —
+// pins the symmetric "file missing under us" path for the
+// conflict side. Scanner discovers the sync-conflict file; before
+// the resolver reads it, Syncthing (or a user, or a parallel
+// cleanup) deletes it. The resolver must surface the read error
+// to the caller for logging rather than panic or corrupt local
+// state.
+func TestResolveTextMergeConflictFileVanishedBetweenScanAndRead(t *testing.T) {
+	repo := gitInit(t, t.TempDir())
+	gitCommit(t, repo, "hello.txt", "base content\n", "initial")
+
+	// Make local diverge from HEAD so the ours==base safeguard
+	// doesn't short-circuit before we reach the conflict-file
+	// read.
+	local := filepath.Join(repo, "hello.txt")
+	if err := os.WriteFile(local, []byte("local edit\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := makeConflict(t, repo, "hello.txt")
+	// Deliberately do NOT write c.Path — simulates "scanner saw it,
+	// then it vanished" by leaving the file absent from disk.
+
+	got, err := ResolveTextMerge(testCtx(t), c, repo)
+	if err == nil {
+		t.Fatal("expected error when conflict file is missing on disk")
+	}
+	if got != ActionKeep {
+		t.Errorf("Action = %q, want %q when read fails", got, ActionKeep)
+	}
+	// Local file must not have been touched.
+	b, _ := os.ReadFile(local)
+	if string(b) != "local edit\n" {
+		t.Errorf("local was modified after read error: %q", b)
+	}
+}
+
 // TestResolveTextMergeBinaryKept — a file with a NUL in the first 8KB
 // must bypass the merge and return ActionKeep. Binary merge is out of
 // scope for Phase 2.
