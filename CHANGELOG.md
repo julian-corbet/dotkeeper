@@ -7,6 +7,27 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-05-24
+
+Same false-positive class as v1.1.4, this time for the
+`Errors in log` health signal.
+
+### Fixed
+
+- **Historical log errors no longer trigger degraded status.**
+  A `dotkeeper health` against a fleet whose log still contains
+  the `.claude/worktrees` pre-v1.0.1 entries was showing "Errors
+  in log: 337" and reporting degraded — even though those errors
+  were from before the underlying bugs were fixed. Same
+  signal-quality problem as the dormant-repo case: counting
+  historical events permanently marks a now-healthy daemon as
+  degraded and trains operators to ignore the command.
+  Split the error counting: `ErrorCount` stays the 24h total
+  (for display context), and a new `ErrorsLastHour` field is
+  the `degraded()` trigger. Text output shows
+  `Errors (24h / last 1h): N / M` so operators see both the
+  context and the actionable subset.
+
 ## [1.1.4] - 2026-05-24
 
 Fixes a false-positive degradation signal in `dotkeeper health`.
