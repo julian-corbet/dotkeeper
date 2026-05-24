@@ -139,16 +139,27 @@ func lower(pid int) {
 func LowerSelf() {
 	lower(0)
 
-	entries, err := os.ReadDir("/proc/self/task")
-	if err != nil {
-		return // best-effort
-	}
-	for _, e := range entries {
-		tid, err := strconv.Atoi(e.Name())
+	// Two passes. The Go runtime occasionally spawns a new OS thread
+	// (GC worker, sysmon, scavenger) between our ReadDir and the
+	// per-thread lower() call — the runtime's thread-creation site
+	// is on whichever M happens to need an extra thread, which is
+	// not guaranteed to be one we've already niced. A second pass
+	// catches any thread that appeared during the first; threads
+	// created during the second pass are vanishingly unlikely to
+	// stay alive long enough to matter, and the worst case is one
+	// short-lived runtime helper at the original niceness.
+	for pass := 0; pass < 2; pass++ {
+		entries, err := os.ReadDir("/proc/self/task")
 		if err != nil {
-			continue
+			return // best-effort
 		}
-		lower(tid)
+		for _, e := range entries {
+			tid, err := strconv.Atoi(e.Name())
+			if err != nil {
+				continue
+			}
+			lower(tid)
+		}
 	}
 }
 
