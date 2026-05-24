@@ -7,6 +7,25 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-05-24
+
+### Added
+
+- **`dotkeeper health` reports binary version + daemon PID/start
+  time.** The new "Daemon" section shows which version produced
+  the report and whether the `dotkeeper start` process is
+  currently running (with PID and uptime). Useful for:
+  - Correlating downstream alerts ("ErrorsLastHour=N from build
+    X started at Y") against specific shipped fixes — the
+    health command's signal interpretation has shifted across
+    recent releases.
+  - Distinguishing "daemon up but reporting issues" from
+    "daemon dead" without a separate `pgrep`.
+  JSON exposes `build` and `daemon-pid` / `daemon-started-at`
+  fields for tooling. Health renders "not running (no
+  `dotkeeper start` process found)" when no daemon is present —
+  the command must work during outages.
+
 ## [1.1.7] - 2026-05-24
 
 ### Added
