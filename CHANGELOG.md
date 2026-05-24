@@ -7,6 +7,28 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.17] - 2026-05-24
+
+### Performance
+
+- **Cap per-folder hasher count at 1.** Syncthing's upstream default
+  is `hashers: 0` which resolves to `min(GOMAXPROCS, 8)` — so a
+  30-folder cold start or wake-from-suspend can briefly pin 8
+  cores while every folder hashes its files in parallel. dotkeeper
+  is not latency-sensitive: an initial scan that takes 30 s
+  instead of 10 s is invisible; a 90% multi-core spike for 10 s
+  is exactly the "dotkeeper made my system feel slow" symptom we
+  exist to avoid. Setting `<hashers>1</hashers>` smears the same
+  total scan work across time without changing correctness, and
+  fsWatcher-driven realtime sync is unaffected because that path
+  doesn't touch hashers at all.
+
+  Mechanism mirrors the v0.9.7 `rescanIntervalS=0` migration:
+  `CanonicalHashers` constant + drift detector +
+  `UpdateSyncthingFolderSchedule` action. Upgrade-time migration
+  runs once per folder on the first reconcile, flipping older
+  installs from auto to 1 without operator action.
+
 ## [1.1.16] - 2026-05-24
 
 ### Performance

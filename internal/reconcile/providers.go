@@ -523,6 +523,15 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 			if fw, ok := fm["fsWatcherEnabled"].(bool); ok {
 				fsWatcherEnabled = fw
 			}
+			// hashers absent in older configs reads as 0, which is
+			// also Syncthing's "auto" sentinel. The drift detector
+			// distinguishes "explicitly auto" (= 0, would drift to
+			// CanonicalHashers=1) from "already canonical" so the
+			// migration to hashers=1 runs once per pre-tuning folder.
+			hashers := 0
+			if h, ok := fm["hashers"].(float64); ok {
+				hashers = int(h)
+			}
 			paused := false
 			if p, ok := fm["paused"].(bool); ok {
 				paused = p
@@ -535,6 +544,7 @@ func querySyncthing(q SyncthingQuerier) ([]FolderObs, []LivePeer, error) {
 				MarkerDirMissing:  folderMarkerMissing(folderPath, markerName),
 				RescanIntervalS:   rescanIntervalS,
 				FsWatcherEnabled:  fsWatcherEnabled,
+				Hashers:           hashers,
 				Paused:            paused,
 			})
 		}
