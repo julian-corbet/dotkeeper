@@ -150,7 +150,7 @@ func TestDaemonPropagatorRecordsObservationOnSuccess(t *testing.T) {
 	// Sample model parameters before propagation. After a successful
 	// push the model should have absorbed a real observation (n
 	// goes from 0 to ≥1).
-	_, _, nBefore := mgr.ModelParametersFor("stub", "a")
+	_, _, nBefore := mgr.ModelParametersFor("stub", "a", "")
 	if nBefore != 0 {
 		t.Fatalf("baseline effective-sample count should be 0, got %.2f", nBefore)
 	}
@@ -160,7 +160,7 @@ func TestDaemonPropagatorRecordsObservationOnSuccess(t *testing.T) {
 		[]transport.Folder{folder}, quietLogger())
 	prop.PropagateNewCommit(context.Background(), folder.Path)
 
-	_, _, nAfter := mgr.ModelParametersFor("stub", "a")
+	_, _, nAfter := mgr.ModelParametersFor("stub", "a", "")
 	if nAfter < 1 {
 		t.Errorf("propagator did not Record the transfer; effective-sample count = %.2f, want >= 1", nAfter)
 	}
@@ -195,7 +195,7 @@ func TestDaemonPropagatorSkipsRecordForAsyncTransport(t *testing.T) {
 		t.Errorf("expected 1 PropagateChange call, got %d", calls)
 	}
 
-	_, _, nAfter := mgr.ModelParametersFor("async-stub", "a")
+	_, _, nAfter := mgr.ModelParametersFor("async-stub", "a", "")
 	if nAfter != 0 {
 		t.Errorf("async transport poisoned cost model; effective-sample count = %.2f, want 0", nAfter)
 	}
@@ -214,7 +214,7 @@ func TestDaemonPropagatorSkipsRecordOnPushFailure(t *testing.T) {
 		[]transport.Folder{folder}, quietLogger())
 	prop.PropagateNewCommit(context.Background(), folder.Path)
 
-	_, _, nAfter := mgr.ModelParametersFor("stub", "a")
+	_, _, nAfter := mgr.ModelParametersFor("stub", "a", "")
 	if nAfter != 0 {
 		t.Errorf("failed push contributed to cost model; effective-sample count = %.2f, want 0", nAfter)
 	}
