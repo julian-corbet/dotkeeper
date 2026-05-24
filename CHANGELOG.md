@@ -7,6 +7,29 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.16] - 2026-05-24
+
+### Performance
+
+- **`Diff` no longer does O(N²) repo lookups.** The per-folder loop
+  used to call a linear `observedRepoByPath` scan once per folder,
+  so a 30-folder × 30-tracked-repo install paid 900 string-equality
+  checks per reconcile. Hoisted to a precomputed `map[path]RepoObs`
+  built once before the loop, dropping steady-state `Diff` from
+  ~205 µs/op to ~186 µs/op on the 30-repo / 5-peer fixture (Intel
+  Core Ultra 7 258V) — modest absolute cost today, but the saving
+  compounds with repo count. Behaviour is unchanged: the missing-
+  repo fallback (empty `RepoObs{Path: df.path}`) is preserved.
+
+### Added
+
+- **Reconcile benchmarks.** Four `BenchmarkDiff*` /
+  `BenchmarkBuildDesired30Repos` cover the per-tick hot paths
+  (steady-state, cold start, one-repo-changed, BuildDesired).
+  Budgets documented in the file header so future regressions
+  surface as test signal rather than mystery user reports about
+  the fan spinning up.
+
 ## [1.1.15] - 2026-05-24
 
 ### Added
