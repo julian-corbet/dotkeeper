@@ -903,6 +903,22 @@ var knownPatternExplanations = []struct {
 		substr:  "directory has been deleted on a remote device but contains ignored files",
 		explain: "A peer deleted a directory that this device still has ignored files in (e.g. .git inside a worktree). Pre-v1.0.1 this flapped on .claude/worktrees — if you're on v1.0.1+ and still seeing it for other paths, check your per-repo .stignore.",
 	},
+	{
+		substr:  "Folder is in error state",
+		explain: "Syncthing has marked the folder as broken and stopped syncing it. Usually triggered by an earlier per-file error that exhausted retries. Open the web UI for the folder's specific error, fix the cause (permissions, disk space, ignored-file conflicts), and click 'Override Changes' or restart the daemon to retry.",
+	},
+	{
+		substr:  "Error on folder",
+		explain: "Per-folder-level error from Syncthing's scanner or pull loop. Drill into the syncthing.log for the folder ID — usually means a specific file inside is unreadable, has unexpected permissions, or sits on a filesystem that's misreporting.",
+	},
+	{
+		substr:  "Failed initial scan",
+		explain: "Syncthing couldn't complete the first walk of a folder. Common causes: the folder root doesn't exist, lacks read permission, or sits on a filesystem with broken Stat (some FUSE mounts). Check `dotkeeper status` to confirm the folder path is what you expect.",
+	},
+	{
+		substr:  "Failed to exchange Hello messages",
+		explain: "TLS handshake or BEP-protocol setup with a peer failed. Transient causes (network blip during handshake) resolve themselves; persistent cases indicate clock skew (>15 min), a peer running an incompatible Syncthing major version, or MITM interference. Run `chronyd`/`timedatectl` on both ends to rule out clock skew.",
+	},
 }
 
 // writeHealthExplanations prints a one-line operator-facing
