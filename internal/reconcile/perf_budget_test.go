@@ -87,6 +87,15 @@ func TestPerfBudgets(t *testing.T) {
 	if testing.Short() {
 		t.Skip("perf budgets are skipped in -short mode")
 	}
+	if raceDetectorEnabled {
+		// The race detector adds 5–15× overhead. A budget tight
+		// enough to catch a 1.5× regression in normal builds would
+		// fail under -race; a budget loose enough to pass under
+		// -race would miss the regressions we exist to catch. The
+		// dedicated non-race CI step ('go test -run TestPerf ...')
+		// runs this gate; the standard race-enabled step skips it.
+		t.Skip("perf budgets are calibrated for non-race builds")
+	}
 	for _, b := range perfBudgets {
 		t.Run(b.name, func(t *testing.T) {
 			res := testing.Benchmark(b.fn)
