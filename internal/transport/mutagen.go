@@ -292,4 +292,3 @@ func (m *MutagenTransport) remoteFolderPath(folder Folder) string {
 	}
 	return folder.Path
 }
-
