@@ -318,6 +318,19 @@ const (
 	CanonicalRescanIntervalS  = 0
 	CanonicalFsWatcherEnabled = true
 	CanonicalFsWatcherDelayS  = 1
+	// CanonicalHashers caps the per-folder hasher goroutine count
+	// at 1. Syncthing's upstream default (0 = min(GOMAXPROCS, 8))
+	// makes scans finish faster but produces a multi-core CPU spike
+	// every time fsWatcher triggers a per-file rescan or the daemon
+	// cold-starts and scans every folder at once. On a 30-folder
+	// install that briefly pins 8 cores; even though steady-state
+	// CPU is ~0%, the wake-from-suspend and cold-start spikes are
+	// what users actually perceive as "dotkeeper made my system
+	// feel slow." With hashers=1 the work spreads — same total CPU
+	// time, no peak. dotkeeper isn't latency-sensitive: a 30-folder
+	// initial scan that takes 30 s instead of 10 s is invisible to
+	// the developer; a 90% one-core spike for 10 s is not.
+	CanonicalHashers = 1
 )
 
 // AddOrUpdateFolder adds or updates a shared folder.
@@ -363,6 +376,7 @@ func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 		"rescanIntervalS":  CanonicalRescanIntervalS,
 		"fsWatcherEnabled": CanonicalFsWatcherEnabled,
 		"fsWatcherDelayS":  CanonicalFsWatcherDelayS,
+		"hashers":          CanonicalHashers,
 		"ignorePerms":      false,
 		"autoNormalize":    true,
 		"markerName":       FolderMarkerName,
@@ -387,6 +401,7 @@ func (c *Client) AddOrUpdateFolder(id, label, path string, deviceIDs []string) e
 			fm["rescanIntervalS"] = CanonicalRescanIntervalS
 			fm["fsWatcherEnabled"] = CanonicalFsWatcherEnabled
 			fm["fsWatcherDelayS"] = CanonicalFsWatcherDelayS
+			fm["hashers"] = CanonicalHashers
 			folders[i] = fm
 			found = true
 			break
@@ -531,6 +546,7 @@ func (c *Client) UpdateFolderSchedule(folderID string) error {
 			fm["rescanIntervalS"] = CanonicalRescanIntervalS
 			fm["fsWatcherEnabled"] = CanonicalFsWatcherEnabled
 			fm["fsWatcherDelayS"] = CanonicalFsWatcherDelayS
+			fm["hashers"] = CanonicalHashers
 			folders[i] = fm
 			found = true
 			break

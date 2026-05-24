@@ -125,6 +125,7 @@ func TestDiff(t *testing.T) {
 						Devices:           []string{"DEVICE-A"}, // missing DEVICE-B
 						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+						Hashers:           stclient.CanonicalHashers,
 					},
 				},
 				TrackedRepos: []RepoObs{
@@ -163,6 +164,7 @@ func TestDiff(t *testing.T) {
 						Devices:           []string{"DEVICE-A"},
 						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+						Hashers:           stclient.CanonicalHashers,
 					},
 				},
 				TrackedRepos: []RepoObs{
@@ -195,6 +197,7 @@ func TestDiff(t *testing.T) {
 						Devices:           []string{"DEVICE-A"},
 						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+						Hashers:           stclient.CanonicalHashers,
 					},
 				},
 				TrackedRepos: []RepoObs{{Path: "/repo"}},
@@ -235,6 +238,7 @@ func TestDiff(t *testing.T) {
 						MarkerDirMissing:  true,
 						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+						Hashers:           stclient.CanonicalHashers,
 					},
 				},
 				TrackedRepos: []RepoObs{
@@ -269,6 +273,7 @@ func TestDiff(t *testing.T) {
 						Devices:           []string{"X", "Y"},
 						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+						Hashers:           stclient.CanonicalHashers,
 					},
 				},
 				TrackedRepos: []RepoObs{
@@ -828,6 +833,7 @@ func TestDiffSmartRescan(t *testing.T) {
 					Devices:           []string{"DEV-A"},
 					RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 					FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+					Hashers:           stclient.CanonicalHashers,
 					Paused:            paused,
 				},
 			},
@@ -929,6 +935,7 @@ func TestDiffSmartRescan(t *testing.T) {
 						Devices:           []string{"DEV-A"},
 						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+						Hashers:           stclient.CanonicalHashers,
 					},
 				},
 				TrackedRepos: []RepoObs{
@@ -953,6 +960,7 @@ func TestDiffSmartRescan(t *testing.T) {
 						Devices:           []string{"DEV-A"},
 						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+						Hashers:           stclient.CanonicalHashers,
 					},
 				},
 				TrackedRepos: []RepoObs{
@@ -1013,6 +1021,7 @@ func TestDiffAutoPause(t *testing.T) {
 					Devices:           []string{"DEV-A"},
 					RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 					FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+					Hashers:           stclient.CanonicalHashers,
 					Paused:            paused,
 				},
 			},
@@ -1071,6 +1080,7 @@ func TestDiffAutoPause(t *testing.T) {
 						Devices:           []string{"DEV-A"},
 						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+						Hashers:           stclient.CanonicalHashers,
 					},
 				},
 				TrackedRepos: []RepoObs{
@@ -1091,6 +1101,7 @@ func TestDiffAutoPause(t *testing.T) {
 						Devices:           []string{"DEV-A"},
 						RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 						FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+						Hashers:           stclient.CanonicalHashers,
 						Paused:            false,
 					},
 				},
@@ -1152,6 +1163,7 @@ func TestDiffEmitsUpdateScheduleOnDrift(t *testing.T) {
 				Devices:           []string{"DEV-A"},
 				RescanIntervalS:   stclient.CanonicalRescanIntervalS,
 				FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+				Hashers:           stclient.CanonicalHashers,
 			},
 			want: false,
 		},
@@ -1189,6 +1201,7 @@ func TestDiffEmitsUpdateScheduleOnDrift(t *testing.T) {
 				Devices:           []string{"DEV-A"},
 				RescanIntervalS:   0,
 				FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+				Hashers:           stclient.CanonicalHashers,
 			},
 			want: false,
 		},
@@ -1204,6 +1217,36 @@ func TestDiffEmitsUpdateScheduleOnDrift(t *testing.T) {
 				Devices:           []string{"DEV-A"},
 				RescanIntervalS:   86400,
 				FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+				Hashers:           stclient.CanonicalHashers,
+			},
+			want: true,
+		},
+		{
+			// v1.1.17: hashers=0 (Syncthing's auto = min(GOMAXPROCS,
+			// 8)) is now drift relative to canonical=1. Migrates
+			// pre-v1.1.17 folders away from the multi-core scan
+			// spike that the auto-default produces on cold start /
+			// wake-from-suspend.
+			name: "hashers=0 (pre-v1.1.17 auto) — emit",
+			obs: FolderObs{
+				SyncthingFolderID: "dk-x",
+				Path:              "/x",
+				Devices:           []string{"DEV-A"},
+				RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+				FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+				Hashers:           0,
+			},
+			want: true,
+		},
+		{
+			name: "hashers=8 (explicit operator override is still drift) — emit",
+			obs: FolderObs{
+				SyncthingFolderID: "dk-x",
+				Path:              "/x",
+				Devices:           []string{"DEV-A"},
+				RescanIntervalS:   stclient.CanonicalRescanIntervalS,
+				FsWatcherEnabled:  stclient.CanonicalFsWatcherEnabled,
+				Hashers:           8,
 			},
 			want: true,
 		},
