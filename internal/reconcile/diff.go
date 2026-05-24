@@ -441,5 +441,8 @@ func folderScheduleDrifted(obs FolderObs) bool {
 	if obs.FsWatcherEnabled != stclient.CanonicalFsWatcherEnabled {
 		return true
 	}
+	if obs.Hashers != stclient.CanonicalHashers {
+		return true
+	}
 	return false
 }

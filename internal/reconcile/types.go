@@ -291,6 +291,15 @@ type FolderObs struct {
 	// Part of the same scheduler-drift check as RescanIntervalS.
 	FsWatcherEnabled bool
 
+	// Hashers mirrors the folder's `hashers` field (the number of
+	// parallel hash workers Syncthing spawns during a scan). 0
+	// means "auto = min(GOMAXPROCS, 8)" — the upstream default and
+	// the pre-dotkeeper-tuning behaviour. dotkeeper sets this to 1
+	// canonically to cap the peak CPU spike during cold-start /
+	// wake-from-suspend rescans, where 30 folders cold-scanning
+	// simultaneously would otherwise pin 8 cores briefly.
+	Hashers int
+
 	// Paused mirrors the folder's `paused` field. When true, Syncthing
 	// runs no scanner, no fsWatcher, and no BEP gossip for the folder.
 	// The auto-pause feature in v0.9.6 toggles this based on observed

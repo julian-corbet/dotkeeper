@@ -308,6 +308,14 @@ func TestAddOrUpdateFolder(t *testing.T) {
 	if got := folder["fsWatcherEnabled"]; got != CanonicalFsWatcherEnabled {
 		t.Errorf("fsWatcherEnabled = %v, want %v", got, CanonicalFsWatcherEnabled)
 	}
+	// hashers must match CanonicalHashers (1) so the scan CPU
+	// spike at cold start / wake-from-suspend stays bounded to one
+	// core per folder. Asserting against the constant rather than
+	// a literal keeps the test resilient if the canonical value
+	// evolves.
+	if got := folder["hashers"]; got != float64(CanonicalHashers) {
+		t.Errorf("hashers = %v, want %d", got, CanonicalHashers)
+	}
 }
 
 func TestGetConnections(t *testing.T) {
