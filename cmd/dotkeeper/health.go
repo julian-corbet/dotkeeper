@@ -188,6 +188,18 @@ type RecentActivity struct {
 	// degraded()-trigger subset. Old errors are kept in
 	// ErrorCount for display but don't fire alerts.
 	ErrorsLastHour int `json:"errors-last-hour"`
+	// TopWarningKinds lists the most-frequent warning message
+	// types in the 24h window, count-descending. Lets operators
+	// triage at-a-glance: 360 warnings dominated by ONE message
+	// kind is a different operational story than 360 distinct
+	// problems. Bounded to 5 entries to keep the output compact.
+	TopWarningKinds []WarningKind `json:"top-warning-kinds,omitempty"`
+}
+
+// WarningKind is one row of the top-warnings breakdown.
+type WarningKind struct {
+	Message string `json:"message"`
+	Count   int    `json:"count"`
 }
 
 // degraded reports whether any field crosses the "ping the
@@ -453,6 +465,7 @@ func scanRecentActivity(now time.Time) (*RecentActivity, error) {
 		WindowEnd:    now,
 		BytesScanned: int64(len(data)),
 	}
+	warningCounts := make(map[string]int)
 	for _, line := range strings.Split(string(data), "\n") {
 		if line == "" {
 			continue
@@ -475,6 +488,9 @@ func scanRecentActivity(now time.Time) (*RecentActivity, error) {
 			}
 		case isWarn:
 			act.WarnCount++
+			if msg := extractMsgField(line); msg != "" {
+				warningCounts[msg]++
+			}
 		}
 		if strings.Contains(line, "auto: resolve sync conflict") ||
 			strings.Contains(line, `msg="resolved conflict"`) {
@@ -484,7 +500,58 @@ func scanRecentActivity(now time.Time) (*RecentActivity, error) {
 			act.PushFailures++
 		}
 	}
+	act.TopWarningKinds = topNWarnings(warningCounts, 5)
 	return act, nil
+}
+
+// extractMsgField pulls the `msg="..."` payload out of a slog
+// TextHandler line. Returns empty on parse failure. We use the
+// raw message as the breakdown key — same kind of warning
+// always produces the same message text, so distinct-counts
+// reflect distinct operational concerns. Path/folder.id fields
+// after msg are intentionally NOT included in the key, so
+// "Failed to sync (folder-A)" and "Failed to sync (folder-B)"
+// group together as the same kind of warning.
+func extractMsgField(line string) string {
+	const marker = `msg="`
+	i := strings.Index(line, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := line[i+len(marker):]
+	// Find the closing quote. slog escapes embedded quotes as \",
+	// so a simple scan is good enough for the 99% case — anything
+	// pathological just truncates earlier than ideal.
+	for j := 0; j < len(rest); j++ {
+		if rest[j] == '"' && (j == 0 || rest[j-1] != '\\') {
+			return rest[:j]
+		}
+	}
+	return ""
+}
+
+// topNWarnings returns the top n warning kinds by count,
+// count-descending. Ties broken by message text for
+// determinism (matters for test assertions and stable JSON
+// output).
+func topNWarnings(counts map[string]int, n int) []WarningKind {
+	if len(counts) == 0 || n <= 0 {
+		return nil
+	}
+	out := make([]WarningKind, 0, len(counts))
+	for msg, c := range counts {
+		out = append(out, WarningKind{Message: msg, Count: c})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Message < out[j].Message
+	})
+	if len(out) > n {
+		out = out[:n]
+	}
+	return out
 }
 
 // extractSlogTimestamp parses the `time=<RFC3339>` prefix that
@@ -584,6 +651,20 @@ func writeHealthText(w io.Writer, r *HealthReport) {
 		p.F("  Errors (24h / last 1h):  %d / %d\n",
 			r.RecentActivity.ErrorCount, r.RecentActivity.ErrorsLastHour)
 		p.F("  Warnings in log:         %d\n", r.RecentActivity.WarnCount)
+		if len(r.RecentActivity.TopWarningKinds) > 0 {
+			p.Ln("    Top warning kinds:")
+			for _, w := range r.RecentActivity.TopWarningKinds {
+				// Truncate long Syncthing-internal messages so
+				// the output stays readable. Operators can
+				// always grep the log for the full text.
+				const maxLen = 70
+				msg := w.Message
+				if len(msg) > maxLen {
+					msg = msg[:maxLen-1] + "…"
+				}
+				p.F("      %5d  %s\n", w.Count, msg)
+			}
+		}
 	}
 
 	if r.degraded() {
