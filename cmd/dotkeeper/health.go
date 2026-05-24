@@ -143,10 +143,10 @@ func runHealthWatch(ctx context.Context, w io.Writer, interval time.Duration, re
 		// which routes through the JSON encoder; that path skips
 		// the clear at the render level).
 		if _, isJSON := w.(*jsonNoClearWriter); !isJSON {
-			fmt.Fprint(w, "\x1b[2J\x1b[H")
+			_, _ = fmt.Fprint(w, "\x1b[2J\x1b[H")
 		}
 		if _, err := render(); err != nil {
-			fmt.Fprintf(w, "[dotkeeper] health collection failed: %v\n", err)
+			_, _ = fmt.Fprintf(w, "[dotkeeper] health collection failed: %v\n", err)
 		}
 		select {
 		case <-ctx.Done():
