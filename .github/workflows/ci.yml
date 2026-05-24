@@ -65,9 +65,13 @@ jobs:
       - name: Perf-budget gate (non-race)
         # Hot-path benchmarks have ns/op budgets in
         # internal/reconcile/perf_budget_test.go. They skip themselves under
-        # -race because the detector adds 5–15× overhead; this step re-runs
-        # the same tests without -race so the gate actually fires. ~7s
-        # wall-clock, dominated by testing.Benchmark sampling.
+        # -race because the detector adds 5–15× overhead and under
+        # multi-package parallelism because contention doubles the
+        # measured ns/op. This step runs only the reconcile package with
+        # DK_PERF_GATE=1 set, so the gate has dedicated CPU and fires
+        # reliably. ~7s wall-clock, dominated by testing.Benchmark sampling.
+        env:
+          DK_PERF_GATE: "1"
         run: go test -tags noassets -run TestPerfBudgets ./internal/reconcile/
 
       - name: Vet

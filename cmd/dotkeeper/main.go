@@ -1119,6 +1119,15 @@ func buildTransportList() []transport.Transport {
 	ts := transport.NewTailscaleResolver()
 	if ts.Available() {
 		transports = append(transports, transport.NewGitSSHTransport(ts))
+		// Mutagen runs over the same SSH path as GitSSH; if the
+		// resolver is good, Mutagen tries to claim itself too. The
+		// transport's own Available() guards against `mutagen`
+		// missing on PATH, so this entry is a no-op on hosts
+		// without it.
+		mtg := transport.NewMutagenTransport(ts)
+		if mtg.Available() {
+			transports = append(transports, mtg)
+		}
 	}
 
 	// Syncthing always last. It's the universal fallback — every
