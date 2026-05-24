@@ -1849,6 +1849,7 @@ func transportCmd() *cobra.Command {
 	}
 	cmd.AddCommand(transportListCmd())
 	cmd.AddCommand(transportStatusCmd())
+	cmd.AddCommand(transportReposCmd())
 	return cmd
 }
 
@@ -1939,4 +1940,94 @@ func transportStatusCmd() *cobra.Command {
 			return w.Flush()
 		},
 	}
+}
+
+// transportReposCmd surfaces the per-(transport, peer, repo) state
+// of the cost model. `dotkeeper transport status` shows the
+// cross-repo aggregate — useful for "is this transport reachable
+// at all" questions — but the actual routing decision is made
+// per-repo, and the model can predict very different costs for
+// different folders (a tiny dotfile vs a GB asset folder differ
+// by orders of magnitude on the same transport).
+//
+// Output is intentionally dense: one row per (peer, transport,
+// repo) triple, so an operator can scan for "is Mutagen winning
+// my code repos but losing my asset repos?" at a glance.
+//
+// Probe is NOT re-run here — that's `transport status`'s job.
+// This command reads the cost model state as-of-now.
+func transportReposCmd() *cobra.Command {
+	var peerFilter string
+	var transportFilter string
+	cmd := &cobra.Command{
+		Use:   "repos",
+		Short: "Show per-(transport, peer, repo) cost-model predictions",
+		Long: "For each managed folder, prints the cost model's prediction\n" +
+			"per (transport, peer) pair. Useful for understanding what\n" +
+			"transport dotkeeper would route a change through and for\n" +
+			"spotting tuples where the model hasn't yet accumulated\n" +
+			"observations.\n\n" +
+			"Columns:\n" +
+			"  - PEER, TRANSPORT, REPO: the cost-model tuple\n" +
+			"  - PRED@1KB: predicted cost for a 1KB change (ms)\n" +
+			"  - PRED@1MB: predicted cost for a 1MB change (ms)\n" +
+			"  - N: effective observations behind the fit (>=20 = converged)\n\n" +
+			"Filter with --peer=NAME or --transport=NAME to narrow output.\n\n" +
+			"IMPORTANT — current limitation: cost-model observations live\n" +
+			"in the daemon's memory and are not (yet) persisted across\n" +
+			"processes. This CLI builds a fresh manager, so the\n" +
+			"predictions reflect the bootstrap priors, not the running\n" +
+			"daemon's learned state. To see what the daemon would actually\n" +
+			"pick, look at its INFO logs for `propagator: pushed` lines\n" +
+			"which include the chosen transport and observed elapsed.",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			machine, err := config.LoadMachineConfigV2()
+			if err != nil || machine == nil {
+				return fmt.Errorf("load machine config: %w", err)
+			}
+			folders := liveBenchmarkerFoldersSource()()
+			if len(folders) == 0 {
+				return fmt.Errorf("no managed folders")
+			}
+
+			mgr := transport.NewManager(transportSource())
+			ctx := cmd.Context()
+			// Discover all peers so reachability is fresh.
+			for _, p := range machine.Peers {
+				mgr.Discover(ctx, transport.Peer{Name: p.Name, DeviceID: p.DeviceID, Hostname: p.Name})
+			}
+
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			_, _ = fmt.Fprintln(w, "PEER\tTRANSPORT\tREPO\tPRED@1KB\tPRED@1MB\tN")
+			for _, p := range machine.Peers {
+				if peerFilter != "" && p.Name != peerFilter {
+					continue
+				}
+				routes, _ := mgr.RoutesFor(p.Name)
+				for _, t := range mgr.Transports() {
+					if transportFilter != "" && t.Name() != transportFilter {
+						continue
+					}
+					entry, ok := routes.Entries[t.Name()]
+					if !ok || !entry.Reachable {
+						continue
+					}
+					for _, folder := range folders {
+						setup, msPerByte, n := mgr.ModelParametersFor(t.Name(), p.Name, folder.ID)
+						pred1KB := setup + msPerByte*1024
+						pred1MB := setup + msPerByte*(1024*1024)
+						label := filepath.Base(folder.Path)
+						_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%.1fms\t%.0fms\t%.1f\n",
+							p.Name, t.Name(), label, pred1KB, pred1MB, n)
+					}
+				}
+			}
+			return w.Flush()
+		},
+	}
+	cmd.Flags().StringVar(&peerFilter, "peer", "",
+		"Show only this peer's predictions")
+	cmd.Flags().StringVar(&transportFilter, "transport", "",
+		"Show only this transport's predictions (use the full name like \"mutagen+tailscale\")")
+	return cmd
 }
