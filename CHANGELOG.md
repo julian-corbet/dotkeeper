@@ -7,6 +7,43 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.19] - 2026-05-24
+
+### Added
+
+- **`MutagenTransport`** — a fourth transport that propagates
+  folder changes via Mutagen sync sessions over SSH. Mutagen has
+  lower per-change overhead than Syncthing's BEP gossip on
+  small-file workloads when peers are SSH-reachable, because it
+  skips the index-database + block-hash dance. The transport is
+  detect-and-fallback: if the local `mutagen` CLI is not on PATH,
+  `Available()` returns false and the Manager picks another
+  transport. Zero operator opt-in needed.
+
+  `PropagatesSynchronously()` is true: `PropagateChange` invokes
+  `mutagen sync flush` and blocks until the session has applied
+  the queued change, so the cost model receives a real duration
+  signal (unlike Syncthing whose async BEP gossip returns in µs).
+
+  Sessions are created lazily by `EnsurePeerReachability` using a
+  deterministic name derived from `(folder.ID, peer.Name)`;
+  re-creation is idempotent (Mutagen's "session already exists"
+  error is treated as success).
+
+  Wired into the daemon's transport list when the Tailscale
+  resolver is available — same SSH path as `GitSSHTransport`.
+  This is the first piece of the Mutagen + auto-benchmark series;
+  per-repo cost-model keying and active benchmarking land in
+  follow-up PRs.
+
+### Changed
+
+- **Perf-budget gate now requires `DK_PERF_GATE=1`** to fire.
+  Concurrent multi-package `go test ./...` doubles per-test
+  ns/op due to system contention, causing false-positive
+  failures. The CI step still gates merges (it sets the env
+  var); bare local `go test ./...` skips with a clear message.
+
 ## [1.1.18] - 2026-05-24
 
 ### Added
