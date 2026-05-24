@@ -7,6 +7,25 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.12] - 2026-05-24
+
+### Added
+
+- **`dotkeeper health --explain` now covers four more warning
+  patterns observed in real-world logs.** Coverage was previously
+  biased toward push/conflict scenarios; production observation
+  surfaced folder-error and handshake failure modes that operators
+  were hitting with no guidance:
+    - `Folder is in error state` — what triggers the error state,
+      how to recover (fix root cause + Override Changes / restart).
+    - `Error on folder` — drill into the per-folder log, common
+      causes (unreadable file, bad permissions, misreporting FS).
+    - `Failed initial scan` — root doesn't exist, no read
+      permission, or broken Stat (some FUSE mounts).
+    - `Failed to exchange Hello messages` — TLS / BEP-protocol
+      setup failed; clock skew (>15 min) or incompatible
+      Syncthing major version are the persistent-case causes.
+
 ## [1.1.11] - 2026-05-24
 
 ### Added
