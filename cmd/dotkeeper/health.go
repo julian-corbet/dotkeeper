@@ -4,10 +4,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -111,14 +113,24 @@ type HealthReport struct {
 		Slot uint   `json:"slot"`
 	} `json:"machine"`
 	Repos struct {
-		Total            int             `json:"total"`
-		FreshLast24h     int             `json:"fresh-last-24h"`
-		StaleOneToSeven  int             `json:"stale-1-to-7-days"`
-		StaleOverSeven   int             `json:"stale-over-7-days"`
+		Total           int `json:"total"`
+		FreshLast24h    int `json:"fresh-last-24h"`
+		StaleOneToSeven int `json:"stale-1-to-7-days"`
+		StaleOverSeven  int `json:"stale-over-7-days"`
+		// Idle counts repos whose backup is "stale" by age but
+		// where git itself hasn't changed since the backup — i.e.
+		// the backup is correctly current, the repo just isn't
+		// being worked on. Separated from Stale* so health doesn't
+		// flag long-dormant projects as degraded.
+		Idle             int             `json:"idle"`
 		NeverBackedUp    int             `json:"never-backed-up"`
 		OldestBackup     []RepoBackupAge `json:"oldest-backups,omitempty"`
 		NeverBackedNames []string        `json:"never-backed-names,omitempty"`
-		_                struct{}        `json:"-"`
+		// LaggingBackups names repos where git activity is more
+		// recent than dotkeeper's last backup — the actually-bad
+		// case, distinct from idle.
+		LaggingBackups []RepoLaggingBackup `json:"lagging-backups,omitempty"`
+		_              struct{}            `json:"-"`
 	} `json:"repos"`
 	Peers struct {
 		Known    int            `json:"known"`
@@ -132,6 +144,17 @@ type RepoBackupAge struct {
 	Path  string    `json:"path"`
 	Since time.Time `json:"since"`
 	AgeS  float64   `json:"age-seconds"`
+}
+
+// RepoLaggingBackup is one row of the "lagging backups" table —
+// repos where the local git HEAD has activity newer than
+// dotkeeper's last recorded backup. These are the genuine
+// operational concerns (versus repos that are simply dormant).
+type RepoLaggingBackup struct {
+	Path       string    `json:"path"`
+	GitMTime   time.Time `json:"git-mtime"`
+	BackupAt   time.Time `json:"backup-at"`
+	LagSeconds float64   `json:"lag-seconds"`
 }
 
 // PeerLastSeen is one row of the peer last-seen table.
@@ -158,8 +181,16 @@ type RecentActivity struct {
 // degraded reports whether any field crosses the "ping the
 // operator" threshold. Used to set the exit code so a wrapping
 // systemd timer (or `dotkeeper health || mail-me`) can react.
+//
+// IMPORTANT: a repo is only degraded when git activity has
+// outpaced backup activity ("lagging"), not just because the
+// backup is old in absolute terms. A long-dormant project that
+// hasn't been touched in months should NOT trigger a degraded
+// status — there's nothing for dotkeeper to back up. The v1.1.3
+// version of this check confused operators by flagging archived
+// projects as failures; v1.1.4 corrects it.
 func (r *HealthReport) degraded() bool {
-	if r.Repos.StaleOverSeven > 0 || r.Repos.NeverBackedUp > 0 {
+	if len(r.Repos.LaggingBackups) > 0 || r.Repos.NeverBackedUp > 0 {
 		return true
 	}
 	if r.RecentActivity != nil {
@@ -168,6 +199,33 @@ func (r *HealthReport) degraded() bool {
 		}
 	}
 	return false
+}
+
+// gitMTimeProvider returns the timestamp of the most recent
+// commit on HEAD for the repo at path, or the zero time when the
+// path isn't a working tree or git fails. The default uses
+// `git log -1 --format=%ct`; tests inject a stub to avoid forking
+// real git on synthetic fixtures.
+//
+// The "git tree" notion here is intentionally narrow: we care
+// only whether the user has authored something newer than the
+// last backup. Uncommitted-but-staged changes don't count
+// (dotkeeper's auto-commit captures those into HEAD anyway).
+var gitMTimeProvider = func(path string) time.Time {
+	cmd := exec.CommandContext(context.Background(), "git", "-C", path, "log", "-1", "--format=%ct")
+	out, err := cmd.Output()
+	if err != nil {
+		return time.Time{}
+	}
+	s := strings.TrimSpace(string(out))
+	if s == "" {
+		return time.Time{}
+	}
+	var sec int64
+	if _, err := fmt.Sscanf(s, "%d", &sec); err != nil {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }
 
 // logTailBytes bounds how much of syncthing.log we scan. 4MB is
@@ -224,6 +282,13 @@ func summariseRepos(state *config.StateV2, now time.Time, rep *HealthReport) {
 		path string
 		t    time.Time
 	}
+	// laggingGrace is the threshold above which a git-newer-than-
+	// backup gap is considered an actual lag worth flagging. Below
+	// this the user is probably mid-edit and dotkeeper just hasn't
+	// finished its next reconcile cycle yet — false-positive
+	// degradation in that window erodes trust in the signal.
+	const laggingGrace = 10 * time.Minute
+
 	var ages []ageRow
 	for path, obs := range state.ObservedRepos {
 		rep.Repos.Total++
@@ -234,13 +299,35 @@ func summariseRepos(state *config.StateV2, now time.Time, rep *HealthReport) {
 		}
 		ages = append(ages, ageRow{path: path, t: obs.LastBackupAt})
 		age := now.Sub(obs.LastBackupAt)
+
+		// Lagging vs idle distinction: a "stale" backup is only a
+		// real problem when there's git activity newer than the
+		// backup. Query git's HEAD mtime once per repo.
+		gitMTime := gitMTimeProvider(path)
+		lagging := !gitMTime.IsZero() && gitMTime.Sub(obs.LastBackupAt) > laggingGrace
+
 		switch {
 		case age < 24*time.Hour:
 			rep.Repos.FreshLast24h++
-		case age < 7*24*time.Hour:
+		case age < 7*24*time.Hour && lagging:
 			rep.Repos.StaleOneToSeven++
-		default:
+		case age >= 7*24*time.Hour && lagging:
 			rep.Repos.StaleOverSeven++
+		case age >= 24*time.Hour && !lagging:
+			// Backup is "old" by age, but git itself hasn't moved
+			// since — the backup is correctly current.
+			rep.Repos.Idle++
+		default:
+			rep.Repos.StaleOneToSeven++ // catch-all: be conservative
+		}
+
+		if lagging {
+			rep.Repos.LaggingBackups = append(rep.Repos.LaggingBackups, RepoLaggingBackup{
+				Path:       path,
+				GitMTime:   gitMTime,
+				BackupAt:   obs.LastBackupAt,
+				LagSeconds: gitMTime.Sub(obs.LastBackupAt).Seconds(),
+			})
 		}
 	}
 	sort.Slice(ages, func(i, j int) bool { return ages[i].t.Before(ages[j].t) })
@@ -258,6 +345,11 @@ func summariseRepos(state *config.StateV2, now time.Time, rep *HealthReport) {
 		})
 	}
 	sort.Strings(rep.Repos.NeverBackedNames)
+	// Sort lagging backups worst-first so the text renderer's
+	// "show top N" output points at the most-overdue repos.
+	sort.Slice(rep.Repos.LaggingBackups, func(i, j int) bool {
+		return rep.Repos.LaggingBackups[i].LagSeconds > rep.Repos.LaggingBackups[j].LagSeconds
+	})
 }
 
 func summarisePeers(machine *config.MachineConfigV2, state *config.StateV2, now time.Time, rep *HealthReport) {
@@ -421,14 +513,33 @@ func writeHealthText(w io.Writer, r *HealthReport) {
 	}
 
 	p.F("\n=== Repos (%d tracked) ===\n", r.Repos.Total)
-	p.F("  Fresh (<24h):      %d\n", r.Repos.FreshLast24h)
-	p.F("  Stale (1-7d):      %d\n", r.Repos.StaleOneToSeven)
-	p.F("  Very stale (>7d):  %d\n", r.Repos.StaleOverSeven)
-	if r.Repos.NeverBackedUp > 0 {
-		p.F("  Never backed up:   %d\n", r.Repos.NeverBackedUp)
+	p.F("  Fresh (<24h):                  %d\n", r.Repos.FreshLast24h)
+	p.F("  Idle (dormant, backup OK):     %d\n", r.Repos.Idle)
+	if r.Repos.StaleOneToSeven > 0 {
+		p.F("  Lagging (1-7d behind git):     %d\n", r.Repos.StaleOneToSeven)
 	}
-	if len(r.Repos.OldestBackup) > 0 {
-		p.Ln("  Oldest backups:")
+	if r.Repos.StaleOverSeven > 0 {
+		p.F("  Lagging (>7d behind git):      %d\n", r.Repos.StaleOverSeven)
+	}
+	if r.Repos.NeverBackedUp > 0 {
+		p.F("  Never backed up:               %d\n", r.Repos.NeverBackedUp)
+	}
+	// "Lagging backups" table replaces the old "Oldest backups"
+	// in the degraded case — operators want to see WHICH repos
+	// are behind, not which are old. When nothing is lagging,
+	// fall back to the oldest-backups list for general
+	// situational awareness.
+	if len(r.Repos.LaggingBackups) > 0 {
+		p.Ln("  Lagging backups (git newer than backup):")
+		const topN = 5
+		for i, row := range r.Repos.LaggingBackups {
+			if i >= topN {
+				break
+			}
+			p.F("    %s  (lag %s)\n", row.Path, durationHuman(time.Duration(row.LagSeconds)*time.Second))
+		}
+	} else if len(r.Repos.OldestBackup) > 0 {
+		p.Ln("  Oldest backups (informational; all current vs git):")
 		for _, row := range r.Repos.OldestBackup {
 			p.F("    %s  (%s ago)\n", row.Path, durationHuman(time.Duration(row.AgeS)*time.Second))
 		}

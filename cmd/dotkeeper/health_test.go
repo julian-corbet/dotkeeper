@@ -29,9 +29,19 @@ func setupHealthFixture(t *testing.T) (stateDir, configDir string) {
 	// the live-connections path see consistent state. Tests that
 	// DO want live data override liveConnectionsProvider after
 	// calling setupHealthFixture.
-	old := liveConnectionsProvider
+	oldLive := liveConnectionsProvider
 	liveConnectionsProvider = func() (map[string]time.Time, error) { return nil, nil }
-	t.Cleanup(func() { liveConnectionsProvider = old })
+	t.Cleanup(func() { liveConnectionsProvider = oldLive })
+	// Default gitMTimeProvider returns time.Now() for any path,
+	// so the test paths (which don't exist on disk) appear to
+	// have FRESH git activity — i.e. any backup older than the
+	// laggingGrace window is treated as lagging. This matches
+	// the prior test semantics where "old backup" implied
+	// "stale". Tests that want different git-activity behaviour
+	// override gitMTimeProvider after calling setupHealthFixture.
+	oldMTime := gitMTimeProvider
+	gitMTimeProvider = func(path string) time.Time { return time.Now() }
+	t.Cleanup(func() { gitMTimeProvider = oldMTime })
 	return st, cfg
 }
 
@@ -147,6 +157,13 @@ func TestHealthReportPeersMergeMachineAndState(t *testing.T) {
 func TestHealthHealthyReportNotDegraded(t *testing.T) {
 	setupHealthFixture(t)
 	writeMachineToml(t, "host", nil)
+	// Healthy case: backup is 1h old, git's HEAD is older still —
+	// the backup is correctly current relative to git activity.
+	// Override the default fresh-git stub so this scenario hits
+	// the "idle" bucket rather than "lagging".
+	gitMTimeProvider = func(_ string) time.Time {
+		return time.Now().Add(-2 * time.Hour)
+	}
 	writeStateToml(t, &config.StateV2{
 		SchemaVersion: 2,
 		ObservedRepos: map[string]config.ObservedRepo{
@@ -159,6 +176,69 @@ func TestHealthHealthyReportNotDegraded(t *testing.T) {
 	}
 	if r.degraded() {
 		t.Errorf("healthy report flagged degraded: %+v", r.Repos)
+	}
+}
+
+// TestHealthDormantReposAreIdleNotDegraded pins the v1.1.4
+// false-positive fix: a repo whose git tree hasn't moved in
+// months but whose backup is also old should be classified as
+// Idle and NOT trigger a degraded report. Pre-fix this would
+// have shown up as "Very stale: N" and pushed the exit code to
+// 1, training operators to ignore the signal.
+func TestHealthDormantReposAreIdleNotDegraded(t *testing.T) {
+	setupHealthFixture(t)
+	writeMachineToml(t, "host", nil)
+	// Both git and backup are 30 days old — the repo is just dormant.
+	gitMTimeProvider = func(_ string) time.Time {
+		return time.Now().Add(-30 * 24 * time.Hour)
+	}
+	writeStateToml(t, &config.StateV2{
+		SchemaVersion: 2,
+		ObservedRepos: map[string]config.ObservedRepo{
+			"/repo/dormant": {LastBackupAt: time.Now().Add(-30 * 24 * time.Hour)},
+		},
+	})
+	r, err := collectHealth(true)
+	if err != nil {
+		t.Fatalf("collectHealth: %v", err)
+	}
+	if r.degraded() {
+		t.Errorf("dormant repo flagged degraded; should be idle: %+v", r.Repos)
+	}
+	if r.Repos.Idle != 1 {
+		t.Errorf("Idle count = %d, want 1; buckets=%+v", r.Repos.Idle, r.Repos)
+	}
+	if r.Repos.StaleOverSeven != 0 {
+		t.Errorf("dormant repo should not be in StaleOverSeven; got %d", r.Repos.StaleOverSeven)
+	}
+}
+
+// TestHealthLaggingBackupTriggersDegraded — the opposite case.
+// Git has activity newer than the backup → the backup is
+// genuinely behind, and degraded() must fire.
+func TestHealthLaggingBackupTriggersDegraded(t *testing.T) {
+	setupHealthFixture(t)
+	writeMachineToml(t, "host", nil)
+	// Backup is 2 days old; git activity is 1 hour ago. Lag is
+	// real and well past the 10-min grace window.
+	gitMTimeProvider = func(_ string) time.Time {
+		return time.Now().Add(-1 * time.Hour)
+	}
+	writeStateToml(t, &config.StateV2{
+		SchemaVersion: 2,
+		ObservedRepos: map[string]config.ObservedRepo{
+			"/repo/lagging": {LastBackupAt: time.Now().Add(-2 * 24 * time.Hour)},
+		},
+	})
+	r, err := collectHealth(true)
+	if err != nil {
+		t.Fatalf("collectHealth: %v", err)
+	}
+	if !r.degraded() {
+		t.Errorf("lagging-backup repo should be degraded; got %+v", r.Repos)
+	}
+	if len(r.Repos.LaggingBackups) != 1 {
+		t.Errorf("LaggingBackups count = %d, want 1", len(r.Repos.LaggingBackups))
 	}
 }
 
