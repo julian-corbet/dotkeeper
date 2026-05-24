@@ -29,10 +29,10 @@ func TestScanFindsConflicts(t *testing.T) {
 
 	// Conflicts we expect to find.
 	want := map[string]bool{
-		filepath.Join(root, "config.sync-conflict-20260419-143015-UUS6FSQ.toml"):        false,
-		filepath.Join(root, "sub", "notes.sync-conflict-20260419-143015-WB25TET.md"):    false,
-		filepath.Join(root, "sub", "deep", "bin.sync-conflict-20260418-185451-WB25TET"): false,
-		filepath.Join(root, ".sync-conflict-20260419-143015-UUS6FSQ.bashrc"):            false,
+		filepath.Join(root, "config.sync-conflict-20260419-143015-AAAAAAA.toml"):        false,
+		filepath.Join(root, "sub", "notes.sync-conflict-20260419-143015-BBBBBBB.md"):    false,
+		filepath.Join(root, "sub", "deep", "bin.sync-conflict-20260418-185451-BBBBBBB"): false,
+		filepath.Join(root, ".sync-conflict-20260419-143015-AAAAAAA.bashrc"):            false,
 	}
 	for p := range want {
 		writeFile(t, p)
@@ -43,11 +43,11 @@ func TestScanFindsConflicts(t *testing.T) {
 	writeFile(t, filepath.Join(root, "sub", "README.md"))
 
 	// Noise: skip-list dirs. Conflicts inside must NOT be returned.
-	writeFile(t, filepath.Join(root, ".git", "ignored.sync-conflict-20260419-143015-UUS6FSQ.toml"))
-	writeFile(t, filepath.Join(root, ".stfolder", "ignored.sync-conflict-20260419-143015-UUS6FSQ.toml"))
-	writeFile(t, filepath.Join(root, ".dkfolder", "ignored.sync-conflict-20260419-143015-UUS6FSQ.toml"))
+	writeFile(t, filepath.Join(root, ".git", "ignored.sync-conflict-20260419-143015-AAAAAAA.toml"))
+	writeFile(t, filepath.Join(root, ".stfolder", "ignored.sync-conflict-20260419-143015-AAAAAAA.toml"))
+	writeFile(t, filepath.Join(root, ".dkfolder", "ignored.sync-conflict-20260419-143015-AAAAAAA.toml"))
 	// Also: nested skip dir inside a subfolder.
-	writeFile(t, filepath.Join(root, "sub", ".git", "ignored.sync-conflict-20260419-143015-UUS6FSQ.toml"))
+	writeFile(t, filepath.Join(root, "sub", ".git", "ignored.sync-conflict-20260419-143015-AAAAAAA.toml"))
 
 	got, err := Scan(root)
 	if err != nil {
@@ -113,7 +113,7 @@ func TestScanMissingRoot(t *testing.T) {
 // CLI table) relies on that.
 func TestScanReturnsAbsolutePaths(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, filepath.Join(root, "a.sync-conflict-20260419-143015-UUS6FSQ.toml"))
+	writeFile(t, filepath.Join(root, "a.sync-conflict-20260419-143015-AAAAAAA.toml"))
 
 	// Move CWD to root so we can pass "." as a relative path.
 	t.Chdir(root)

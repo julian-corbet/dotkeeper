@@ -7,6 +7,27 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.13] - 2026-05-24
+
+### Security
+
+- **Test fixtures used real device-ID prefixes from the author's
+  fleet.** Six conflict-related test files
+  (`cmd/dotkeeper/{conflict,e2e_conflict}_test.go`,
+  `internal/conflict/{parser,resolver_manual,scanner,watcher}_test.go`)
+  embedded the 7-character prefixes that Syncthing displays in
+  sync-conflict filenames. While insufficient to impersonate a
+  peer (which requires the corresponding TLS private key), the
+  leak unnecessarily disclosed which two peers the maintainer
+  was running and would have enabled correlation if the same
+  prefixes surfaced in unrelated contexts. Replaced with
+  obviously-synthetic `AAAAAAA` / `BBBBBBB` test fixtures.
+- **CHANGELOG re-leaked a sanitised email.** The 1.0.3 entry that
+  documented removing a private routing alias from
+  `.github/workflows/aur.yml` cited the literal removed value
+  in its explanation, defeating the purpose of the original fix.
+  Rewrote the entry to describe the change abstractly.
+
 ## [1.1.12] - 2026-05-24
 
 ### Added
@@ -312,8 +333,7 @@ stabilises the fuzz smoke harness.
 
 - **AUR committer identity scrubbed.** `.github/workflows/aur.yml`
   switches the `git config user.email` and both PKGBUILD
-  `# Maintainer:` lines from `admin+aur@sys.corbet.ch` (a routing
-  alias on private infrastructure) to
+  `# Maintainer:` lines from a private routing alias to
   `julian-corbet@users.noreply.github.com` (the canonical GitHub
   identity for automated commits). Functionally equivalent; the
   noreply form discloses less about the maintainer's

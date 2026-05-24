@@ -12,7 +12,7 @@ import (
 // TestParseHappyPath covers the canonical conflict shape: name, extension,
 // timestamp, and 7-char device ID all present.
 func TestParseHappyPath(t *testing.T) {
-	got, err := Parse("config.sync-conflict-20260419-143015-UUS6FSQ.toml")
+	got, err := Parse("config.sync-conflict-20260419-143015-AAAAAAA.toml")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -22,8 +22,8 @@ func TestParseHappyPath(t *testing.T) {
 	if got.Extension != ".toml" {
 		t.Errorf("Extension = %q, want %q", got.Extension, ".toml")
 	}
-	if got.DeviceIDShort != "UUS6FSQ" {
-		t.Errorf("DeviceIDShort = %q, want %q", got.DeviceIDShort, "UUS6FSQ")
+	if got.DeviceIDShort != "AAAAAAA" {
+		t.Errorf("DeviceIDShort = %q, want %q", got.DeviceIDShort, "AAAAAAA")
 	}
 	want := time.Date(2026, 4, 19, 14, 30, 15, 0, time.Local)
 	if !got.Timestamp.Equal(want) {
@@ -34,7 +34,7 @@ func TestParseHappyPath(t *testing.T) {
 // TestParseNoExtension covers extensionless files (e.g. binaries): the
 // conflict name has nothing after the 7-char device ID.
 func TestParseNoExtension(t *testing.T) {
-	got, err := Parse("dotkeeper.sync-conflict-20260418-185451-WB25TET")
+	got, err := Parse("dotkeeper.sync-conflict-20260418-185451-BBBBBBB")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -44,8 +44,8 @@ func TestParseNoExtension(t *testing.T) {
 	if got.Extension != "" {
 		t.Errorf("Extension = %q, want \"\"", got.Extension)
 	}
-	if got.DeviceIDShort != "WB25TET" {
-		t.Errorf("DeviceIDShort = %q, want %q", got.DeviceIDShort, "WB25TET")
+	if got.DeviceIDShort != "BBBBBBB" {
+		t.Errorf("DeviceIDShort = %q, want %q", got.DeviceIDShort, "BBBBBBB")
 	}
 }
 
@@ -53,7 +53,7 @@ func TestParseNoExtension(t *testing.T) {
 // filepath.Ext, which treats the whole ".bashrc" as the extension, so
 // the conflict filename starts with ".sync-conflict-".
 func TestParseDotfile(t *testing.T) {
-	got, err := Parse(".sync-conflict-20260419-143015-UUS6FSQ.bashrc")
+	got, err := Parse(".sync-conflict-20260419-143015-AAAAAAA.bashrc")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -63,15 +63,15 @@ func TestParseDotfile(t *testing.T) {
 	if got.Extension != ".bashrc" {
 		t.Errorf("Extension = %q, want %q", got.Extension, ".bashrc")
 	}
-	if got.DeviceIDShort != "UUS6FSQ" {
-		t.Errorf("DeviceIDShort = %q, want %q", got.DeviceIDShort, "UUS6FSQ")
+	if got.DeviceIDShort != "AAAAAAA" {
+		t.Errorf("DeviceIDShort = %q, want %q", got.DeviceIDShort, "AAAAAAA")
 	}
 }
 
 // TestParseNestedPath verifies Parse only looks at the base filename, so
 // callers can pass absolute paths directly.
 func TestParseNestedPath(t *testing.T) {
-	got, err := Parse("/home/user/.config/notes/notes.sync-conflict-20260419-143015-UUS6FSQ.md")
+	got, err := Parse("/home/user/.config/notes/notes.sync-conflict-20260419-143015-AAAAAAA.md")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestParseNestedPath(t *testing.T) {
 // Syncthing's own filepath.Ext behaviour. "file.tar.gz" becomes
 // "file.tar" + ".gz" in the conflict shape.
 func TestParseDoubleExtension(t *testing.T) {
-	got, err := Parse("file.tar.sync-conflict-20260419-143015-UUS6FSQ.gz")
+	got, err := Parse("file.tar.sync-conflict-20260419-143015-AAAAAAA.gz")
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -117,10 +117,10 @@ func TestParseRejectsNonConflict(t *testing.T) {
 // wrong digit counts, lowercase device IDs, short/long IDs, etc.
 func TestParseRejectsMalformed(t *testing.T) {
 	cases := []string{
-		"config.sync-conflict-2026041-143015-UUS6FSQ.toml",   // short date
-		"config.sync-conflict-20260419-14301-UUS6FSQ.toml",   // short time
+		"config.sync-conflict-2026041-143015-AAAAAAA.toml",   // short date
+		"config.sync-conflict-20260419-14301-AAAAAAA.toml",   // short time
 		"config.sync-conflict-20260419-143015-UUS6FS.toml",   // 6-char ID
-		"config.sync-conflict-20260419-143015-UUS6FSQA.toml", // 8-char ID (runs past the 7-char boundary)
+		"config.sync-conflict-20260419-143015-AAAAAAAA.toml", // 8-char ID (runs past the 7-char boundary)
 		"config.sync-conflict-20260419-143015-uus6fsq.toml",  // lowercase not allowed
 		"config.sync-conflict-20260419-143015-UUS6FS1.toml",  // '1' isn't in base32 alphabet
 	}
@@ -134,7 +134,7 @@ func TestParseRejectsMalformed(t *testing.T) {
 // TestParseInvalidDate covers a syntactically correct regex match but an
 // impossible calendar date — should error, but not as ErrNotConflict.
 func TestParseInvalidDate(t *testing.T) {
-	_, err := Parse("config.sync-conflict-20261319-143015-UUS6FSQ.toml") // month 13
+	_, err := Parse("config.sync-conflict-20261319-143015-AAAAAAA.toml") // month 13
 	if err == nil {
 		t.Fatal("expected error for month 13")
 	}
@@ -146,8 +146,8 @@ func TestParseInvalidDate(t *testing.T) {
 // TestIsConflictName is a quick spot check of the helper.
 func TestIsConflictName(t *testing.T) {
 	cases := map[string]bool{
-		"config.sync-conflict-20260419-143015-UUS6FSQ.toml": true,
-		"dotkeeper.sync-conflict-20260418-185451-WB25TET":   true,
+		"config.sync-conflict-20260419-143015-AAAAAAA.toml": true,
+		"dotkeeper.sync-conflict-20260418-185451-BBBBBBB":   true,
 		"config.toml":    false,
 		"random-file":    false,
 		".sync-conflict": false,

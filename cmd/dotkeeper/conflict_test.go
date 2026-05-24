@@ -23,8 +23,8 @@ func TestDeviceShortToHostnameV5(t *testing.T) {
 	state := &config.StateV2{
 		SchemaVersion: 2,
 		Peers: []config.PeerEntry{
-			{Name: "desktop", DeviceID: "UUS6FSQ-ABCDEFG-HIJKLMN-OPQRSTU-VWXYZ23-4567ABC-DEFGHIJ-KLMNOPQ"},
-			{Name: "laptop", DeviceID: "WB25TET-ZYXWVUT-SRQPONM-LKJIHGF-EDCBA76-5432ZYX-WVUTSRQ-PONMLKJ"},
+			{Name: "desktop", DeviceID: "AAAAAAA-ABCDEFG-HIJKLMN-OPQRSTU-VWXYZ23-4567ABC-DEFGHIJ-KLMNOPQ"},
+			{Name: "laptop", DeviceID: "BBBBBBB-ZYXWVUT-SRQPONM-LKJIHGF-EDCBA76-5432ZYX-WVUTSRQ-PONMLKJ"},
 			// No DeviceID entry (hypothetical — PeerEntry always has one, but guard).
 		},
 	}
@@ -34,11 +34,11 @@ func TestDeviceShortToHostnameV5(t *testing.T) {
 
 	got := deviceShortToHostnameV5()
 
-	if got["UUS6FSQ"] != "desktop" {
-		t.Errorf("UUS6FSQ = %q, want %q", got["UUS6FSQ"], "desktop")
+	if got["AAAAAAA"] != "desktop" {
+		t.Errorf("AAAAAAA = %q, want %q", got["AAAAAAA"], "desktop")
 	}
-	if got["WB25TET"] != "laptop" {
-		t.Errorf("WB25TET = %q, want %q", got["WB25TET"], "laptop")
+	if got["BBBBBBB"] != "laptop" {
+		t.Errorf("BBBBBBB = %q, want %q", got["BBBBBBB"], "laptop")
 	}
 	// An unknown short ID should not be in the map.
 	if host, ok := got["ZZZZZZZ"]; ok {
@@ -63,7 +63,7 @@ func TestDeviceShortToHostnameV5Empty(t *testing.T) {
 func TestResolveTargetCanonicalPath(t *testing.T) {
 	dir := t.TempDir()
 	canonical := filepath.Join(dir, "notes.md")
-	variant := filepath.Join(dir, "notes.sync-conflict-20260419-143015-UUS6FSQ.md")
+	variant := filepath.Join(dir, "notes.sync-conflict-20260419-143015-AAAAAAA.md")
 	if err := os.WriteFile(canonical, []byte("c"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestResolveTargetCanonicalPath(t *testing.T) {
 func TestResolveTargetVariantPath(t *testing.T) {
 	dir := t.TempDir()
 	canonical := filepath.Join(dir, "notes.md")
-	variant := filepath.Join(dir, "notes.sync-conflict-20260419-143015-UUS6FSQ.md")
+	variant := filepath.Join(dir, "notes.sync-conflict-20260419-143015-AAAAAAA.md")
 	if err := os.WriteFile(canonical, []byte("c"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -113,8 +113,8 @@ func TestResolveTargetVariantPath(t *testing.T) {
 func TestResolveTargetMultipleVariants(t *testing.T) {
 	dir := t.TempDir()
 	canonical := filepath.Join(dir, "notes.md")
-	v1 := filepath.Join(dir, "notes.sync-conflict-20260419-143015-UUS6FSQ.md")
-	v2 := filepath.Join(dir, "notes.sync-conflict-20260419-150000-WB25TET.md")
+	v1 := filepath.Join(dir, "notes.sync-conflict-20260419-143015-AAAAAAA.md")
+	v2 := filepath.Join(dir, "notes.sync-conflict-20260419-150000-BBBBBBB.md")
 	for _, p := range []string{canonical, v1, v2} {
 		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
@@ -170,7 +170,7 @@ func TestResolveTargetNoConflict(t *testing.T) {
 // than "file not readable".
 func TestResolveTargetMissingVariant(t *testing.T) {
 	dir := t.TempDir()
-	variant := filepath.Join(dir, "notes.sync-conflict-20260419-143015-UUS6FSQ.md")
+	variant := filepath.Join(dir, "notes.sync-conflict-20260419-143015-AAAAAAA.md")
 	_, _, err := resolveTarget(variant)
 	if err == nil {
 		t.Fatal("expected error for missing variant")
