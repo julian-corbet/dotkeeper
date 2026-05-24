@@ -7,6 +7,19 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-05-24
+
+### Added
+
+- **Per-warning-kind last-hour split.** The top-warnings
+  breakdown introduced in v1.1.6 now shows each kind as
+  `24h-total / last-1h-subset`, so an operator can distinguish
+  chronic historical patterns ("351 / 0" → file the ticket
+  later) from currently-flapping issues ("12 / 12" → started
+  recently, investigate now). Same recency-aware signal-quality
+  approach the v1.1.5 last-hour error split applied at the
+  aggregate level, now per-kind.
+
 ## [1.1.6] - 2026-05-24
 
 ### Added
