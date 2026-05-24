@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/julian-corbet/dotkeeper/internal/activity"
+	"github.com/julian-corbet/dotkeeper/internal/benchmarker"
 	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/conflict"
 	"github.com/julian-corbet/dotkeeper/internal/discovery"
@@ -77,6 +78,7 @@ func main() {
 	root.AddCommand(trackCmd())
 	root.AddCommand(untrackCmd())
 	root.AddCommand(transportCmd())
+	root.AddCommand(benchNowCmd())
 	root.AddCommand(bareInitCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {
@@ -448,6 +450,18 @@ func startCmd() *cobra.Command {
 			if tracker != nil && health != nil {
 				go forwardActivityToHealth(ctx, tracker, health)
 			}
+
+			// Active transport benchmarker: periodically measures
+			// synchronous transports per (peer, folder) tuple so the
+			// cost model self-tunes even for folders that rarely see
+			// organic edits. Skips itself when the local model has
+			// converged or when recent organic traffic already
+			// provides a fresh observation. Skips Syncthing (async,
+			// no inline timing possible) — that transport's params
+			// stay at the prior. No-op when no transport manager is
+			// available (the build below also no-ops on the same
+			// condition).
+			startBenchmarker(ctx, transportMgr, logger)
 
 			// Start the reconcile daemon alongside Syncthing.
 			startReconcileDaemon(ctx, logger, tracker, healthAd, wakeFlag, rescanLog, propagator)
@@ -1250,7 +1264,15 @@ func buildPropagator(mgr *transport.Manager, logger *slog.Logger) reconcile.Comm
 	if mgr == nil {
 		return nil
 	}
-	peersSource := func() []transport.Peer {
+	return newDaemonPropagatorWithSources(mgr, livePeersSource(), livePropagatorFoldersSource(), logger)
+}
+
+// livePeersSource returns a closure that re-reads machine.toml on
+// every invocation. Shared between the propagator and the active
+// benchmarker so both surfaces stay in sync with operator config
+// edits without a daemon restart.
+func livePeersSource() func() []transport.Peer {
+	return func() []transport.Peer {
 		machine, err := config.LoadMachineConfigV2()
 		if err != nil || machine == nil {
 			return nil
@@ -1265,12 +1287,16 @@ func buildPropagator(mgr *transport.Manager, logger *slog.Logger) reconcile.Comm
 		}
 		return peers
 	}
-	foldersSource := func() map[string]transport.Folder {
+}
+
+// livePropagatorFoldersSource returns a closure shaped for the
+// propagator (path-keyed map). Re-walks managedFolderPathsV5 on
+// each call so freshly-added folders propagate without restart.
+func livePropagatorFoldersSource() func() map[string]transport.Folder {
+	return func() map[string]transport.Folder {
 		roots := managedFolderPathsV5()
 		byPath := make(map[string]transport.Folder, len(roots))
 		for _, root := range roots {
-			// Folder ID derived from the repo basename — matches
-			// the reconcile convention.
 			byPath[root] = transport.Folder{
 				ID:   filepath.Base(root),
 				Path: root,
@@ -1278,7 +1304,36 @@ func buildPropagator(mgr *transport.Manager, logger *slog.Logger) reconcile.Comm
 		}
 		return byPath
 	}
-	return newDaemonPropagatorWithSources(mgr, peersSource, foldersSource, logger)
+}
+
+// liveBenchmarkerFoldersSource returns a closure shaped for the
+// benchmarker (flat slice). Same freshness contract as the
+// propagator's source.
+func liveBenchmarkerFoldersSource() func() []transport.Folder {
+	return func() []transport.Folder {
+		roots := managedFolderPathsV5()
+		out := make([]transport.Folder, 0, len(roots))
+		for _, root := range roots {
+			out = append(out, transport.Folder{
+				ID:   filepath.Base(root),
+				Path: root,
+			})
+		}
+		return out
+	}
+}
+
+// startBenchmarker spins up the active-transport benchmarker if
+// the transport manager is available. No-op otherwise — without a
+// manager there's nothing to benchmark and the daemon degrades to
+// pre-v1.1.22 behaviour (cost model learns only from organic
+// observations).
+func startBenchmarker(ctx context.Context, mgr *transport.Manager, logger *slog.Logger) {
+	if mgr == nil {
+		return
+	}
+	b := benchmarker.New(mgr, liveBenchmarkerFoldersSource(), livePeersSource(), logger, benchmarker.Options{})
+	go b.Run(ctx)
 }
 
 // daemonPropagator implements reconcile.CommitPropagator on top of

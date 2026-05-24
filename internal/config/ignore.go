@@ -41,6 +41,13 @@ var DefaultSyncIgnorePatterns = []string{
 	".stignore",
 	".dkfolder",
 	".stfolder",
+	// .dkbench is the per-folder probe directory created by the
+	// active-benchmarker. Probe files live a few hundred ms before
+	// being deleted by the benchmarker's defer; ignoring them
+	// prevents Syncthing from gossiping the transient writes
+	// across peers (the benchmark uses a different propagation
+	// path entirely — synchronous transport directly to one peer).
+	".dkbench",
 	"*.sync-conflict-*",
 	".syncthing.*.tmp",
 
@@ -131,6 +138,7 @@ var DefaultGitExcludePatterns = []string{
 	".stignore",
 	".dkfolder",
 	".stfolder",
+	".dkbench",
 	"*.sync-conflict-*",
 	".syncthing.*.tmp",
 }
