@@ -7,6 +7,32 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.20] - 2026-05-24
+
+### Changed
+
+- **CostModel now keyed by `(transport, peer, repo)`** instead of
+  `(transport, peer)`. A transport's observed cost varies
+  meaningfully by repo: Mutagen syncs a tiny `.agent` folder in
+  30 ms but a 1 GB asset folder in 12 s. Without the per-repo
+  dimension the cost model averaged those and routed both repos
+  to whichever transport won the geometric mean — rarely the right
+  choice for either.
+
+  `repoID=""` is the cross-repo aggregate slot. Read by `Predict`
+  as a fallback when a specific per-repo tuple has no observations
+  yet (first sync of a fresh folder). Every `RecordTransfer` with
+  a non-empty `repoID` mirrors the observation into the aggregate
+  slot so a brand-new folder's first sync still gets the fleet's
+  accumulated wisdom for that `(transport, peer)` path.
+
+  `RecordTransfer` and `ModelParametersFor` both take an additional
+  `repoID` parameter. Existing callers (`main.go` propagator path,
+  `dotkeeper status` CLI) pass `folder.ID` for the propagator and
+  `""` for the operator-facing aggregate view. Second piece of the
+  Mutagen + auto-benchmark series; active benchmarking and
+  cold-start priors follow.
+
 ## [1.1.19] - 2026-05-24
 
 ### Added

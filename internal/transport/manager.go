@@ -85,12 +85,31 @@ func DefaultPriorFor(transportName string) CostPrior {
 	}
 }
 
-// modelKey is the lookup key for the per-(transport, peer) cost
-// model map. Tuple key because each transport observes its own
-// throughput against each peer independently.
+// modelKey is the lookup key for the per-(transport, peer, repo)
+// cost model map. The triple is the finest granularity we can
+// reasonably attribute observations to:
+//
+//   - transport tells you which mechanism moved bytes;
+//   - peer tells you which network path was used;
+//   - repo tells you which folder's characteristics
+//     (file-count distribution, working-tree size) the cost reflects.
+//
+// The repo dimension was added in v1.1.20 because a transport's
+// observed cost varies meaningfully by repo: Mutagen pulls a tiny
+// .dotkeeper.toml-only folder in 30 ms but a 1 GB asset folder in
+// 12 s. Without the per-repo dimension the cost model would
+// average those and route both repos to whichever transport won
+// the geometric mean — which is rarely the right choice for either.
+//
+// repo="" is the aggregate-across-all-repos slot. Read by Predict
+// as a fallback when a specific (transport, peer, repo) tuple has
+// no observations yet (first sync of a fresh folder, transport
+// just added). Written by Record on every observation alongside
+// the per-repo update so the aggregate stays current.
 type modelKey struct {
 	transport string
 	peer      string
+	repo      string // folder ID, or "" for the cross-repo aggregate
 }
 
 // Routes is the per-peer reachability snapshot recorded by Discover.
@@ -248,7 +267,12 @@ func (m *Manager) Route(change Change, peerName string) (Transport, error) {
 		if !found || !entry.Reachable {
 			continue
 		}
-		model := m.modelFor(t.Name(), peerName)
+		// Per-repo first, then aggregate fallback. Predict on a
+		// per-repo model that has zero observations returns the
+		// prior, which is identical to the aggregate's starting
+		// point — once observations accumulate, the per-repo
+		// prediction diverges to reflect that repo's actual cost.
+		model := m.modelFor(t.Name(), peerName, change.Folder.ID)
 		predict := model.Predict(change.SizeHint)
 		candidates = append(candidates, candidate{t: t, predict: predict})
 	}
@@ -268,21 +292,37 @@ func (m *Manager) Route(change Change, peerName string) (Transport, error) {
 	return best.t, nil
 }
 
-// RecordTransfer feeds an observed transfer back into the cost model
-// for the (transport, peer) pair. Called by the daemon after each
-// successful PropagateChange. Failed transfers do not call this —
-// they're noise, not signal.
+// RecordTransfer feeds an observed transfer back into the cost
+// model. Updates BOTH the per-repo model (transport, peer, repoID)
+// AND the cross-repo aggregate (transport, peer, "") so that:
 //
-// Cheap: O(1) regression update. Safe to call from the hot path
-// where the transfer just completed.
-func (m *Manager) RecordTransfer(transportName, peerName string, sizeBytes int64, elapsed time.Duration) {
-	m.modelFor(transportName, peerName).Record(sizeBytes, elapsed)
+//   - subsequent Predict calls for the same repo benefit from
+//     this repo's specific cost profile, and
+//   - first-sync of a fresh repo still gets a useful starting
+//     prediction via the aggregate slot.
+//
+// Called by the daemon after each successful PropagateChange.
+// Failed transfers do not call this — they're noise, not signal.
+//
+// Cheap: O(1) regression update × 2 slots. Safe to call from the
+// hot path where the transfer just completed.
+func (m *Manager) RecordTransfer(transportName, peerName, repoID string, sizeBytes int64, elapsed time.Duration) {
+	m.modelFor(transportName, peerName, repoID).Record(sizeBytes, elapsed)
+	if repoID != "" {
+		// Mirror into the aggregate slot so a new repo's cold
+		// start has a representative prior from this peer's
+		// history. Skipped when repoID is already "" to avoid
+		// double-counting (which would silently halve the
+		// regression's effective learning rate).
+		m.modelFor(transportName, peerName, "").Record(sizeBytes, elapsed)
+	}
 }
 
-// modelFor returns the cost model for the (transport, peer) pair,
-// creating it on first use. Thread-safe via the manager's mutex.
-func (m *Manager) modelFor(transportName, peerName string) *CostModel {
-	key := modelKey{transport: transportName, peer: peerName}
+// modelFor returns the cost model for the (transport, peer, repo)
+// triple, creating it on first use. Thread-safe via the manager's
+// mutex.
+func (m *Manager) modelFor(transportName, peerName, repoID string) *CostModel {
+	key := modelKey{transport: transportName, peer: peerName, repo: repoID}
 	m.mu.RLock()
 	if model, ok := m.models[key]; ok {
 		m.mu.RUnlock()
@@ -322,11 +362,14 @@ func (m *Manager) RoutesFor(peerName string) (Routes, bool) {
 }
 
 // ModelParametersFor returns the current (setup, msPerByte, n) for
-// the named (transport, peer) cost model. Used by the CLI for
+// the named (transport, peer, repo) cost model. Used by the CLI for
 // "show me the learned parameters" output. Creates the model if it
-// doesn't exist yet (returns the prior values).
-func (m *Manager) ModelParametersFor(transportName, peerName string) (setupMS, msPerByte, effectiveSamples float64) {
-	return m.modelFor(transportName, peerName).Parameters()
+// doesn't exist yet (returns the prior values). Pass repoID="" to
+// query the cross-repo aggregate slot — that's typically what an
+// operator wants when they say "how fast is mutagen to the laptop?"
+// without specifying a particular repo.
+func (m *Manager) ModelParametersFor(transportName, peerName, repoID string) (setupMS, msPerByte, effectiveSamples float64) {
+	return m.modelFor(transportName, peerName, repoID).Parameters()
 }
 
 // ErrNoRoute indicates Route was called for a peer with no

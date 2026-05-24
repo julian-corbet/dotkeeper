@@ -1400,7 +1400,7 @@ func (p *daemonPropagator) PropagateNewCommit(ctx context.Context, folderPath st
 		// model that it's infinitely fast — defeating Manager.Route
 		// for every subsequent decision.
 		if t.PropagatesSynchronously() {
-			p.mgr.RecordTransfer(t.Name(), peer.Name, sizeBytes, elapsed)
+			p.mgr.RecordTransfer(t.Name(), peer.Name, folder.ID, sizeBytes, elapsed)
 			p.logger.InfoContext(ctx, "propagator: pushed",
 				"peer", peer.Name,
 				"transport", t.Name(),
@@ -1862,7 +1862,11 @@ func transportStatusCmd() *cobra.Command {
 				routes, _ := mgr.RoutesFor(p.Name)
 				for _, t := range mgr.Transports() {
 					entry := routes.Entries[t.Name()]
-					setup, perByte, n := mgr.ModelParametersFor(t.Name(), p.Name)
+					// Empty repoID queries the cross-repo aggregate
+					// slot — the right view for "how fast is this
+					// transport to this peer in general," which is
+					// what this CLI surface shows.
+					setup, perByte, n := mgr.ModelParametersFor(t.Name(), p.Name, "")
 					throughputMBps := 0.0
 					if perByte > 0 {
 						throughputMBps = 1.0 / perByte / 1000.0 // (1/ms-per-byte) bytes/ms => MB/s

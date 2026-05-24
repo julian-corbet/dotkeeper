@@ -104,7 +104,7 @@ func TestE2EDaemonPropagatorDeliversCommitViaGitSSH(t *testing.T) {
 	}
 
 	// Sample cost-model state before the push.
-	setupBefore, _, nBefore := mgr.ModelParametersFor(gitssh.Name(), peer.Name)
+	setupBefore, _, nBefore := mgr.ModelParametersFor(gitssh.Name(), peer.Name, "")
 	if nBefore != 0 {
 		t.Fatalf("baseline effective-sample count should be 0; got %.2f", nBefore)
 	}
@@ -149,7 +149,7 @@ func TestE2EDaemonPropagatorDeliversCommitViaGitSSH(t *testing.T) {
 	// MAY have shifted toward the observed value (whether it
 	// actually shifts depends on the prior weight; we just
 	// check that recording happened).
-	setupAfter, _, nAfter := mgr.ModelParametersFor(gitssh.Name(), peer.Name)
+	setupAfter, _, nAfter := mgr.ModelParametersFor(gitssh.Name(), peer.Name, "")
 	if nAfter < 1 {
 		t.Errorf("cost model did not absorb the observation; nAfter=%.2f", nAfter)
 	}
