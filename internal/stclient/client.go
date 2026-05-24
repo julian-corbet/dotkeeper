@@ -167,9 +167,9 @@ func (c *Client) AddDevice(deviceID, name string) error {
 	}
 
 	newDevice := map[string]any{
-		"deviceID":  deviceID,
-		"name":      name,
-		"addresses": []string{"dynamic"},
+		"deviceID":    deviceID,
+		"name":        name,
+		"addresses":   []string{"dynamic"},
 		"compression": "metadata",
 		"introducer":  false,
 		// Folder membership is opt-in per machine: each receiver
