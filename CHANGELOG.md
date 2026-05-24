@@ -7,6 +7,27 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-05-24
+
+### Added
+
+- **`dotkeeper health` shows top warning kinds.** The 24h
+  warning count is now supplemented with a top-5 breakdown by
+  message kind. An operator looking at "Warnings in log: 360"
+  used to have no way to tell whether that was one chronic
+  problem or 360 distinct issues — same number, completely
+  different triage. Now:
+    ```
+    Warnings in log:         366
+      Top warning kinds:
+          324  Unexpected folder ID in ClusterConfig; ensure …
+           24  Abandoning old index handler in favour of new …
+            9  Failed to sync
+            ...
+    ```
+  Structured `TopWarningKinds[]` field in JSON output for
+  downstream tooling.
+
 ## [1.1.5] - 2026-05-24
 
 Same false-positive class as v1.1.4, this time for the
