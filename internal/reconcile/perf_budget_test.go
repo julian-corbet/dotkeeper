@@ -4,6 +4,7 @@
 package reconcile
 
 import (
+	"os"
 	"testing"
 	"time"
 )
@@ -95,6 +96,16 @@ func TestPerfBudgets(t *testing.T) {
 		// dedicated non-race CI step ('go test -run TestPerf ...')
 		// runs this gate; the standard race-enabled step skips it.
 		t.Skip("perf budgets are calibrated for non-race builds")
+	}
+	if os.Getenv("DK_PERF_GATE") == "" {
+		// Perf budgets need dedicated CPU to be reliable. When
+		// `go test ./...` runs many packages in parallel, system
+		// contention can nearly double the benchmarks' ns/op,
+		// causing false-positive failures. The dedicated CI step
+		// sets DK_PERF_GATE=1 + runs only this package, so its
+		// budgets are meaningful; bare `go test ./...` sees the
+		// gate skip itself with this message.
+		t.Skip("set DK_PERF_GATE=1 (dedicated single-package run) to enable budget gate")
 	}
 	for _, b := range perfBudgets {
 		t.Run(b.name, func(t *testing.T) {
