@@ -7,6 +7,31 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-05-24
+
+Fixes a false-positive degradation signal in `dotkeeper health`.
+
+### Fixed
+
+- **Dormant repos no longer flagged as stale.** Previous bucketing
+  classified any backup older than 7 days as `Very stale` and
+  triggered `degraded` status. On the production fleet this
+  flagged 16 archived projects with no recent git activity — the
+  backup WAS correctly current; there just wasn't anything new to
+  back up. Operators learned to ignore the signal.
+  Rework the bucketing to compare backup-at against the git HEAD
+  commit timestamp:
+    - **Idle** (new): backup is old by age, but git is also old —
+      the backup is correctly current.
+    - **Lagging (1-7d / >7d)**: git activity is newer than the
+      backup — the actual operational concern.
+    - **LaggingBackups[]** (new JSON field): names the repos
+      with the worst lag, worst-first; renders as a "Lagging
+      backups" table in text mode.
+  `degraded()` now triggers only on actual lagging (or
+  never-backed) repos. 10-minute grace window prevents flapping
+  during normal user-edit-then-reconcile cycles.
+
 ## [1.1.3] - 2026-05-24
 
 Same-day patch on v1.1.2: closes a startup-race window where the
