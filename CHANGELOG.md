@@ -7,6 +7,31 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.9] - 2026-05-24
+
+### Added
+
+- **`dotkeeper health --explain`** prints a one-line
+  operator-facing explanation for each recognised
+  warning/error message kind in the report. Initial
+  known-pattern table covers eight Syncthing/dotkeeper messages
+  most likely to appear on a healthy fleet (ClusterConfig folder
+  mismatches, path-conflict on auto-accept, flip-flopping
+  listener, per-file sync failure, abandoned index handler,
+  propagator no-route, missing-version, deleted-dir-contains-
+  ignored-files). Turns the health command from "what's
+  happening" into "what's happening AND what to do about it".
+  Unknown patterns are silently skipped; the mode is opt-in
+  help, not noise.
+
+### Changed
+
+- **Test fixture scrub:** `cmd/dotkeeper/transport_cli_test.go`
+  was using the maintainer's personal username `richc` as an SSH
+  user in synthetic test cases. The v1.0.1 scrub (PR #48) caught
+  the same pattern in `gitssh_test.go` but missed this file.
+  Replaced with synthetic `alice` throughout.
+
 ## [1.1.8] - 2026-05-24
 
 ### Added
