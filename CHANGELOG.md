@@ -7,6 +7,21 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.11] - 2026-05-24
+
+### Added
+
+- **`dotkeeper health --watch=DURATION`** clears the screen and
+  re-renders the report every DURATION (e.g. `30s`, `2m`).
+  Useful for a tmux pane or dashboard that should always show
+  the current operational state without an operator typing the
+  command manually. Render errors are logged inline and the
+  loop continues — a dashboard black-screening because of one
+  bad tick is worse than a stale one. Ctx.Done propagates so
+  Ctrl-C and daemon-shutdown exit cleanly. Watch mode exits 0
+  on cancel; single-shot mode (default) keeps the existing
+  exit-1 on degraded behaviour for systemd-timer wrapping.
+
 ## [1.1.10] - 2026-05-24
 
 ### Changed
