@@ -69,6 +69,7 @@ var liveConnectionsProvider = func() (map[string]time.Time, error) {
 func healthCmd() *cobra.Command {
 	var jsonOut bool
 	var noLogScan bool
+	var explain bool
 	cmd := &cobra.Command{
 		Use:   "health",
 		Short: "Operational health snapshot — repo freshness, peer activity, recent errors",
@@ -92,6 +93,9 @@ Exit codes:
 				return writeHealthJSON(cmd.OutOrStdout(), rep)
 			}
 			writeHealthText(cmd.OutOrStdout(), rep)
+			if explain {
+				writeHealthExplanations(cmd.OutOrStdout(), rep)
+			}
 			if rep.degraded() {
 				os.Exit(1)
 			}
@@ -100,6 +104,7 @@ Exit codes:
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON instead of human-readable text")
 	cmd.Flags().BoolVar(&noLogScan, "no-log-scan", false, "Skip the syncthing.log tail (faster, but omits Recent-activity section)")
+	cmd.Flags().BoolVar(&explain, "explain", false, "After the report, print explanations for any recognised warning kinds (what they mean, what to do)")
 	return cmd
 }
 
@@ -759,6 +764,121 @@ func writeHealthText(w io.Writer, r *HealthReport) {
 	} else {
 		p.Ln("\n[dotkeeper] healthy")
 	}
+}
+
+// knownPatternExplanation maps a substring of a warning/error
+// message to a one-line explanation of what it means and what
+// (if anything) the operator should do. The match is substring-
+// based and first-match-wins so we can use short, distinctive
+// fragments rather than full message text (which Syncthing
+// occasionally rewords across versions).
+//
+// Each entry is a deliberate operational decision: only patterns
+// where we KNOW the cause AND can give actionable guidance. If
+// you find yourself wanting to add "this might mean ..., or it
+// might mean ...", don't — that's noise, not help. Leave the
+// pattern out and let the operator search Syncthing's docs.
+var knownPatternExplanations = []struct {
+	substr  string
+	explain string
+}{
+	{
+		substr:  "Unexpected folder ID in ClusterConfig",
+		explain: "A peer is offering a folder this device hasn't accepted. Open Syncthing's web UI (http://127.0.0.1:18384) and either accept the folder at the right path, or remove the folder from the peer if it shouldn't be shared.",
+	},
+	{
+		substr:  "Failed to auto-accept folder due to path conflict",
+		explain: "Syncthing wanted to auto-create a folder at a path that already exists with different content. Resolve manually in the web UI — pick a different path or merge the contents first.",
+	},
+	{
+		substr:  "Detected a flip-flopping listener",
+		explain: "The Syncthing discovery server is seeing this device's listener address change repeatedly. Usually a NAT/firewall behaviour and harmless; if persistent, check the device's network is stable.",
+	},
+	{
+		substr:  "Failed to sync",
+		explain: "Per-file sync failure. Drill into the syncthing.log for the specific path and error — common causes are permission errors, partially-deleted dirs with ignored files, and disk-full.",
+	},
+	{
+		substr:  "Abandoning old index handler in favour of new connection",
+		explain: "A peer reconnected and Syncthing dropped the previous index session. Routine after network blips; only investigate if it's flapping every few seconds.",
+	},
+	{
+		substr:  "propagator: no route to peer",
+		explain: "Manager.Route found no reachable transport. Usually a transient Syncthing-API hiccup during daemon startup; if persistent, run 'dotkeeper transport status' to see which transports are unreachable and why.",
+	},
+	{
+		substr:  "no connected device has the required version of this file",
+		explain: "All peers holding this file's content are currently offline. The transfer resumes automatically when a peer reconnects; no action needed unless every peer is permanently gone.",
+	},
+	{
+		substr:  "directory has been deleted on a remote device but contains ignored files",
+		explain: "A peer deleted a directory that this device still has ignored files in (e.g. .git inside a worktree). Pre-v1.0.1 this flapped on .claude/worktrees — if you're on v1.0.1+ and still seeing it for other paths, check your per-repo .stignore.",
+	},
+}
+
+// writeHealthExplanations prints a one-line operator-facing
+// explanation for any recognised warning/error kind in the
+// report. Walks the top-warnings list (already bounded to 5)
+// and matches against knownPatternExplanations. Unknown
+// patterns are silently skipped — the explain mode is opt-in
+// help, not noise.
+func writeHealthExplanations(w io.Writer, r *HealthReport) {
+	if r.RecentActivity == nil {
+		return
+	}
+	p := hp{w}
+	var rendered []string
+	seen := make(map[string]bool)
+	for _, wk := range r.RecentActivity.TopWarningKinds {
+		for _, k := range knownPatternExplanations {
+			if !strings.Contains(wk.Message, k.substr) {
+				continue
+			}
+			if seen[k.substr] {
+				break
+			}
+			seen[k.substr] = true
+			rendered = append(rendered, fmt.Sprintf("  • %s\n    %s",
+				wk.Message, wrapForExplain(k.explain, 76)))
+			break
+		}
+	}
+	if len(rendered) == 0 {
+		return
+	}
+	p.Ln("\n=== Explanations ===")
+	for _, r := range rendered {
+		p.F("%s\n", r)
+	}
+}
+
+// wrapForExplain breaks a long explanation into lines of at most
+// width characters, prefixing continuation lines with the
+// indent that aligns with the bullet above. Word-aware: never
+// splits mid-token, leaves single tokens longer than width on
+// their own line rather than truncating.
+func wrapForExplain(s string, width int) string {
+	const indent = "    "
+	var b strings.Builder
+	tokens := strings.Fields(s)
+	line := ""
+	for _, tok := range tokens {
+		switch {
+		case line == "":
+			line = tok
+		case len(line)+1+len(tok) <= width:
+			line += " " + tok
+		default:
+			b.WriteString(line)
+			b.WriteByte('\n')
+			b.WriteString(indent)
+			line = tok
+		}
+	}
+	if line != "" {
+		b.WriteString(line)
+	}
+	return b.String()
 }
 
 // durationHuman formats a Duration for the at-a-glance text view.
