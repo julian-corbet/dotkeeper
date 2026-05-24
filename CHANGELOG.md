@@ -7,6 +7,33 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.15] - 2026-05-24
+
+### Added
+
+- **Opt-in `/debug/pprof` listener.** Setting
+  `[debug] pprof_address = "127.0.0.1:6060"` in `machine.toml`
+  makes the daemon bind a loopback HTTP server that serves the
+  Go runtime's standard pprof endpoints (CPU, heap, goroutine,
+  mutex, block, threadcreate). Operators can then run
+  `go tool pprof http://127.0.0.1:6060/debug/pprof/profile?seconds=30`
+  to capture a CPU profile while dotkeeper is under load.
+
+  Mutex and block profiling are enabled at the lightest non-zero
+  sample rates on startup, so contention is captureable without
+  toggling a separate handler.
+
+  Off by default — the endpoints expose goroutine stack traces
+  (potential path leak) and profiling itself perturbs the
+  workload. Bind failures log a WARN and the rest of the daemon
+  continues; observability surfaces must never tank the daemon.
+  Context cancellation triggers a 5 s graceful drain so an
+  in-flight profile capture finishes.
+
+  This is the first step in the perf-investigation series.
+  Future releases will measure with this, then optimise the
+  highest-impact paths.
+
 ## [1.1.14] - 2026-05-24
 
 ### Fixed
