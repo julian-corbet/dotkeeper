@@ -43,7 +43,7 @@ func TestWatcherEmitsConflictOnCreate(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = w.Close() })
 
-	target := filepath.Join(root, "notes.sync-conflict-20260419-143015-UUS6FSQ.md")
+	target := filepath.Join(root, "notes.sync-conflict-20260419-143015-AAAAAAA.md")
 	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -54,8 +54,8 @@ func TestWatcherEmitsConflictOnCreate(t *testing.T) {
 	if got.OriginalName != "notes.md" {
 		t.Errorf("OriginalName = %q, want %q", got.OriginalName, "notes.md")
 	}
-	if got.DeviceIDShort != "UUS6FSQ" {
-		t.Errorf("DeviceIDShort = %q, want UUS6FSQ", got.DeviceIDShort)
+	if got.DeviceIDShort != "AAAAAAA" {
+		t.Errorf("DeviceIDShort = %q, want AAAAAAA", got.DeviceIDShort)
 	}
 }
 
@@ -104,7 +104,7 @@ func TestWatcherAutoWatchesNewDirs(t *testing.T) {
 	// tempdir on all CI platforms we target.
 	time.Sleep(100 * time.Millisecond)
 
-	target := filepath.Join(sub, "config.sync-conflict-20260419-143015-WB25TET.toml")
+	target := filepath.Join(sub, "config.sync-conflict-20260419-143015-BBBBBBB.toml")
 	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -129,13 +129,13 @@ func TestWatcherSkipsSkipDirs(t *testing.T) {
 	t.Cleanup(func() { _ = w.Close() })
 
 	// Drop a conflict file directly into the pre-existing .git dir.
-	ignored := filepath.Join(root, ".git", "notes.sync-conflict-20260419-143015-UUS6FSQ.md")
+	ignored := filepath.Join(root, ".git", "notes.sync-conflict-20260419-143015-AAAAAAA.md")
 	if err := os.WriteFile(ignored, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	// And a real conflict in the root, so we know the watcher is live.
-	real := filepath.Join(root, "real.sync-conflict-20260419-143015-WB25TET.toml")
+	real := filepath.Join(root, "real.sync-conflict-20260419-143015-BBBBBBB.toml")
 	if err := os.WriteFile(real, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}

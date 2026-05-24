@@ -59,7 +59,7 @@ func gitHEADFiles(t *testing.T, dir string) []string {
 func TestKeepRemovesVariant(t *testing.T) {
 	dir := t.TempDir()
 	canonical := filepath.Join(dir, "notes.md")
-	variant := filepath.Join(dir, "notes.sync-conflict-20260419-143015-UUS6FSQ.md")
+	variant := filepath.Join(dir, "notes.sync-conflict-20260419-143015-AAAAAAA.md")
 
 	if err := os.WriteFile(canonical, []byte("original\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -72,7 +72,7 @@ func TestKeepRemovesVariant(t *testing.T) {
 		Path:          variant,
 		OriginalName:  "notes.md",
 		Timestamp:     time.Now(),
-		DeviceIDShort: "UUS6FSQ",
+		DeviceIDShort: "AAAAAAA",
 		Extension:     ".md",
 	}
 	if err := Keep(c); err != nil {
@@ -95,12 +95,12 @@ func TestKeepRemovesVariant(t *testing.T) {
 // variant succeeds silently — the command can be safely re-run.
 func TestKeepIdempotent(t *testing.T) {
 	dir := t.TempDir()
-	variant := filepath.Join(dir, "notes.sync-conflict-20260419-143015-UUS6FSQ.md")
+	variant := filepath.Join(dir, "notes.sync-conflict-20260419-143015-AAAAAAA.md")
 
 	c := Conflict{
 		Path:          variant,
 		OriginalName:  "notes.md",
-		DeviceIDShort: "UUS6FSQ",
+		DeviceIDShort: "AAAAAAA",
 	}
 	// Variant was never written — Keep should still succeed.
 	if err := Keep(c); err != nil {
@@ -122,7 +122,7 @@ func TestAcceptOverwritesAndCommits(t *testing.T) {
 	}
 
 	// Drop the variant next to the canonical.
-	variant := filepath.Join(repo, "notes.sync-conflict-20260419-143015-UUS6FSQ.md")
+	variant := filepath.Join(repo, "notes.sync-conflict-20260419-143015-AAAAAAA.md")
 	if err := os.WriteFile(variant, []byte("from-peer\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestAcceptOverwritesAndCommits(t *testing.T) {
 		Path:          variant,
 		OriginalName:  "notes.md",
 		Timestamp:     time.Now(),
-		DeviceIDShort: "UUS6FSQ",
+		DeviceIDShort: "AAAAAAA",
 		Extension:     ".md",
 	}
 	if err := Accept(testCtx(t), c, repo); err != nil {
@@ -152,7 +152,7 @@ func TestAcceptOverwritesAndCommits(t *testing.T) {
 	}
 	// HEAD subject matches the required shape.
 	subj := gitHEADSubject(t, repo)
-	wantSubj := "auto: accept sync conflict for notes.md (from UUS6FSQ)"
+	wantSubj := "auto: accept sync conflict for notes.md (from AAAAAAA)"
 	if subj != wantSubj {
 		t.Errorf("HEAD subject = %q, want %q", subj, wantSubj)
 	}
@@ -179,9 +179,9 @@ func TestAcceptIdempotent(t *testing.T) {
 
 	// Variant was never written — this mimics "I already ran accept".
 	c := Conflict{
-		Path:          filepath.Join(repo, "notes.sync-conflict-20260419-143015-UUS6FSQ.md"),
+		Path:          filepath.Join(repo, "notes.sync-conflict-20260419-143015-AAAAAAA.md"),
 		OriginalName:  "notes.md",
-		DeviceIDShort: "UUS6FSQ",
+		DeviceIDShort: "AAAAAAA",
 	}
 	if err := Accept(testCtx(t), c, repo); err != nil {
 		t.Fatalf("Accept (idempotent): %v", err)
@@ -208,7 +208,7 @@ func TestAcceptPreservesMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	variant := filepath.Join(repo, "run.sync-conflict-20260419-143015-UUS6FSQ.sh")
+	variant := filepath.Join(repo, "run.sync-conflict-20260419-143015-AAAAAAA.sh")
 	if err := os.WriteFile(variant, []byte("#!/bin/sh\necho peer\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestAcceptPreservesMode(t *testing.T) {
 	c := Conflict{
 		Path:          variant,
 		OriginalName:  "run.sh",
-		DeviceIDShort: "UUS6FSQ",
+		DeviceIDShort: "AAAAAAA",
 		Extension:     ".sh",
 	}
 	if err := Accept(testCtx(t), c, repo); err != nil {
@@ -237,10 +237,10 @@ func TestAcceptPreservesMode(t *testing.T) {
 func TestFindVariantsSingle(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "notes.md"), []byte{}, 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "notes.sync-conflict-20260419-143015-UUS6FSQ.md"), []byte{}, 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "notes.sync-conflict-20260419-143015-AAAAAAA.md"), []byte{}, 0o644)
 	// Unrelated noise — must not be returned.
 	_ = os.WriteFile(filepath.Join(dir, "other.md"), []byte{}, 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "other.sync-conflict-20260419-143015-WB25TET.md"), []byte{}, 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "other.sync-conflict-20260419-143015-BBBBBBB.md"), []byte{}, 0o644)
 
 	got, err := FindVariants(filepath.Join(dir, "notes.md"))
 	if err != nil {
@@ -260,8 +260,8 @@ func TestFindVariantsSingle(t *testing.T) {
 func TestFindVariantsMultiple(t *testing.T) {
 	dir := t.TempDir()
 	_ = os.WriteFile(filepath.Join(dir, "notes.md"), []byte{}, 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "notes.sync-conflict-20260419-143015-UUS6FSQ.md"), []byte{}, 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "notes.sync-conflict-20260419-150000-WB25TET.md"), []byte{}, 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "notes.sync-conflict-20260419-143015-AAAAAAA.md"), []byte{}, 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "notes.sync-conflict-20260419-150000-BBBBBBB.md"), []byte{}, 0o644)
 
 	got, err := FindVariants(filepath.Join(dir, "notes.md"))
 	if err != nil {
