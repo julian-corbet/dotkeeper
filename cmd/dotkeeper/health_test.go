@@ -470,6 +470,74 @@ func TestHealthRecentErrorsDoDegrade(t *testing.T) {
 	}
 }
 
+// TestHealthBreaksDownWarningsByKind pins the v1.1.6 feature:
+// the warning total is supplemented with a top-N breakdown by
+// message kind, so 360 warnings dominated by one message kind
+// is visibly different from 360 distinct problems.
+func TestHealthBreaksDownWarningsByKind(t *testing.T) {
+	stateDir, _ := setupHealthFixture(t)
+	writeMachineToml(t, "host", nil)
+	writeStateToml(t, &config.StateV2{SchemaVersion: 2})
+
+	ts := time.Now().Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+	var lines []string
+	// 5 of "common", 3 of "less common", 1 of "rare"
+	for i := 0; i < 5; i++ {
+		lines = append(lines, `time=`+ts+` level=WARN msg="common kind"`)
+	}
+	for i := 0; i < 3; i++ {
+		lines = append(lines, `time=`+ts+` level=WARN msg="less common kind"`)
+	}
+	lines = append(lines, `time=`+ts+` level=WARN msg="rare kind"`)
+	lines = append(lines, ``)
+	logPath := filepath.Join(stateDir, "dotkeeper", "syncthing.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _ := collectHealth(false)
+	if r.RecentActivity.WarnCount != 9 {
+		t.Errorf("WarnCount = %d, want 9", r.RecentActivity.WarnCount)
+	}
+	if len(r.RecentActivity.TopWarningKinds) != 3 {
+		t.Fatalf("TopWarningKinds len = %d, want 3; got %v",
+			len(r.RecentActivity.TopWarningKinds), r.RecentActivity.TopWarningKinds)
+	}
+	// Most common first.
+	if r.RecentActivity.TopWarningKinds[0].Message != "common kind" ||
+		r.RecentActivity.TopWarningKinds[0].Count != 5 {
+		t.Errorf("top kind = %+v, want {common kind, 5}", r.RecentActivity.TopWarningKinds[0])
+	}
+	if r.RecentActivity.TopWarningKinds[1].Message != "less common kind" {
+		t.Errorf("second = %s, want less common kind", r.RecentActivity.TopWarningKinds[1].Message)
+	}
+}
+
+// TestExtractMsgField — slog text-handler messages may contain
+// equals signs, embedded quotes, etc.; pin the parser against
+// the realistic shapes.
+func TestExtractMsgField(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{`time=2026-05-24T01:00:00Z level=WARN msg="simple message"`, "simple message"},
+		{`time=2026-05-24T01:00:00Z level=WARN msg="with key=value inside" extra=1`, "with key=value inside"},
+		{`time=2026-05-24T01:00:00Z level=ERROR msg="" path=/x`, ""},
+		{`time=2026-05-24T01:00:00Z level=INFO no_msg=here`, ""},
+		{`raw text with no slog framing`, ""},
+	}
+	for _, c := range cases {
+		got := extractMsgField(c.in)
+		if got != c.want {
+			t.Errorf("extractMsgField(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestExtractSlogTimestamp(t *testing.T) {
 	cases := []struct {
 		in   string
