@@ -7,6 +7,26 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.18] - 2026-05-24
+
+### Added
+
+- **Perf-budget gate in the standard test suite.**
+  `TestPerfBudgets` runs each hot-path benchmark
+  (`BenchmarkDiff*` / `BenchmarkBuildDesired30Repos`) and fails
+  the build when ns/op exceeds a documented budget. Budgets are
+  padded ~1.5× over current measured baseline so CI noise doesn't
+  flake the gate, but tight enough to catch a real regression
+  before merge. Failing a budget gate forces the PR author to
+  either (a) fix the regression or (b) bump the budget in the
+  same PR with a justification — making the budget trail itself
+  the perf history of the daemon.
+
+  `TestPerfBudgetsSelfCheck` covers the harness so a wrong-
+  direction comparison or muted assertion would itself fail.
+
+  Runs as part of `go test ./...` — no new CI job to maintain.
+
 ## [1.1.17] - 2026-05-24
 
 ### Performance
