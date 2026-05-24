@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -63,22 +64,48 @@ type CostPrior struct {
 // values below err toward conservative — initial routing will
 // favour transports that have historically been reliable.
 func DefaultPriorFor(transportName string) CostPrior {
-	switch transportName {
-	case "syncthing":
+	// Match by transport-name prefix so all `git-ssh+*` / `mutagen+*`
+	// resolver variants share a prior. This keeps the cold-start
+	// decision sensible on installs with multiple resolvers active
+	// (e.g. tailscale + mdns) without requiring a prior per variant.
+	switch {
+	case transportName == "syncthing":
 		return CostPrior{
 			SetupMS:     1500,    // BEP gossip + block scheduling
 			MSPerByte:   0.00002, // ~50 MB/s effective on LAN
 			Weight:      4,
 			HalfLifeSec: 86400, // 1 day
 		}
-	default:
-		// Best-effort default for any git-ssh+* variant or
-		// future transport. Reflects "fast setup, modest
-		// throughput" — typical for shelled-out CLI tools that
-		// authenticate once and stream.
+	case strings.HasPrefix(transportName, "mutagen+"):
+		// Mutagen wins on small files: a long-lived SSH session
+		// + rsync-style delta sync. Low setup (session reuse
+		// across changes), moderate throughput (delta diffs are
+		// efficient but not as parallel as Syncthing's block
+		// streaming on big payloads). Numbers tuned to make the
+		// cold-start decision pick Mutagen for sub-KB changes
+		// and Syncthing for multi-MB ones; observations refine
+		// the actual cross-over point per (peer, repo).
 		return CostPrior{
-			SetupMS:     200,
-			MSPerByte:   0.0002, // ~5 MB/s
+			SetupMS:     100,     // SSH multiplex + mutagen daemon hop
+			MSPerByte:   0.00005, // ~20 MB/s observed delta-sync
+			Weight:      4,
+			HalfLifeSec: 86400,
+		}
+	case strings.HasPrefix(transportName, "git-ssh+"):
+		return CostPrior{
+			SetupMS:     200,    // SSH handshake + git remote auth
+			MSPerByte:   0.0002, // ~5 MB/s typical
+			Weight:      4,
+			HalfLifeSec: 86400,
+		}
+	default:
+		// Conservative fallback for any future transport we
+		// haven't explicitly tuned. Errs slow so first-routing
+		// decisions don't get optimistically biased toward an
+		// unknown candidate.
+		return CostPrior{
+			SetupMS:     500,
+			MSPerByte:   0.001, // ~1 MB/s
 			Weight:      4,
 			HalfLifeSec: 86400,
 		}
