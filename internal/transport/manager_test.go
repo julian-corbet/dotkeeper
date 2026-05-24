@@ -239,6 +239,60 @@ func TestRecordTransferIsolatedPerTransportAndPeer(t *testing.T) {
 	}
 }
 
+// TestDefaultPriorForMatchesByPrefix pins the v1.1.21 contract:
+// transports share a prior by `<family>+<resolver>` prefix so all
+// mutagen+tailscale / mutagen+mdns / git-ssh+* variants pick up
+// the same starting cost. Without prefix matching, every new
+// resolver variant would silently fall through to the conservative
+// default and look slow until the cost model has observed enough
+// real transfers to override the prior.
+func TestDefaultPriorForMatchesByPrefix(t *testing.T) {
+	cases := []struct {
+		name           string
+		transportName  string
+		wantMaxSetupMS float64
+		family         string
+	}{
+		{"syncthing literal", "syncthing", 2000, "syncthing"},
+		{"mutagen+tailscale", "mutagen+tailscale", 200, "mutagen"},
+		{"mutagen+mdns (future variant)", "mutagen+mdns", 200, "mutagen"},
+		{"git-ssh+tailscale", "git-ssh+tailscale", 300, "git-ssh"},
+		{"unknown transport falls through", "exotic+future", 600, "default"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := DefaultPriorFor(tc.transportName)
+			if p.SetupMS > tc.wantMaxSetupMS {
+				t.Errorf("%s: SetupMS=%.0f exceeds budget %.0f (family=%s)",
+					tc.transportName, p.SetupMS, tc.wantMaxSetupMS, tc.family)
+			}
+			if p.Weight == 0 || p.HalfLifeSec == 0 {
+				t.Errorf("%s: prior has zero Weight or HalfLifeSec — would not blend with observations",
+					tc.transportName)
+			}
+		})
+	}
+}
+
+// TestDefaultPriorMutagenBeatsSyncthingOnSetup pins the design
+// intent that Mutagen's prior should make it the preferred choice
+// for tiny changes (low setup cost dominates) while Syncthing wins
+// for large ones (better per-byte throughput). The cross-over
+// point depends on actual observations but the priors must encode
+// the right initial bias.
+func TestDefaultPriorMutagenBeatsSyncthingOnSetup(t *testing.T) {
+	mu := DefaultPriorFor("mutagen+tailscale")
+	st := DefaultPriorFor("syncthing")
+	if mu.SetupMS >= st.SetupMS {
+		t.Errorf("Mutagen prior SetupMS (%.0f) must be lower than Syncthing's (%.0f) so small-change cold start picks Mutagen",
+			mu.SetupMS, st.SetupMS)
+	}
+	if mu.MSPerByte <= st.MSPerByte {
+		t.Errorf("Mutagen prior MSPerByte (%v) should be higher than Syncthing's (%v) so large-change cold start picks Syncthing",
+			mu.MSPerByte, st.MSPerByte)
+	}
+}
+
 // TestRecordTransferKeyedPerRepoUpdatesAggregate pins the v1.1.20
 // invariant: when RecordTransfer is called with a non-empty
 // repoID, it updates BOTH the per-repo model AND the cross-repo
