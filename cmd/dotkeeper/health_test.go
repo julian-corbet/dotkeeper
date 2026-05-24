@@ -632,6 +632,70 @@ func TestHealthTopWarningKindsTracksLastHourSeparately(t *testing.T) {
 	}
 }
 
+// TestHealthDegradedReasonsEnumerates pins the v1.1.10 feature:
+// degradedReasons() returns one string per triggering
+// condition, in the operationally-most-actionable-first order
+// the text renderer relies on.
+func TestHealthDegradedReasonsEnumerates(t *testing.T) {
+	r := &HealthReport{}
+	r.Repos.LaggingBackups = []RepoLaggingBackup{
+		{Path: "/repo/a", LagSeconds: 3600},
+		{Path: "/repo/b", LagSeconds: 7200},
+	}
+	r.Repos.NeverBackedUp = 1
+	r.RecentActivity = &RecentActivity{
+		ErrorsLastHour: 5,
+		PushFailures:   2,
+	}
+
+	reasons := r.degradedReasons()
+	if len(reasons) != 4 {
+		t.Fatalf("got %d reasons, want 4; got=%v", len(reasons), reasons)
+	}
+	// Order: errors-last-hour → push-failures → lagging → never.
+	wantPrefixes := []string{
+		"5 ERROR-level",
+		"2 propagator push failure",
+		"2 repo(s) with git activity",
+		"1 repo(s) tracked but never",
+	}
+	for i, want := range wantPrefixes {
+		if !strings.HasPrefix(reasons[i], want) {
+			t.Errorf("reason[%d] = %q, want prefix %q", i, reasons[i], want)
+		}
+	}
+}
+
+// TestHealthDegradedReasonsEmptyWhenHealthy — a clean report
+// produces zero reasons, so degraded() returns false and the
+// text renderer falls into the "healthy" branch.
+func TestHealthDegradedReasonsEmptyWhenHealthy(t *testing.T) {
+	r := &HealthReport{} // all fields zero
+	if got := r.degradedReasons(); len(got) != 0 {
+		t.Errorf("healthy report should yield 0 reasons; got %v", got)
+	}
+	if r.degraded() {
+		t.Error("healthy report should not be degraded")
+	}
+}
+
+// TestHealthTextOutputShowsDegradedReasons — the rendered text
+// includes the "degraded because:" footer with one bullet per
+// reason. Operators read this to triage without scrolling.
+func TestHealthTextOutputShowsDegradedReasons(t *testing.T) {
+	r := &HealthReport{}
+	r.Repos.LaggingBackups = []RepoLaggingBackup{{Path: "/repo/x", LagSeconds: 100}}
+	var buf bytes.Buffer
+	writeHealthText(&buf, r)
+	out := buf.String()
+	if !strings.Contains(out, "degraded because:") {
+		t.Errorf("text output missing 'degraded because:' footer; got:\n%s", out)
+	}
+	if !strings.Contains(out, "1 repo(s) with git activity newer than the last backup") {
+		t.Errorf("text output missing specific lagging-backup reason; got:\n%s", out)
+	}
+}
+
 // TestHealthExplainRendersKnownPatterns pins the v1.1.9
 // --explain feature: for each warning kind in the report whose
 // message matches one of the knownPatternExplanations, the
