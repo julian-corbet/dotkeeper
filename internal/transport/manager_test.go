@@ -170,17 +170,17 @@ func TestRouteAdaptsAfterRecordTransfer(t *testing.T) {
 	// Feed observations showing gitssh is unexpectedly slow for
 	// small payloads (e.g. peer is heavily loaded).
 	for i := 0; i < 200; i++ {
-		m.RecordTransfer("git-ssh+test", "p", int64(1024+i*100), 5*time.Second)
+		m.RecordTransfer("git-ssh+test", "p", "", int64(1024+i*100), 5*time.Second)
 	}
 	// And syncthing observed as fast.
 	for i := 0; i < 200; i++ {
-		m.RecordTransfer("syncthing", "p", int64(1024+i*100), 100*time.Millisecond)
+		m.RecordTransfer("syncthing", "p", "", int64(1024+i*100), 100*time.Millisecond)
 	}
 
 	pick, _ = m.Route(Change{SizeHint: 1024}, "p")
 	if pick.Name() != "syncthing" {
-		setupG, _, _ := m.ModelParametersFor("git-ssh+test", "p")
-		setupS, _, _ := m.ModelParametersFor("syncthing", "p")
+		setupG, _, _ := m.ModelParametersFor("git-ssh+test", "p", "")
+		setupS, _, _ := m.ModelParametersFor("syncthing", "p", "")
 		t.Errorf("after observations, expected syncthing for 1KB; picked %s. gitssh setup=%.2f syncthing setup=%.2f",
 			pick.Name(), setupG, setupS)
 	}
@@ -222,11 +222,11 @@ func TestRecordTransferIsolatedPerTransportAndPeer(t *testing.T) {
 	})
 
 	// Recording on (t1, peer-a) must not affect (t1, peer-b) or (t2, peer-a).
-	m.RecordTransfer("t1", "peer-a", 1024, 1*time.Second)
+	m.RecordTransfer("t1", "peer-a", "", 1024, 1*time.Second)
 
-	_, _, nA := m.ModelParametersFor("t1", "peer-a")
-	_, _, nB := m.ModelParametersFor("t1", "peer-b")
-	_, _, nC := m.ModelParametersFor("t2", "peer-a")
+	_, _, nA := m.ModelParametersFor("t1", "peer-a", "")
+	_, _, nB := m.ModelParametersFor("t1", "peer-b", "")
+	_, _, nC := m.ModelParametersFor("t2", "peer-a", "")
 
 	if nA == 0 {
 		t.Error("(t1, peer-a) should have one observation")
@@ -236,6 +236,51 @@ func TestRecordTransferIsolatedPerTransportAndPeer(t *testing.T) {
 	}
 	if nC != 0 {
 		t.Errorf("(t2, peer-a) should have zero observations; got %.2f", nC)
+	}
+}
+
+// TestRecordTransferKeyedPerRepoUpdatesAggregate pins the v1.1.20
+// invariant: when RecordTransfer is called with a non-empty
+// repoID, it updates BOTH the per-repo model AND the cross-repo
+// aggregate slot (repoID=""). The aggregate slot is what fresh
+// repos read on their first sync — without the mirror-write,
+// every new folder would start with the static prior even on a
+// fleet that's been running for months.
+func TestRecordTransferKeyedPerRepoUpdatesAggregate(t *testing.T) {
+	m := NewManager([]Transport{
+		&fakeTransport{name: "t1", available: true, probeLatency: 5 * time.Millisecond},
+	})
+	// Record one observation against (t1, peer-a, repoA).
+	m.RecordTransfer("t1", "peer-a", "repoA", 1024, 1*time.Second)
+
+	_, _, nRepoA := m.ModelParametersFor("t1", "peer-a", "repoA")
+	_, _, nAggr := m.ModelParametersFor("t1", "peer-a", "")
+	_, _, nRepoB := m.ModelParametersFor("t1", "peer-a", "repoB")
+
+	if nRepoA == 0 {
+		t.Error("(t1, peer-a, repoA) should reflect the observation")
+	}
+	if nAggr == 0 {
+		t.Error("aggregate (t1, peer-a, \"\") must mirror per-repo observations; got 0")
+	}
+	if nRepoB != 0 {
+		t.Errorf("a different repo's slot must not be touched; got nRepoB=%.2f", nRepoB)
+	}
+}
+
+// TestRecordTransferAggregateOnlyOnceWhenRepoEmpty — when the
+// caller already passes repoID="", the aggregate slot must only
+// receive the observation once. A double-record would silently
+// halve the regression's effective learning rate.
+func TestRecordTransferAggregateOnlyOnceWhenRepoEmpty(t *testing.T) {
+	m := NewManager([]Transport{
+		&fakeTransport{name: "t1", available: true, probeLatency: 5 * time.Millisecond},
+	})
+	m.RecordTransfer("t1", "peer-a", "", 1024, 1*time.Second)
+
+	_, _, n := m.ModelParametersFor("t1", "peer-a", "")
+	if n > 1.5 {
+		t.Errorf("aggregate should reflect ONE observation; got %.2f effective samples (double-record bug)", n)
 	}
 }
 
@@ -256,9 +301,9 @@ func TestRecordTransferAcceptsUnknownTransportName(t *testing.T) {
 
 	// Record under a name that was never registered. Must not
 	// panic and must absorb the observation under a fresh model.
-	m.RecordTransfer("never-registered", "peer-a", 1024, 1*time.Second)
+	m.RecordTransfer("never-registered", "peer-a", "", 1024, 1*time.Second)
 
-	_, _, n := m.ModelParametersFor("never-registered", "peer-a")
+	_, _, n := m.ModelParametersFor("never-registered", "peer-a", "")
 	if n == 0 {
 		t.Error("RecordTransfer with unknown transport name silently dropped the observation; effective-sample count = 0")
 	}

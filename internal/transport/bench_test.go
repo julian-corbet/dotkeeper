@@ -56,6 +56,6 @@ func BenchmarkManagerRecordTransfer(b *testing.B) {
 	m.Discover(context.Background(), Peer{Name: "p"})
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		m.RecordTransfer("git-ssh+test", "p", 4096, 50*time.Millisecond)
+		m.RecordTransfer("git-ssh+test", "p", "", 4096, 50*time.Millisecond)
 	}
 }
