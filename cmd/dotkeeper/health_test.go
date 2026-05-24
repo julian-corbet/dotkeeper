@@ -5,7 +5,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -629,6 +631,81 @@ func TestHealthTopWarningKindsTracksLastHourSeparately(t *testing.T) {
 	}
 	if flapping.Message != "flapping" || flapping.Count != 3 || flapping.CountLastHour != 3 {
 		t.Errorf("flapping row = %+v, want {flapping, 3, 3}", flapping)
+	}
+}
+
+// TestHealthWatchRendersThenHonoursCtxCancel pins the v1.1.11
+// --watch loop: render once, then on each tick, then exit
+// promptly when ctx is cancelled. The render callback is
+// stubbed so the test doesn't depend on real state files; we
+// just verify call count and timely exit.
+func TestHealthWatchRendersThenHonoursCtxCancel(t *testing.T) {
+	var buf bytes.Buffer
+	calls := 0
+	render := func() (*HealthReport, error) {
+		calls++
+		return &HealthReport{}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = runHealthWatch(ctx, &buf, 50*time.Millisecond, render)
+		close(done)
+	}()
+
+	// Wait for at least two ticks to demonstrate the loop is
+	// actually iterating, then cancel.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("runHealthWatch did not return within 2s of ctx cancel")
+	}
+
+	if calls < 2 {
+		t.Errorf("render called %d times, want ≥2 (loop should have ticked at least twice)", calls)
+	}
+	// Output should contain the clear-screen escape sequence.
+	if !strings.Contains(buf.String(), "\x1b[2J") {
+		t.Errorf("watch output missing clear-screen escape; got:\n%q", buf.String())
+	}
+}
+
+// TestHealthWatchSurvivesRenderError — when the render callback
+// errors (transient state-file unreadable, daemon dying), the
+// watch loop logs and continues rather than crashing. Daemons
+// being watched on a TV in the corner shouldn't black-screen
+// because of one bad tick.
+func TestHealthWatchSurvivesRenderError(t *testing.T) {
+	var buf bytes.Buffer
+	calls := 0
+	render := func() (*HealthReport, error) {
+		calls++
+		if calls == 1 {
+			return nil, errors.New("transient state read failure")
+		}
+		return &HealthReport{}, nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		_ = runHealthWatch(ctx, &buf, 50*time.Millisecond, render)
+		close(done)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+
+	if calls < 2 {
+		t.Fatalf("loop only ran %d times; should have continued past the first error", calls)
+	}
+	if !strings.Contains(buf.String(), "health collection failed") {
+		t.Errorf("error output missing the diagnostic line; got:\n%s", buf.String())
 	}
 }
 

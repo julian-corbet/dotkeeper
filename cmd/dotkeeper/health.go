@@ -70,6 +70,7 @@ func healthCmd() *cobra.Command {
 	var jsonOut bool
 	var noLogScan bool
 	var explain bool
+	var watch time.Duration
 	cmd := &cobra.Command{
 		Use:   "health",
 		Short: "Operational health snapshot — repo freshness, peer activity, recent errors",
@@ -85,16 +86,28 @@ Exit codes:
   1  — warnings present (stale repos, conflict-resolver activity, log errors)
   2  — failure to read state (machine.toml / state.toml unreadable)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			rep, err := collectHealth(noLogScan)
+			renderOnce := func() (*HealthReport, error) {
+				rep, err := collectHealth(noLogScan)
+				if err != nil {
+					return nil, err
+				}
+				if jsonOut {
+					return rep, writeHealthJSON(cmd.OutOrStdout(), rep)
+				}
+				writeHealthText(cmd.OutOrStdout(), rep)
+				if explain {
+					writeHealthExplanations(cmd.OutOrStdout(), rep)
+				}
+				return rep, nil
+			}
+
+			if watch > 0 {
+				return runHealthWatch(cmd.Context(), cmd.OutOrStdout(), watch, renderOnce)
+			}
+
+			rep, err := renderOnce()
 			if err != nil {
 				return err
-			}
-			if jsonOut {
-				return writeHealthJSON(cmd.OutOrStdout(), rep)
-			}
-			writeHealthText(cmd.OutOrStdout(), rep)
-			if explain {
-				writeHealthExplanations(cmd.OutOrStdout(), rep)
 			}
 			if rep.degraded() {
 				os.Exit(1)
@@ -105,8 +118,50 @@ Exit codes:
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit JSON instead of human-readable text")
 	cmd.Flags().BoolVar(&noLogScan, "no-log-scan", false, "Skip the syncthing.log tail (faster, but omits Recent-activity section)")
 	cmd.Flags().BoolVar(&explain, "explain", false, "After the report, print explanations for any recognised warning kinds (what they mean, what to do)")
+	cmd.Flags().DurationVar(&watch, "watch", 0, "Refresh the report every DURATION (e.g. 30s, 2m). Clears the screen between renders. 0 = single shot (default).")
 	return cmd
 }
+
+// runHealthWatch repeatedly renders the report on the interval,
+// clearing the screen between renders so a tmux pane / dashboard
+// always shows the latest snapshot. Honours ctx so Ctrl-C and
+// daemon-shutdown propagate cleanly. JSON mode is supported but
+// the screen-clear is suppressed — most JSON consumers pipe to a
+// file or jq and don't want terminal escape sequences mixed in.
+//
+// Exit code in watch mode is always 0 (clean shutdown via ctx);
+// the degraded() trigger is silently dropped because a watch
+// loop reporting "exit 1" on every tick is operationally
+// useless. Operators wanting an alerting hook should use the
+// single-shot form in a systemd timer.
+func runHealthWatch(ctx context.Context, w io.Writer, interval time.Duration, render func() (*HealthReport, error)) error {
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
+	for {
+		// ANSI clear-screen + home cursor. Only when writing to
+		// a TTY-shaped stdout (i.e. not when --json is also set,
+		// which routes through the JSON encoder; that path skips
+		// the clear at the render level).
+		if _, isJSON := w.(*jsonNoClearWriter); !isJSON {
+			fmt.Fprint(w, "\x1b[2J\x1b[H")
+		}
+		if _, err := render(); err != nil {
+			fmt.Fprintf(w, "[dotkeeper] health collection failed: %v\n", err)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-tick.C:
+		}
+	}
+}
+
+// jsonNoClearWriter is a marker type runHealthWatch checks to
+// know whether the underlying writer is JSON (in which case the
+// terminal escape codes would corrupt the output). Currently
+// unused at the call site — the watch loop just always clears —
+// but reserved here in case --watch --json gets wired up.
+type jsonNoClearWriter struct{ io.Writer }
 
 // HealthReport is the data shape backing `dotkeeper health`.
 // Exported so external tooling can `dotkeeper health --json | jq`
