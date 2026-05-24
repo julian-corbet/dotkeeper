@@ -267,10 +267,7 @@ func (b *Benchmarker) shouldBenchmark(transportName, peerName, folderID string, 
 		return false
 	}
 	_, _, n := b.rec.ModelParametersFor(transportName, peerName, folderID)
-	if n >= b.convergedN {
-		return false
-	}
-	return true
+	return n < b.convergedN
 }
 
 // benchmarkOne writes a 64 KB probe file under <folder>/.dkbench,

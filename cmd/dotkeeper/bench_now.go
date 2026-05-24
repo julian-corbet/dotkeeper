@@ -92,7 +92,7 @@ func runBenchNow(ctx context.Context, folderFlag string) error {
 		benchmarker.Options{})
 
 	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TRANSPORT\tPEER\tFOLDER\tELAPSED\tRESULT")
+	_, _ = fmt.Fprintln(tw, "TRANSPORT\tPEER\tFOLDER\tELAPSED\tRESULT")
 	for _, folder := range folders {
 		for _, r := range b.BenchmarkNow(ctx, folder) {
 			result := "ok"
@@ -106,7 +106,7 @@ func runBenchNow(ctx context.Context, folderFlag string) error {
 			// the probe we just ran.
 			_, msPerByte, _ := mgr.ModelParametersFor(r.Transport, r.Peer, r.Folder)
 			perKBms := msPerByte * 1024
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%.2f ms/KB\t%s\n",
+			_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%.2f ms/KB\t%s\n",
 				r.Transport, r.Peer, folderLabel, perKBms, result)
 		}
 	}
