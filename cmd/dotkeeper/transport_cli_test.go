@@ -266,13 +266,13 @@ func TestResolveBareInitAddressOverrideWins(t *testing.T) {
 
 	addr, source, err := resolveBareInitAddress(context.Background(),
 		config.PeerEntry{Name: "laptop"},
-		"richc@override.example",
+		"alice@override.example",
 		resolvers)
 	if err != nil {
 		t.Fatalf("resolveBareInitAddress: %v", err)
 	}
-	if addr != "richc@override.example" || source != "override" {
-		t.Errorf("override path returned addr=%q source=%q; want richc@override.example, override", addr, source)
+	if addr != "alice@override.example" || source != "override" {
+		t.Errorf("override path returned addr=%q source=%q; want alice@override.example, override", addr, source)
 	}
 	if called {
 		t.Error("resolver was called despite override being set; override must short-circuit")
@@ -412,7 +412,7 @@ func TestBareInitCmdRunsConfigForEachFolderAndPeer(t *testing.T) {
 	out := &bytes.Buffer{}
 	cmd.SetOut(out)
 	cmd.SetErr(out)
-	cmd.SetArgs([]string{"--peer=remote-laptop", "--host=richc@10.0.0.5"})
+	cmd.SetArgs([]string{"--peer=remote-laptop", "--host=alice@10.0.0.5"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("bare-init: %v\noutput:\n%s", err, out.String())
 	}
@@ -426,8 +426,8 @@ func TestBareInitCmdRunsConfigForEachFolderAndPeer(t *testing.T) {
 		t.Fatalf("expected at least 1 SSH invocation, got 0:\n%s", out.String())
 	}
 	for _, c := range calls {
-		if c.target != "richc@10.0.0.5" {
-			t.Errorf("ssh target = %q, want richc@10.0.0.5", c.target)
+		if c.target != "alice@10.0.0.5" {
+			t.Errorf("ssh target = %q, want alice@10.0.0.5", c.target)
 		}
 		joined := strings.Join(c.args, " ")
 		for _, want := range []string{"git", "config", "receive.denyCurrentBranch", "updateInstead"} {
@@ -482,7 +482,7 @@ func TestBareInitCmdReportsErrorsForFailedPeers(t *testing.T) {
 	cmd.SetOut(out)
 	cmd.SetErr(out)
 	cmd.SilenceUsage = true
-	cmd.SetArgs([]string{"--peer=broken-laptop", "--host=richc@10.0.0.5"})
+	cmd.SetArgs([]string{"--peer=broken-laptop", "--host=alice@10.0.0.5"})
 	err := cmd.Execute()
 	if err == nil {
 		t.Fatal("expected bare-init to return non-nil error when SSH fails; got nil")
@@ -532,7 +532,7 @@ func TestBareInitSSHRunnerInjection(t *testing.T) {
 		return nil, nil
 	}
 
-	out, err := bareInitSSHRunner(context.Background(), "richc@laptop",
+	out, err := bareInitSSHRunner(context.Background(), "alice@laptop",
 		"git", "-C", "/tmp/repo", "config", "receive.denyCurrentBranch", "updateInstead")
 	if err != nil {
 		t.Fatalf("stub runner: %v", err)
@@ -540,8 +540,8 @@ func TestBareInitSSHRunnerInjection(t *testing.T) {
 	if string(out) != "" {
 		t.Errorf("expected empty output from stub; got %q", out)
 	}
-	if capturedTarget != "richc@laptop" {
-		t.Errorf("target = %q, want richc@laptop", capturedTarget)
+	if capturedTarget != "alice@laptop" {
+		t.Errorf("target = %q, want alice@laptop", capturedTarget)
 	}
 	wantArgs := []string{"git", "-C", "/tmp/repo", "config", "receive.denyCurrentBranch", "updateInstead"}
 	if len(capturedArgs) != len(wantArgs) {

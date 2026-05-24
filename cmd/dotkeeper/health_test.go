@@ -632,6 +632,81 @@ func TestHealthTopWarningKindsTracksLastHourSeparately(t *testing.T) {
 	}
 }
 
+// TestHealthExplainRendersKnownPatterns pins the v1.1.9
+// --explain feature: for each warning kind in the report whose
+// message matches one of the knownPatternExplanations, the
+// explainer renders a "what this means / what to do" line.
+// Unknown patterns are silently skipped.
+func TestHealthExplainRendersKnownPatterns(t *testing.T) {
+	r := &HealthReport{
+		RecentActivity: &RecentActivity{
+			TopWarningKinds: []WarningKind{
+				{Message: "Unexpected folder ID in ClusterConfig; etc etc"},
+				{Message: "Something totally unknown"},
+				{Message: "Detected a flip-flopping listener server=https://x"},
+			},
+		},
+	}
+	var buf bytes.Buffer
+	writeHealthExplanations(&buf, r)
+	out := buf.String()
+
+	if !strings.Contains(out, "A peer is offering a folder") {
+		t.Errorf("explain output missing folder-ID-in-ClusterConfig advice; got:\n%s", out)
+	}
+	if !strings.Contains(out, "flip-flopping") || !strings.Contains(out, "NAT/firewall") {
+		t.Errorf("explain output missing flip-flopping advice; got:\n%s", out)
+	}
+	if strings.Contains(out, "Something totally unknown") {
+		t.Errorf("unknown pattern should be silently skipped; got:\n%s", out)
+	}
+}
+
+// TestHealthExplainSilentWhenNothingRecognised — when no
+// warning kinds match the known patterns, the explain section
+// must produce ZERO output (not even the heading). The mode is
+// opt-in help; an empty heading would be visual noise.
+func TestHealthExplainSilentWhenNothingRecognised(t *testing.T) {
+	r := &HealthReport{
+		RecentActivity: &RecentActivity{
+			TopWarningKinds: []WarningKind{
+				{Message: "Some random message not in the table"},
+			},
+		},
+	}
+	var buf bytes.Buffer
+	writeHealthExplanations(&buf, r)
+	if buf.Len() != 0 {
+		t.Errorf("explain should produce no output when no patterns match; got:\n%s", buf.String())
+	}
+}
+
+// TestHealthExplainSilentWhenNoActivity — when RecentActivity
+// is nil (e.g. --no-log-scan was used), explain must not panic
+// or render anything.
+func TestHealthExplainSilentWhenNoActivity(t *testing.T) {
+	r := &HealthReport{RecentActivity: nil}
+	var buf bytes.Buffer
+	writeHealthExplanations(&buf, r)
+	if buf.Len() != 0 {
+		t.Errorf("explain should produce no output for nil RecentActivity; got:\n%s", buf.String())
+	}
+}
+
+// TestWrapForExplain — the explainer wraps long lines for
+// readability while keeping words atomic.
+func TestWrapForExplain(t *testing.T) {
+	got := wrapForExplain("one two three four five six seven eight nine ten", 20)
+	// Each line ≤ 20 chars (after the implicit 4-char indent on
+	// continuations), no mid-word break.
+	for _, line := range strings.Split(got, "\n") {
+		trimmed := strings.TrimLeft(line, " ")
+		if len(trimmed) > 20 {
+			t.Errorf("line exceeds 20-char width: %q (%d chars)", trimmed, len(trimmed))
+		}
+	}
+}
+
 // TestExtractMsgField — slog text-handler messages may contain
 // equals signs, embedded quotes, etc.; pin the parser against
 // the realistic shapes.
