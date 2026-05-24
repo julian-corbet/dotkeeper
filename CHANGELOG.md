@@ -7,6 +7,51 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.14] - 2026-05-24
+
+### Fixed
+
+- **Auto-accept ERROR storm on partial-overlap fleets.** dotkeeper's
+  `AddDevice` used to set `autoAcceptFolders=true` on every peer
+  it paired with, but never populated `<defaults><folder><path>`.
+  The combination guarantees auto-accept can never succeed: every
+  ClusterConfig from a peer announcing a folder the local side
+  hasn't subscribed to produces a `Failed to auto-accept folder
+  due to path conflict` ERROR plus an `Unexpected folder ID in
+  ClusterConfig` WARN. On real two-machine installs with a few
+  desktop-only repos, this generated 1000+ ERRORs/hour, which in
+  turn pegged a CPU core and tripped `dotkeeper health`'s
+  `degraded` threshold.
+
+  Fix is two-part:
+  1. `AddDevice` now defaults `autoAcceptFolders=false`. Folder
+     membership is opt-in per machine — receivers explicitly join
+     what they want. Matches Syncthing's offer/accept model
+     without the implicit-spread footgun.
+  2. A one-shot daemon-startup migration
+     (`MigrateDisableAutoAcceptFolders`) walks every existing
+     device and flips `autoAcceptFolders` to false in a single
+     `SetConfig` call. Idempotent: no PUT issued when nothing
+     needs migrating. Upgrading installs immediately benefit
+     without operator intervention.
+
+  Architectural note: declarative subscription
+  (`dotkeeper accept <folder-id> --path <path>`) and surfacing
+  offered-but-not-subscribed folders in `dotkeeper status` /
+  `health` are queued as a follow-up — this release just removes
+  the ERROR storm at its source.
+
+- **`LowerSelf` race in `internal/procnice`.** Go runtime
+  occasionally spawned an OS thread (GC worker, sysmon,
+  scavenger) between `os.ReadDir("/proc/self/task")` and the
+  per-TID `setpriority` call, leaving that thread at its
+  original niceness. Surfaced as flaky
+  `TestLowerSelfNicesAllThreads`. Now does two enumeration
+  passes; the second catches any thread that appeared during
+  the first. Threads created during the second pass are
+  short-lived runtime helpers — vanishingly unlikely to
+  affect anything operator-visible.
+
 ## [1.1.13] - 2026-05-24
 
 ### Security

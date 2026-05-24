@@ -91,6 +91,15 @@ func TestAddDevice(t *testing.T) {
 	if dev["name"] != "my-peer" {
 		t.Errorf("name = %v", dev["name"])
 	}
+	// Folder membership is opt-in per machine — AddDevice must never
+	// set autoAcceptFolders=true. With this false, a peer offering a
+	// folder the local side hasn't subscribed to is silently ignored
+	// (Syncthing logs an informational WARN once per ClusterConfig
+	// but does NOT enter the auto-accept failure loop that produces
+	// thousands of ERRORs/hour on partial-overlap fleets).
+	if v, _ := dev["autoAcceptFolders"].(bool); v {
+		t.Error("autoAcceptFolders must default to false")
+	}
 }
 
 func TestAddDeviceSkipsDuplicate(t *testing.T) {
@@ -101,7 +110,7 @@ func TestAddDeviceSkipsDuplicate(t *testing.T) {
 		case "GET":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"devices": []any{
-					map[string]any{"deviceID": "EXISTING-ID", "name": "existing"},
+					map[string]any{"deviceID": "EXISTING-ID", "name": "existing", "autoAcceptFolders": false},
 				},
 			})
 		case "PUT":
@@ -120,6 +129,117 @@ func TestAddDeviceSkipsDuplicate(t *testing.T) {
 	if putCalled {
 		t.Error("PUT should not be called for existing device")
 	}
+}
+
+// TestAddDeviceMigratesExistingAutoAccept proves the in-place migration
+// path: if a device already exists with autoAcceptFolders=true (an
+// install created before v1.1.14 flipped the default), AddDevice must
+// PATCH it down to false rather than silently no-oping. Without this,
+// upgrading dotkeeper wouldn't stop the existing ERROR storm on
+// already-paired peers — only newly-paired ones would benefit.
+func TestAddDeviceMigratesExistingAutoAccept(t *testing.T) {
+	var lastConfig map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "GET":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"devices": []any{
+					map[string]any{"deviceID": "STALE-ID", "name": "stale", "autoAcceptFolders": true},
+				},
+			})
+		case "PUT":
+			_ = json.NewDecoder(r.Body).Decode(&lastConfig)
+			w.WriteHeader(200)
+		}
+	}))
+	defer server.Close()
+
+	client := &Client{baseURL: server.URL, apiKey: "key", http: server.Client()}
+
+	if err := client.AddDevice("STALE-ID", "stale"); err != nil {
+		t.Fatalf("AddDevice: %v", err)
+	}
+	devs, _ := lastConfig["devices"].([]any)
+	if len(devs) != 1 {
+		t.Fatalf("expected 1 device after migration, got %d", len(devs))
+	}
+	dm := devs[0].(map[string]any)
+	if v, _ := dm["autoAcceptFolders"].(bool); v {
+		t.Error("autoAcceptFolders should be false after AddDevice migration")
+	}
+}
+
+// TestMigrateDisableAutoAcceptFolders covers the one-shot daemon-startup
+// migration: every device with autoAcceptFolders=true is flipped to
+// false in a single SetConfig, and the count of devices migrated is
+// returned. When nothing needs migrating, no PUT is issued at all.
+func TestMigrateDisableAutoAcceptFolders(t *testing.T) {
+	t.Run("migrates true to false", func(t *testing.T) {
+		var lastConfig map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case "GET":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"devices": []any{
+						map[string]any{"deviceID": "A", "autoAcceptFolders": true},
+						map[string]any{"deviceID": "B", "autoAcceptFolders": false},
+						map[string]any{"deviceID": "C", "autoAcceptFolders": true},
+					},
+				})
+			case "PUT":
+				_ = json.NewDecoder(r.Body).Decode(&lastConfig)
+				w.WriteHeader(200)
+			}
+		}))
+		defer server.Close()
+
+		client := &Client{baseURL: server.URL, apiKey: "key", http: server.Client()}
+		n, err := client.MigrateDisableAutoAcceptFolders()
+		if err != nil {
+			t.Fatalf("MigrateDisableAutoAcceptFolders: %v", err)
+		}
+		if n != 2 {
+			t.Errorf("migrated count = %d, want 2", n)
+		}
+		devs := lastConfig["devices"].([]any)
+		for _, d := range devs {
+			dm := d.(map[string]any)
+			if v, _ := dm["autoAcceptFolders"].(bool); v {
+				t.Errorf("device %v still has autoAcceptFolders=true", dm["deviceID"])
+			}
+		}
+	})
+
+	t.Run("no PUT when already migrated", func(t *testing.T) {
+		putCalled := false
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case "GET":
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"devices": []any{
+						map[string]any{"deviceID": "A", "autoAcceptFolders": false},
+						map[string]any{"deviceID": "B", "autoAcceptFolders": false},
+					},
+				})
+			case "PUT":
+				putCalled = true
+				w.WriteHeader(200)
+			}
+		}))
+		defer server.Close()
+
+		client := &Client{baseURL: server.URL, apiKey: "key", http: server.Client()}
+		n, err := client.MigrateDisableAutoAcceptFolders()
+		if err != nil {
+			t.Fatalf("MigrateDisableAutoAcceptFolders: %v", err)
+		}
+		if n != 0 {
+			t.Errorf("migrated count = %d, want 0", n)
+		}
+		if putCalled {
+			t.Error("PUT should not be issued when nothing needs migration")
+		}
+	})
 }
 
 func TestAddOrUpdateFolder(t *testing.T) {
