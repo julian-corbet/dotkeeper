@@ -488,6 +488,20 @@ func startReconcileDaemon(
 	var stClient *stclient.Client
 	if key, err := engine().APIKey(); err == nil {
 		stClient = stclient.New(key)
+		// One-shot migration for installs created before v1.1.14:
+		// dotkeeper used to set autoAcceptFolders=true on every
+		// device, which combined with the missing default folder
+		// path produced a continuous "Failed to auto-accept folder
+		// due to path conflict" ERROR storm for every folder a peer
+		// offered that the local side hadn't subscribed to. Folder
+		// membership is now opt-in per machine.
+		if n, err := stClient.MigrateDisableAutoAcceptFolders(); err != nil {
+			logger.WarnContext(ctx, "auto-accept migration failed",
+				"err", err)
+		} else if n > 0 {
+			logger.InfoContext(ctx, "migrated autoAcceptFolders=false",
+				"devices", n)
+		}
 	}
 
 	applier := &reconcile.RealApplier{

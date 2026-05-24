@@ -141,7 +141,11 @@ func (c *Client) SetConfig(cfg map[string]any) error {
 	return nil
 }
 
-// AddDevice adds a device to the Syncthing config if not present.
+// AddDevice adds a device to the Syncthing config if not present, or
+// reasserts dotkeeper-owned device fields (currently just
+// autoAcceptFolders=false) on the existing entry. Reasserting on every
+// call lets a daemon upgrade migrate older installs that were created
+// when AddDevice set autoAcceptFolders=true by default.
 func (c *Client) AddDevice(deviceID, name string) error {
 	cfg, err := c.GetConfig()
 	if err != nil {
@@ -149,24 +153,74 @@ func (c *Client) AddDevice(deviceID, name string) error {
 	}
 
 	devices, _ := cfg["devices"].([]any)
-	for _, d := range devices {
+	for i, d := range devices {
 		dm, _ := d.(map[string]any)
 		if dm["deviceID"] == deviceID {
-			return nil // already present
+			if v, _ := dm["autoAcceptFolders"].(bool); v {
+				dm["autoAcceptFolders"] = false
+				devices[i] = dm
+				cfg["devices"] = devices
+				return c.SetConfig(cfg)
+			}
+			return nil
 		}
 	}
 
 	newDevice := map[string]any{
-		"deviceID":          deviceID,
-		"name":              name,
-		"addresses":         []string{"dynamic"},
-		"compression":       "metadata",
-		"introducer":        false,
-		"autoAcceptFolders": true,
+		"deviceID":  deviceID,
+		"name":      name,
+		"addresses": []string{"dynamic"},
+		"compression": "metadata",
+		"introducer":  false,
+		// Folder membership is opt-in per machine: each receiver
+		// decides which offered folders to take. Auto-accept would
+		// also require a sane default folder path template — without
+		// one, Syncthing logs ERROR "Failed to auto-accept folder
+		// due to path conflict" on every ClusterConfig from a peer
+		// announcing folders we don't have, which is the default
+		// state of any partial-overlap fleet (machine A has repos
+		// X+Y, machine B has Y+Z — both peers will offer the
+		// non-shared half forever). Keeping this false eliminates
+		// that storm at the source.
+		"autoAcceptFolders": false,
 	}
 	devices = append(devices, newDevice)
 	cfg["devices"] = devices
 	return c.SetConfig(cfg)
+}
+
+// MigrateDisableAutoAcceptFolders walks every device in the current
+// Syncthing config and clears the autoAcceptFolders flag if set. Used
+// at daemon startup to migrate installs created before the default
+// flipped to false in v1.1.14. Returns the count of devices migrated
+// so callers can log a one-line summary.
+//
+// Idempotent: a no-op once every device is already false. The single
+// GetConfig + (optional) SetConfig round trip costs ~milliseconds at
+// startup and saves the ERROR-storm cost for the life of the daemon.
+func (c *Client) MigrateDisableAutoAcceptFolders() (int, error) {
+	cfg, err := c.GetConfig()
+	if err != nil {
+		return 0, err
+	}
+	devices, _ := cfg["devices"].([]any)
+	migrated := 0
+	for i, d := range devices {
+		dm, _ := d.(map[string]any)
+		if v, _ := dm["autoAcceptFolders"].(bool); v {
+			dm["autoAcceptFolders"] = false
+			devices[i] = dm
+			migrated++
+		}
+	}
+	if migrated == 0 {
+		return 0, nil
+	}
+	cfg["devices"] = devices
+	if err := c.SetConfig(cfg); err != nil {
+		return 0, err
+	}
+	return migrated, nil
 }
 
 // Connection represents one entry of /rest/system/connections.
