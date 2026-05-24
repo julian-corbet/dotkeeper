@@ -388,6 +388,88 @@ func TestHealthFallsBackToCacheWhenLiveUnavailable(t *testing.T) {
 	}
 }
 
+// TestHealthHistoricalErrorsDontDegrade pins the v1.1.5 fix:
+// log entries with level=ERROR that fall in the 24h display
+// window but are older than 1 hour must contribute to
+// ErrorCount (for display) but NOT to ErrorsLastHour (the
+// degraded() trigger). Without this distinction, a syncthing.log
+// containing pre-fix error noise permanently marks the daemon as
+// degraded — exactly the false signal that trained the operator
+// to ignore the command.
+func TestHealthHistoricalErrorsDontDegrade(t *testing.T) {
+	stateDir, _ := setupHealthFixture(t)
+	writeMachineToml(t, "host", nil)
+	writeStateToml(t, &config.StateV2{SchemaVersion: 2})
+
+	now := time.Now()
+	oldButInWindow := now.Add(-12 * time.Hour).UTC().Format(time.RFC3339)
+	veryRecent := now.Add(-30 * time.Minute).UTC().Format(time.RFC3339)
+	logBody := strings.Join([]string{
+		// 5 historical errors — should land in ErrorCount but
+		// not ErrorsLastHour
+		`time=` + oldButInWindow + ` level=ERROR msg="historical noise 1"`,
+		`time=` + oldButInWindow + ` level=ERROR msg="historical noise 2"`,
+		`time=` + oldButInWindow + ` level=ERROR msg="historical noise 3"`,
+		`time=` + oldButInWindow + ` level=ERROR msg="historical noise 4"`,
+		`time=` + oldButInWindow + ` level=ERROR msg="historical noise 5"`,
+		// No recent errors — the daemon's current state is clean
+		`time=` + veryRecent + ` level=INFO msg="reconcile triggered"`,
+		``,
+	}, "\n")
+	logPath := filepath.Join(stateDir, "dotkeeper", "syncthing.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte(logBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, err := collectHealth(false)
+	if err != nil {
+		t.Fatalf("collectHealth: %v", err)
+	}
+	if r.RecentActivity == nil {
+		t.Fatal("RecentActivity nil; log scan must have populated it")
+	}
+	if r.RecentActivity.ErrorCount != 5 {
+		t.Errorf("ErrorCount = %d, want 5 (all historical errors counted for display)",
+			r.RecentActivity.ErrorCount)
+	}
+	if r.RecentActivity.ErrorsLastHour != 0 {
+		t.Errorf("ErrorsLastHour = %d, want 0 (historical errors must not count toward the degraded trigger)",
+			r.RecentActivity.ErrorsLastHour)
+	}
+	if r.degraded() {
+		t.Errorf("degraded must NOT fire when all errors are historical; report=%+v", r.RecentActivity)
+	}
+}
+
+// TestHealthRecentErrorsDoDegrade — opposite case. An error
+// within the last hour MUST trigger degraded.
+func TestHealthRecentErrorsDoDegrade(t *testing.T) {
+	stateDir, _ := setupHealthFixture(t)
+	writeMachineToml(t, "host", nil)
+	writeStateToml(t, &config.StateV2{SchemaVersion: 2})
+
+	veryRecent := time.Now().Add(-10 * time.Minute).UTC().Format(time.RFC3339)
+	logBody := `time=` + veryRecent + ` level=ERROR msg="actual current problem"` + "\n"
+	logPath := filepath.Join(stateDir, "dotkeeper", "syncthing.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte(logBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _ := collectHealth(false)
+	if r.RecentActivity.ErrorsLastHour != 1 {
+		t.Errorf("ErrorsLastHour = %d, want 1", r.RecentActivity.ErrorsLastHour)
+	}
+	if !r.degraded() {
+		t.Errorf("degraded must fire on recent error; report=%+v", r.RecentActivity)
+	}
+}
+
 func TestExtractSlogTimestamp(t *testing.T) {
 	cases := []struct {
 		in   string
