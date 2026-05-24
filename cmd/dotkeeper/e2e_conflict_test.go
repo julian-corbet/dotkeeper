@@ -108,7 +108,7 @@ func TestCLIConflictKeep(t *testing.T) {
 	binary, tmp, repo := setupConflictHarness(t)
 	canonical, variant := writeConflictPair(t, repo,
 		"notes.md", "canonical\n",
-		"notes.sync-conflict-20260419-143015-UUS6FSQ.md", "variant\n")
+		"notes.sync-conflict-20260419-143015-AAAAAAA.md", "variant\n")
 	headBefore := gitHead(t, repo)
 
 	cmd := exec.Command(binary, "conflict", "keep", canonical)
@@ -140,7 +140,7 @@ func TestCLIConflictAccept(t *testing.T) {
 	binary, tmp, repo := setupConflictHarness(t)
 	canonical, variant := writeConflictPair(t, repo,
 		"notes.md", "local\n",
-		"notes.sync-conflict-20260419-143015-UUS6FSQ.md", "from-peer\n")
+		"notes.sync-conflict-20260419-143015-AAAAAAA.md", "from-peer\n")
 
 	cmd := exec.Command(binary, "conflict", "accept", canonical)
 	cmd.Env = envWith(tmp)
@@ -161,7 +161,7 @@ func TestCLIConflictAccept(t *testing.T) {
 	}
 
 	subj := gitHead(t, repo)
-	wantSubj := "auto: accept sync conflict for notes.md (from UUS6FSQ)"
+	wantSubj := "auto: accept sync conflict for notes.md (from AAAAAAA)"
 	if subj != wantSubj {
 		t.Errorf("HEAD subject = %q, want %q", subj, wantSubj)
 	}
@@ -174,7 +174,7 @@ func TestCLIConflictAcceptVariantPath(t *testing.T) {
 	binary, tmp, repo := setupConflictHarness(t)
 	canonical, variant := writeConflictPair(t, repo,
 		"notes.md", "local\n",
-		"notes.sync-conflict-20260419-143015-UUS6FSQ.md", "from-peer\n")
+		"notes.sync-conflict-20260419-143015-AAAAAAA.md", "from-peer\n")
 
 	cmd := exec.Command(binary, "conflict", "accept", variant)
 	cmd.Env = envWith(tmp)
@@ -195,10 +195,10 @@ func TestCLIConflictAll(t *testing.T) {
 	binary, tmp, repo := setupConflictHarness(t)
 	_, v1 := writeConflictPair(t, repo,
 		"a.md", "a-local\n",
-		"a.sync-conflict-20260419-143015-UUS6FSQ.md", "a-peer\n")
+		"a.sync-conflict-20260419-143015-AAAAAAA.md", "a-peer\n")
 	_, v2 := writeConflictPair(t, repo,
 		"b.md", "b-local\n",
-		"b.sync-conflict-20260419-143016-UUS6FSQ.md", "b-peer\n")
+		"b.sync-conflict-20260419-143016-AAAAAAA.md", "b-peer\n")
 
 	cmd := exec.Command(binary, "conflict", "accept", "--all")
 	cmd.Env = envWith(tmp)
@@ -222,10 +222,10 @@ func TestCLIConflictKeepAll(t *testing.T) {
 	binary, tmp, repo := setupConflictHarness(t)
 	_, v1 := writeConflictPair(t, repo,
 		"a.md", "a-local\n",
-		"a.sync-conflict-20260419-143015-UUS6FSQ.md", "a-peer\n")
+		"a.sync-conflict-20260419-143015-AAAAAAA.md", "a-peer\n")
 	_, v2 := writeConflictPair(t, repo,
 		"b.md", "b-local\n",
-		"b.sync-conflict-20260419-143016-UUS6FSQ.md", "b-peer\n")
+		"b.sync-conflict-20260419-143016-AAAAAAA.md", "b-peer\n")
 	headBefore := gitHead(t, repo)
 
 	cmd := exec.Command(binary, "conflict", "keep", "--all")
@@ -254,8 +254,8 @@ func TestCLIConflictMultipleVariants(t *testing.T) {
 	binary, tmp, repo := setupConflictHarness(t)
 	canonical, v1 := writeConflictPair(t, repo,
 		"notes.md", "local\n",
-		"notes.sync-conflict-20260419-143015-UUS6FSQ.md", "peer1\n")
-	v2 := filepath.Join(repo, "notes.sync-conflict-20260419-150000-WB25TET.md")
+		"notes.sync-conflict-20260419-143015-AAAAAAA.md", "peer1\n")
+	v2 := filepath.Join(repo, "notes.sync-conflict-20260419-150000-BBBBBBB.md")
 	if err := os.WriteFile(v2, []byte("peer2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func TestCLIConflictIdempotent(t *testing.T) {
 	binary, tmp, repo := setupConflictHarness(t)
 	canonical, _ := writeConflictPair(t, repo,
 		"notes.md", "local\n",
-		"notes.sync-conflict-20260419-143015-UUS6FSQ.md", "peer\n")
+		"notes.sync-conflict-20260419-143015-AAAAAAA.md", "peer\n")
 
 	// First accept — succeeds.
 	cmd := exec.Command(binary, "conflict", "accept", canonical)
