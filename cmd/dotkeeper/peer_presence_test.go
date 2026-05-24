@@ -194,6 +194,86 @@ func TestPeerPresenceTrackerHonoursContext(t *testing.T) {
 	}
 }
 
+// TestPeerPresenceTrackerRetriesAfterStartupFailure pins the
+// daemon-startup-race fix: when the first GetConnections call
+// fails (Syncthing's HTTP API hasn't bound the port yet — observed
+// in production as "connect: connection refused" right after
+// daemon start), the tracker must retry on a short backoff
+// instead of waiting the full reconcile interval. Otherwise the
+// cache stays empty for 5 minutes, defeating the tracker's
+// purpose.
+func TestPeerPresenceTrackerRetriesAfterStartupFailure(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+
+	const liveID = "AAAAAAA-BBBBBBB-CCCCCCC-DDDDDDD-EEEEEEE-FFFFFFF-GGGGGGG-HHHHHHH"
+	stub := &flakySyncthing{
+		failFirst: 1, // first call errors, second succeeds
+		conns: &stclient.Connections{
+			Connections: map[string]stclient.Connection{
+				liveID: {Connected: true},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		// Long interval so the regular ticker never fires
+		// within the test window. The retry must come from the
+		// startup-backoff loop, not from the ticker.
+		runPeerPresenceTracker(ctx, stub, time.Hour, presenceTestLogger())
+		close(done)
+	}()
+
+	// Wait for the cache to be populated — proves the retry
+	// happened (without retry, we'd wait the full 1-hour
+	// interval before update() ran again).
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		st, _ := config.LoadStateV2()
+		if st != nil && len(st.LastSeenPeers) > 0 {
+			cancel()
+			<-done
+			if _, ok := st.LastSeenPeers[liveID]; ok {
+				return // success
+			}
+			t.Fatalf("LastSeenPeers populated but missing %s; got %v", liveID, st.LastSeenPeers)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	cancel()
+	<-done
+	t.Fatalf("cache never populated; tracker did not retry. calls=%d", stub.callCount())
+}
+
+// flakySyncthing fails the first N calls then succeeds. Used to
+// simulate the production race where the daemon starts before
+// Syncthing's HTTP API binds.
+type flakySyncthing struct {
+	mu        sync.Mutex
+	calls     int
+	failFirst int
+	conns     *stclient.Connections
+}
+
+func (f *flakySyncthing) GetConnections() (*stclient.Connections, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if f.calls <= f.failFirst {
+		return nil, errors.New("connection refused (simulated startup race)")
+	}
+	return f.conns, nil
+}
+
+func (f *flakySyncthing) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
 func mapKeys(m map[string]time.Time) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

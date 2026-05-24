@@ -45,14 +45,15 @@ func runPeerPresenceTracker(ctx context.Context, st presenceQuerier, interval ti
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	tick := time.NewTicker(interval)
-	defer tick.Stop()
 
-	update := func() {
+	// update returns true when it successfully wrote to state. The
+	// startup-backoff loop below uses that to know when to stop
+	// retrying and settle into the regular tick cadence.
+	update := func() bool {
 		conns, err := st.GetConnections()
 		if err != nil {
 			logger.DebugContext(ctx, "peer-presence: GetConnections failed", "err", err)
-			return
+			return false
 		}
 		now := time.Now()
 		err = config.MutateStateV2(func(s *config.StateV2) error {
@@ -68,10 +69,36 @@ func runPeerPresenceTracker(ctx context.Context, st presenceQuerier, interval ti
 		})
 		if err != nil {
 			logger.WarnContext(ctx, "peer-presence: MutateStateV2 failed", "err", err)
+			return false
+		}
+		return true
+	}
+
+	// Startup-backoff retry. The daemon starts before Syncthing's
+	// HTTP API binds — observed in production: the first reconcile
+	// tick logs "connect: connection refused" at startup and
+	// recovers ~4 s later. Without a retry, the tracker's initial
+	// update() would silently fail and the cache would stay empty
+	// until the next regular tick (5 min later by default), which
+	// is exactly the operationally-blind window the tracker exists
+	// to eliminate. Backoff caps at the regular interval so we
+	// never make MORE traffic than the steady-state loop.
+	startupRetries := []time.Duration{
+		2 * time.Second, 5 * time.Second, 10 * time.Second, 30 * time.Second,
+	}
+	for _, delay := range startupRetries {
+		if update() {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
 		}
 	}
 
-	update()
+	tick := time.NewTicker(interval)
+	defer tick.Stop()
 	for {
 		select {
 		case <-ctx.Done():
