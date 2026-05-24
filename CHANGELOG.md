@@ -7,6 +7,56 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.22] - 2026-05-24
+
+### Added
+
+- **Active transport benchmarker.** Background goroutine in the
+  daemon that periodically measures synchronous-transport cost
+  per `(transport, peer, folder)` tuple. Without this, the cost
+  model only learns from organic traffic; folders that rarely
+  change never accumulate enough observations to overcome the
+  bootstrap prior, and routing decisions for those folders stay
+  frozen. With it, the model self-tunes for every folder, every
+  peer, every transport, with no operator intervention.
+
+  Design constraints (in priority order):
+
+  1. **Invisible to the user.** Probe files live under a
+     `<folder>/.dkbench/` subdir, gitignored by dotkeeper's
+     default ignore set and stignore'd so Syncthing doesn't
+     gossip them. `defer`-driven cleanup runs even on
+     PropagateChange error — no orphaned bytes.
+  2. **Non-disruptive.** Skip if the tuple saw organic traffic
+     in the last 30 min. Skip if the cost model has converged
+     (≥ 20 effective samples). Skip if the transport is
+     unreachable per current Routes table.
+  3. **Bounded cost.** 24 h cadence per tuple, 64 KB probe
+     payload, no-op for async transports (Syncthing can't be
+     timed inline).
+  4. **Just works.** ON by default — adopters don't have to
+     find or set a config knob.
+
+- **`dotkeeper bench-now [--folder=PATH]`** CLI subcommand. The
+  operator-on-demand counterpart to the daemon's loop. Runs one
+  probe per (synchronous transport, paired peer) pair against
+  the named folder (or every managed folder), prints a table of
+  observed ms/KB throughput, and updates the cost model so
+  subsequent routing reflects the fresh numbers. Use when you
+  want to investigate a routing decision or measure a new peer
+  without waiting for the 24 h periodic cycle.
+
+- **`.dkbench` excluded from defaults.** Added to both
+  `DefaultSyncIgnorePatterns` and `DefaultGitExcludePatterns`
+  so probe files never leave the local machine via either
+  Syncthing or git.
+
+This is the fourth and final piece of the Mutagen +
+auto-benchmark series. Combined with the per-repo CostModel
+keying (#76) and per-family priors (#78), the cost model now
+self-tunes per `(transport, peer, repo)` triple — picking the
+right tool for every job, automatically improving over time.
+
 ## [1.1.21] - 2026-05-24
 
 ### Changed
