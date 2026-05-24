@@ -7,6 +7,29 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-05-24
+
+Same-day patch on v1.1.2: closes a startup-race window where the
+peer-presence tracker would stay silent for the first 5 minutes
+after every daemon start.
+
+### Fixed
+
+- **Peer-presence tracker missed Syncthing's first startup window.**
+  Observed in production: the daemon's reconcile loop starts
+  ~4 seconds before Syncthing's HTTP API binds, so the tracker's
+  initial `GetConnections` call hit `connect: connection refused`,
+  silently failed (DEBUG log), and waited the full reconcile
+  interval (5 min default) before retrying. During that window
+  `state.LastSeenPeers` stayed empty and `dotkeeper health`
+  rendered connected peers as "never seen" — exactly the
+  operational blind spot the tracker exists to eliminate.
+
+  Add a short-backoff retry loop before settling into the regular
+  ticker: 2s, 5s, 10s, 30s. Caps at the regular interval so
+  steady-state traffic is unchanged. Stops retrying as soon as one
+  update succeeds.
+
 ## [1.1.2] - 2026-05-24
 
 Closes the loop on the v1.1.1 health-command work: the daemon now
