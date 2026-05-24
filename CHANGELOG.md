@@ -7,6 +7,26 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.10] - 2026-05-24
+
+### Changed
+
+- **`dotkeeper health` degraded footer enumerates the
+  triggering conditions.** Old output was `[dotkeeper] degraded
+  — see above`, forcing the operator to re-scan the report to
+  find which threshold tripped. New output:
+    ```
+    [dotkeeper] degraded because:
+      - 26 ERROR-level log entries in the last hour
+      - 5 repo(s) with git activity newer than the last backup
+    ```
+  Reasons render in operationally-most-actionable-first order
+  (recent errors → push failures → lagging backups → never-
+  backed-up) so the operator's eye lands on the most urgent
+  fix-it surface first.
+  The trigger logic itself consolidates into `degradedReasons()`
+  — single source of truth for "what counts as degraded."
+
 ## [1.1.9] - 2026-05-24
 
 ### Added
