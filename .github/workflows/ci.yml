@@ -62,6 +62,14 @@ jobs:
           path: coverage.out
           retention-days: 30
 
+      - name: Perf-budget gate (non-race)
+        # Hot-path benchmarks have ns/op budgets in
+        # internal/reconcile/perf_budget_test.go. They skip themselves under
+        # -race because the detector adds 5–15× overhead; this step re-runs
+        # the same tests without -race so the gate actually fires. ~7s
+        # wall-clock, dominated by testing.Benchmark sampling.
+        run: go test -tags noassets -run TestPerfBudgets ./internal/reconcile/
+
       - name: Vet
         run: go vet -tags noassets ./...
 
