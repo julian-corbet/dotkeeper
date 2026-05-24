@@ -516,6 +516,53 @@ func TestHealthBreaksDownWarningsByKind(t *testing.T) {
 	}
 }
 
+// TestHealthTopWarningKindsTracksLastHourSeparately pins the
+// v1.1.7 refinement: each warning-kind row carries both a
+// 24h total AND a last-hour subset. Lets operators distinguish
+// chronic historical warnings (24h count high, last-hour count
+// zero — old residue, ignore) from currently-flapping ones
+// (last-hour count > 0 — investigate now).
+func TestHealthTopWarningKindsTracksLastHourSeparately(t *testing.T) {
+	stateDir, _ := setupHealthFixture(t)
+	writeMachineToml(t, "host", nil)
+	writeStateToml(t, &config.StateV2{SchemaVersion: 2})
+
+	now := time.Now()
+	stale := now.Add(-6 * time.Hour).UTC().Format(time.RFC3339)
+	recent := now.Add(-10 * time.Minute).UTC().Format(time.RFC3339)
+	var lines []string
+	// 10 of "chronic" all in stale window
+	for i := 0; i < 10; i++ {
+		lines = append(lines, `time=`+stale+` level=WARN msg="chronic"`)
+	}
+	// 3 of "flapping" all in recent window
+	for i := 0; i < 3; i++ {
+		lines = append(lines, `time=`+recent+` level=WARN msg="flapping"`)
+	}
+	lines = append(lines, ``)
+	logPath := filepath.Join(stateDir, "dotkeeper", "syncthing.log")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logPath, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, _ := collectHealth(false)
+	if len(r.RecentActivity.TopWarningKinds) != 2 {
+		t.Fatalf("TopWarningKinds len = %d, want 2", len(r.RecentActivity.TopWarningKinds))
+	}
+	// Sorted by Count desc: chronic (10) > flapping (3).
+	chronic := r.RecentActivity.TopWarningKinds[0]
+	flapping := r.RecentActivity.TopWarningKinds[1]
+	if chronic.Message != "chronic" || chronic.Count != 10 || chronic.CountLastHour != 0 {
+		t.Errorf("chronic row = %+v, want {chronic, 10, 0}", chronic)
+	}
+	if flapping.Message != "flapping" || flapping.Count != 3 || flapping.CountLastHour != 3 {
+		t.Errorf("flapping row = %+v, want {flapping, 3, 3}", flapping)
+	}
+}
+
 // TestExtractMsgField — slog text-handler messages may contain
 // equals signs, embedded quotes, etc.; pin the parser against
 // the realistic shapes.
