@@ -168,6 +168,14 @@ type PeerLastSeen struct {
 // RecentActivity summarises syncthing.log entries from the last
 // 24h. Nil when the user passed --no-log-scan or the log file is
 // missing.
+//
+// The 24h totals (ErrorCount, WarnCount, etc.) are for display;
+// degraded() triggers only on ErrorsLastHour because a log file
+// can contain old errors from before a bug was fixed (the
+// .claude/worktrees pre-v1.0.1 noise is the canonical example —
+// thousands of historical WARN lines that don't reflect current
+// behaviour). Counting them against a now-healthy daemon would
+// permanently mark it as degraded.
 type RecentActivity struct {
 	WindowStart      time.Time `json:"window-start"`
 	WindowEnd        time.Time `json:"window-end"`
@@ -176,6 +184,10 @@ type RecentActivity struct {
 	PushFailures     int       `json:"push-failures"`
 	WarnCount        int       `json:"warn-count"`
 	ErrorCount       int       `json:"error-count"`
+	// Errors that occurred within the last hour — the
+	// degraded()-trigger subset. Old errors are kept in
+	// ErrorCount for display but don't fire alerts.
+	ErrorsLastHour int `json:"errors-last-hour"`
 }
 
 // degraded reports whether any field crosses the "ping the
@@ -194,7 +206,12 @@ func (r *HealthReport) degraded() bool {
 		return true
 	}
 	if r.RecentActivity != nil {
-		if r.RecentActivity.PushFailures > 0 || r.RecentActivity.ErrorCount > 0 {
+		// Only RECENT (last-hour) errors degrade; older errors
+		// from the 24h window are kept for display but don't
+		// fire alerts. PushFailures is hour-agnostic because the
+		// propagator emits the message only for ACTIVELY-failing
+		// pushes — there's no historical-residue class.
+		if r.RecentActivity.PushFailures > 0 || r.RecentActivity.ErrorsLastHour > 0 {
 			return true
 		}
 	}
@@ -430,6 +447,7 @@ func scanRecentActivity(now time.Time) (*RecentActivity, error) {
 	}
 
 	cutoff := now.Add(-24 * time.Hour)
+	lastHourCutoff := now.Add(-1 * time.Hour)
 	act := &RecentActivity{
 		WindowStart:  cutoff,
 		WindowEnd:    now,
@@ -447,10 +465,15 @@ func scanRecentActivity(now time.Time) (*RecentActivity, error) {
 		if ts.Before(cutoff) {
 			continue
 		}
+		isErr := strings.Contains(line, "level=ERROR")
+		isWarn := strings.Contains(line, "level=WARN")
 		switch {
-		case strings.Contains(line, "level=ERROR"):
+		case isErr:
 			act.ErrorCount++
-		case strings.Contains(line, "level=WARN"):
+			if ts.After(lastHourCutoff) {
+				act.ErrorsLastHour++
+			}
+		case isWarn:
 			act.WarnCount++
 		}
 		if strings.Contains(line, "auto: resolve sync conflict") ||
@@ -558,7 +581,8 @@ func writeHealthText(w io.Writer, r *HealthReport) {
 		p.Ln("\n=== Recent activity (last 24h, log tail) ===")
 		p.F("  Conflicts auto-resolved: %d\n", r.RecentActivity.ConflictResolved)
 		p.F("  Push failures:           %d\n", r.RecentActivity.PushFailures)
-		p.F("  Errors in log:           %d\n", r.RecentActivity.ErrorCount)
+		p.F("  Errors (24h / last 1h):  %d / %d\n",
+			r.RecentActivity.ErrorCount, r.RecentActivity.ErrorsLastHour)
 		p.F("  Warnings in log:         %d\n", r.RecentActivity.WarnCount)
 	}
 
