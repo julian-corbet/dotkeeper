@@ -7,6 +7,33 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.21] - 2026-05-24
+
+### Changed
+
+- **`DefaultPriorFor` now matches by transport-name prefix.**
+  Previously the function had explicit `case "syncthing"` then
+  fell through to a single catch-all default for everything else.
+  Mutagen entered the mix in v1.1.19 — without a tuned prior the
+  cost model's first-decision routing treated Mutagen like an
+  unknown transport (conservative defaults), so Syncthing always
+  won the cold start even when Mutagen was the better fit.
+
+  New per-family priors:
+
+  | Transport family | SetupMS | MS/byte | Effective throughput |
+  |-----|-----|-----|-----|
+  | `syncthing` | 1500 | 0.00002 | ~50 MB/s |
+  | `mutagen+*` | 100 | 0.00005 | ~20 MB/s |
+  | `git-ssh+*` | 200 | 0.0002 | ~5 MB/s |
+  | fallback | 500 | 0.001 | ~1 MB/s |
+
+  The Mutagen prior is tuned to make the cold-start decision pick
+  Mutagen for sub-KB changes and Syncthing for multi-MB ones;
+  observations refine the actual cross-over point per
+  `(transport, peer, repo)` triple. Third piece of the
+  Mutagen + auto-benchmark series.
+
 ## [1.1.20] - 2026-05-24
 
 ### Changed
