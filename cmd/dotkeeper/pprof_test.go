@@ -52,7 +52,7 @@ func TestPprofListenerServesProfile(t *testing.T) {
 		t.Fatalf("probe listen: %v", err)
 	}
 	addr := probe.Addr().String()
-	probe.Close()
+	_ = probe.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -73,7 +73,7 @@ func TestPprofListenerServesProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /debug/pprof/: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
@@ -95,7 +95,7 @@ func TestPprofListenerShutsDownOnCtxCancel(t *testing.T) {
 		t.Fatalf("probe listen: %v", err)
 	}
 	addr := probe.Addr().String()
-	probe.Close()
+	_ = probe.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	startPprofListener(ctx, addr, pprofTestLogger())
@@ -105,7 +105,7 @@ func TestPprofListenerShutsDownOnCtxCancel(t *testing.T) {
 	for time.Now().Before(deadline) {
 		resp, err := http.Get("http://" + addr + "/debug/pprof/")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -120,7 +120,7 @@ func TestPprofListenerShutsDownOnCtxCancel(t *testing.T) {
 	for time.Now().Before(deadline) {
 		l, err := net.Listen("tcp", addr)
 		if err == nil {
-			l.Close()
+			_ = l.Close()
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
@@ -136,7 +136,7 @@ func TestPprofListenerBindFailureIsNonFatal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("holder listen: %v", err)
 	}
-	defer holder.Close()
+	defer func() { _ = holder.Close() }()
 	addr := holder.Addr().String()
 
 	ctx, cancel := context.WithCancel(context.Background())
