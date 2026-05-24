@@ -284,20 +284,50 @@ type WarningKind struct {
 // version of this check confused operators by flagging archived
 // projects as failures; v1.1.4 corrects it.
 func (r *HealthReport) degraded() bool {
-	if len(r.Repos.LaggingBackups) > 0 || r.Repos.NeverBackedUp > 0 {
-		return true
-	}
+	return len(r.degradedReasons()) > 0
+}
+
+// degradedReasons returns the specific conditions that cause
+// degraded() to fire, as human-readable one-liners. Used by
+// writeHealthText to render a "Degraded because:" footer so
+// operators don't have to re-scan the full report to figure
+// out which threshold tripped. Returns empty slice when the
+// report is healthy.
+//
+// Order matters for the rendered output: most-actionable first
+// (recent errors → push failures → lagging backups → never
+// backed up), so the operator's eye lands on the most urgent
+// fix-it surface first.
+func (r *HealthReport) degradedReasons() []string {
+	var reasons []string
 	if r.RecentActivity != nil {
 		// Only RECENT (last-hour) errors degrade; older errors
 		// from the 24h window are kept for display but don't
 		// fire alerts. PushFailures is hour-agnostic because the
 		// propagator emits the message only for ACTIVELY-failing
 		// pushes — there's no historical-residue class.
-		if r.RecentActivity.PushFailures > 0 || r.RecentActivity.ErrorsLastHour > 0 {
-			return true
+		if r.RecentActivity.ErrorsLastHour > 0 {
+			reasons = append(reasons, fmt.Sprintf(
+				"%d ERROR-level log entries in the last hour",
+				r.RecentActivity.ErrorsLastHour))
+		}
+		if r.RecentActivity.PushFailures > 0 {
+			reasons = append(reasons, fmt.Sprintf(
+				"%d propagator push failure(s) in the 24h window",
+				r.RecentActivity.PushFailures))
 		}
 	}
-	return false
+	if len(r.Repos.LaggingBackups) > 0 {
+		reasons = append(reasons, fmt.Sprintf(
+			"%d repo(s) with git activity newer than the last backup",
+			len(r.Repos.LaggingBackups)))
+	}
+	if r.Repos.NeverBackedUp > 0 {
+		reasons = append(reasons, fmt.Sprintf(
+			"%d repo(s) tracked but never successfully backed up",
+			r.Repos.NeverBackedUp))
+	}
+	return reasons
 }
 
 // gitMTimeProvider returns the timestamp of the most recent
@@ -759,8 +789,12 @@ func writeHealthText(w io.Writer, r *HealthReport) {
 		}
 	}
 
-	if r.degraded() {
-		p.Ln("\n[dotkeeper] degraded — see above")
+	reasons := r.degradedReasons()
+	if len(reasons) > 0 {
+		p.Ln("\n[dotkeeper] degraded because:")
+		for _, why := range reasons {
+			p.F("  - %s\n", why)
+		}
 	} else {
 		p.Ln("\n[dotkeeper] healthy")
 	}
