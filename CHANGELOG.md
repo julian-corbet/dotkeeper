@@ -7,6 +7,30 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.1.23] - 2026-05-25
+
+### Added
+
+- **`dotkeeper transport repos`** — per-(transport, peer, repo)
+  cost-model visibility. Where `dotkeeper transport status`
+  shows the cross-repo aggregate ("is this transport reachable
+  at all"), this command shows the per-folder prediction grid:
+  one row per (peer, transport, repo) triple with PRED@1KB and
+  PRED@1MB columns derived from the cost model's current
+  parameters. Lets operators see what dotkeeper would route a
+  change through and which tuples haven't accumulated
+  observations yet.
+
+  Supports `--peer=NAME` and `--transport=NAME` filters to
+  narrow output on large fleets.
+
+  Known limitation (called out in --help): the CLI builds a
+  fresh transport manager, so predictions reflect the
+  bootstrap priors rather than the running daemon's learned
+  state. CostModel persistence across processes is a planned
+  follow-up; until then, the daemon's INFO logs
+  (`propagator: pushed`) carry the live observations.
+
 ## [1.1.22] - 2026-05-24
 
 ### Added
