@@ -108,7 +108,21 @@ Exit codes:
 // against stable field names.
 type HealthReport struct {
 	GeneratedAt time.Time `json:"generated-at"`
-	Machine     struct {
+	// Build identifies the binary that produced this report.
+	// Forensic-useful when correlating a report against a
+	// specific shipped fix: an alert saying "ErrorsLastHour=12"
+	// is much easier to triage when you can also tell whether
+	// the daemon is running the v1.1.6 binary (where the count
+	// includes a now-fixed false-positive class) vs v1.1.7+.
+	Build BuildInfo `json:"build"`
+	// DaemonPID and DaemonStartedAt come from the running
+	// dotkeeper start process when one is found. Zero values
+	// when no daemon is running, which is itself a signal —
+	// 'dotkeeper health' on a host where the daemon has been
+	// dead since reboot will surface that immediately.
+	DaemonPID       int       `json:"daemon-pid,omitempty"`
+	DaemonStartedAt time.Time `json:"daemon-started-at,omitempty"`
+	Machine         struct {
 		Name string `json:"name"`
 		Slot uint   `json:"slot"`
 	} `json:"machine"`
@@ -137,6 +151,51 @@ type HealthReport struct {
 		LastSeen []PeerLastSeen `json:"last-seen,omitempty"`
 	} `json:"peers"`
 	RecentActivity *RecentActivity `json:"recent-activity,omitempty"`
+}
+
+// BuildInfo identifies the binary that produced a HealthReport.
+// Populated from the package-level version/commit vars
+// (overridden via -ldflags at release build time).
+type BuildInfo struct {
+	Version string `json:"version"`
+	Commit  string `json:"commit"`
+}
+
+// daemonProcInfo locates the running `dotkeeper start` process
+// for this user and returns its PID + start time. Returns
+// (0, zero, nil) when no daemon is running — health treats that
+// as a signal rather than an error, since the command must work
+// when triaging a dead daemon. Tests stub this via the
+// daemonProcInfoProvider package var.
+var daemonProcInfoProvider = func() (pid int, startedAt time.Time) {
+	matches, err := filepath.Glob("/proc/[0-9]*/cmdline")
+	if err != nil {
+		return 0, time.Time{}
+	}
+	const marker = "dotkeeper\x00start"
+	for _, p := range matches {
+		data, err := os.ReadFile(p) // #nosec G304 -- enumerated /proc path
+		if err != nil {
+			continue
+		}
+		if !strings.Contains(string(data), marker) {
+			continue
+		}
+		// Found a `dotkeeper start` process. Its start time is
+		// the mtime of /proc/<pid> (the directory's stat-time
+		// is set when the process is spawned).
+		dir := filepath.Dir(p)
+		st, err := os.Stat(dir)
+		if err != nil {
+			continue
+		}
+		var pid int
+		if _, err := fmt.Sscanf(filepath.Base(dir), "%d", &pid); err != nil {
+			continue
+		}
+		return pid, st.ModTime()
+	}
+	return 0, time.Time{}
 }
 
 // RepoBackupAge is one row of the "oldest backups" table.
@@ -285,7 +344,11 @@ func collectHealth(noLogScan bool) (*HealthReport, error) {
 	}
 
 	now := time.Now()
-	rep := &HealthReport{GeneratedAt: now}
+	rep := &HealthReport{
+		GeneratedAt: now,
+		Build:       BuildInfo{Version: version, Commit: commit},
+	}
+	rep.DaemonPID, rep.DaemonStartedAt = daemonProcInfoProvider()
 	if machine != nil {
 		rep.Machine.Name = machine.Name
 		rep.Machine.Slot = machine.Slot
@@ -609,6 +672,15 @@ func (p hp) F(format string, args ...interface{}) { _, _ = fmt.Fprintf(p.w, form
 
 func writeHealthText(w io.Writer, r *HealthReport) {
 	p := hp{w}
+	p.Ln("=== Daemon ===")
+	p.F("  Version: %s (%s)\n", r.Build.Version, r.Build.Commit)
+	if r.DaemonPID > 0 {
+		uptime := r.GeneratedAt.Sub(r.DaemonStartedAt)
+		p.F("  Status:  running (pid %d, up %s)\n", r.DaemonPID, durationHuman(uptime))
+	} else {
+		p.Ln("  Status:  not running (no `dotkeeper start` process found)")
+	}
+	p.Ln("")
 	p.Ln("=== Machine ===")
 	if r.Machine.Name == "" {
 		p.Ln("  Not initialised (run 'dotkeeper init')")
