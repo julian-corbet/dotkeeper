@@ -463,6 +463,11 @@ func startReconcileDaemon(
 		reconcileInterval = 5 * time.Minute
 	}
 
+	// pprof listener: opt-in via machine.toml's [debug] pprof_address.
+	// Started early so any subsequent perf work (and the rest of this
+	// startup function) is fully observable.
+	startPprofListener(ctx, machine.Debug.PprofAddress, logger)
+
 	desired := reconcile.NewDesiredProvider(machinePath, statePath)
 
 	// Build the full ObservedProviderInputs. Each input is converted

@@ -47,6 +47,32 @@ type MachineConfigV2 struct {
 	// ReconcileInterval is how often the reconciler runs as a safety net.
 	// Default: "5m".
 	ReconcileInterval string `toml:"reconcile_interval"`
+
+	// Debug holds knobs that are useful for performance investigation
+	// but disabled by default. Production installs leave Debug at its
+	// zero value; operators who need a profile flip the field they
+	// want, restart, capture, and revert. Never persisted by dotkeeper
+	// itself — only ever set by the operator.
+	Debug DebugConfig `toml:"debug"`
+}
+
+// DebugConfig holds opt-in observability surfaces.
+type DebugConfig struct {
+	// PprofAddress, when non-empty, makes the daemon expose the Go
+	// runtime's standard /debug/pprof/* endpoints on the named TCP
+	// address (typically "127.0.0.1:6060"). Useful for capturing CPU,
+	// heap, goroutine, mutex, and block profiles with `go tool pprof
+	// http://...`. Off by default because:
+	//   - The endpoints expose goroutine stack traces, which can leak
+	//     paths and other internal state.
+	//   - Profiling itself perturbs the workload (CPU sampling at
+	//     100 Hz, heap-allocation tracking, etc.), so it should not
+	//     run during steady-state operation.
+	//   - Binding any port is one more thing to fail.
+	// Use 127.0.0.1:* explicitly — dotkeeper does not enforce the
+	// loopback restriction, but exposing pprof externally is a
+	// well-known footgun.
+	PprofAddress string `toml:"pprof_address"`
 }
 
 // DiscoveryConfig configures scan-root-based repo discovery (ADR 0004).
