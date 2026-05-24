@@ -42,6 +42,13 @@ func setupHealthFixture(t *testing.T) (stateDir, configDir string) {
 	oldMTime := gitMTimeProvider
 	gitMTimeProvider = func(path string) time.Time { return time.Now() }
 	t.Cleanup(func() { gitMTimeProvider = oldMTime })
+	// Default daemonProcInfoProvider returns "no daemon running"
+	// so tests don't pick up whatever process happens to be on
+	// the developer's box. Tests that exercise the daemon-PID
+	// path override this.
+	oldDaemon := daemonProcInfoProvider
+	daemonProcInfoProvider = func() (int, time.Time) { return 0, time.Time{} }
+	t.Cleanup(func() { daemonProcInfoProvider = oldDaemon })
 	return st, cfg
 }
 
@@ -467,6 +474,68 @@ func TestHealthRecentErrorsDoDegrade(t *testing.T) {
 	}
 	if !r.degraded() {
 		t.Errorf("degraded must fire on recent error; report=%+v", r.RecentActivity)
+	}
+}
+
+// TestHealthReportIncludesBuildAndDaemonInfo pins the v1.1.8
+// addition: every HealthReport carries the binary's version +
+// commit and the running daemon's PID + start time. Lets
+// downstream alerting correlate a "ErrorsLastHour=N" event
+// against a specific build, and shows daemon-up vs daemon-down
+// at-a-glance.
+func TestHealthReportIncludesBuildAndDaemonInfo(t *testing.T) {
+	setupHealthFixture(t)
+	writeMachineToml(t, "host", nil)
+	writeStateToml(t, &config.StateV2{SchemaVersion: 2})
+
+	// Stub the daemon-info provider with a known PID + start time.
+	wantPID := 12345
+	wantStart := time.Now().Add(-30 * time.Minute)
+	daemonProcInfoProvider = func() (int, time.Time) { return wantPID, wantStart }
+
+	r, err := collectHealth(true)
+	if err != nil {
+		t.Fatalf("collectHealth: %v", err)
+	}
+	if r.Build.Version == "" {
+		t.Error("Build.Version is empty; should reflect compiled-in version")
+	}
+	if r.DaemonPID != wantPID {
+		t.Errorf("DaemonPID = %d, want %d", r.DaemonPID, wantPID)
+	}
+	if !r.DaemonStartedAt.Equal(wantStart) {
+		t.Errorf("DaemonStartedAt = %v, want %v", r.DaemonStartedAt, wantStart)
+	}
+}
+
+// TestHealthReportHandlesNoDaemon — when no `dotkeeper start`
+// process is running, the report still produces useful output:
+// PID is zero, StartedAt is zero, text rendering says "not
+// running". The command must work during outages — that's
+// precisely when it's most needed.
+func TestHealthReportHandlesNoDaemon(t *testing.T) {
+	setupHealthFixture(t)
+	writeMachineToml(t, "host", nil)
+	writeStateToml(t, &config.StateV2{SchemaVersion: 2})
+	// daemonProcInfoProvider already stubbed to return 0/zero
+	// by setupHealthFixture.
+
+	r, err := collectHealth(true)
+	if err != nil {
+		t.Fatalf("collectHealth: %v", err)
+	}
+	if r.DaemonPID != 0 {
+		t.Errorf("DaemonPID = %d, want 0 (no daemon)", r.DaemonPID)
+	}
+	if !r.DaemonStartedAt.IsZero() {
+		t.Errorf("DaemonStartedAt = %v, want zero time", r.DaemonStartedAt)
+	}
+
+	var buf bytes.Buffer
+	writeHealthText(&buf, r)
+	out := buf.String()
+	if !strings.Contains(out, "not running") {
+		t.Errorf("text output should say 'not running' when no daemon; got:\n%s", out)
 	}
 }
 
