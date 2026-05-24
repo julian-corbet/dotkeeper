@@ -200,6 +200,12 @@ type RecentActivity struct {
 type WarningKind struct {
 	Message string `json:"message"`
 	Count   int    `json:"count"`
+	// CountLastHour is the subset of Count that occurred in the
+	// last 60 minutes. Lets operators distinguish a chronic
+	// historical warning ("324 total, 0 in last hour" = old
+	// noise, ignore) from a currently-active one ("12 total,
+	// 12 in last hour" = something just started, investigate).
+	CountLastHour int `json:"count-last-hour"`
 }
 
 // degraded reports whether any field crosses the "ping the
@@ -466,6 +472,7 @@ func scanRecentActivity(now time.Time) (*RecentActivity, error) {
 		BytesScanned: int64(len(data)),
 	}
 	warningCounts := make(map[string]int)
+	warningCountsLastHour := make(map[string]int)
 	for _, line := range strings.Split(string(data), "\n") {
 		if line == "" {
 			continue
@@ -490,6 +497,9 @@ func scanRecentActivity(now time.Time) (*RecentActivity, error) {
 			act.WarnCount++
 			if msg := extractMsgField(line); msg != "" {
 				warningCounts[msg]++
+				if ts.After(lastHourCutoff) {
+					warningCountsLastHour[msg]++
+				}
 			}
 		}
 		if strings.Contains(line, "auto: resolve sync conflict") ||
@@ -500,7 +510,7 @@ func scanRecentActivity(now time.Time) (*RecentActivity, error) {
 			act.PushFailures++
 		}
 	}
-	act.TopWarningKinds = topNWarnings(warningCounts, 5)
+	act.TopWarningKinds = topNWarnings(warningCounts, warningCountsLastHour, 5)
 	return act, nil
 }
 
@@ -533,14 +543,19 @@ func extractMsgField(line string) string {
 // topNWarnings returns the top n warning kinds by count,
 // count-descending. Ties broken by message text for
 // determinism (matters for test assertions and stable JSON
-// output).
-func topNWarnings(counts map[string]int, n int) []WarningKind {
+// output). lastHourCounts is consulted to populate the
+// CountLastHour field on each row.
+func topNWarnings(counts, lastHourCounts map[string]int, n int) []WarningKind {
 	if len(counts) == 0 || n <= 0 {
 		return nil
 	}
 	out := make([]WarningKind, 0, len(counts))
 	for msg, c := range counts {
-		out = append(out, WarningKind{Message: msg, Count: c})
+		out = append(out, WarningKind{
+			Message:       msg,
+			Count:         c,
+			CountLastHour: lastHourCounts[msg],
+		})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Count != out[j].Count {
@@ -652,17 +667,17 @@ func writeHealthText(w io.Writer, r *HealthReport) {
 			r.RecentActivity.ErrorCount, r.RecentActivity.ErrorsLastHour)
 		p.F("  Warnings in log:         %d\n", r.RecentActivity.WarnCount)
 		if len(r.RecentActivity.TopWarningKinds) > 0 {
-			p.Ln("    Top warning kinds:")
+			p.Ln("    Top warning kinds (24h / last 1h):")
 			for _, w := range r.RecentActivity.TopWarningKinds {
 				// Truncate long Syncthing-internal messages so
 				// the output stays readable. Operators can
 				// always grep the log for the full text.
-				const maxLen = 70
+				const maxLen = 64
 				msg := w.Message
 				if len(msg) > maxLen {
 					msg = msg[:maxLen-1] + "…"
 				}
-				p.F("      %5d  %s\n", w.Count, msg)
+				p.F("      %5d / %4d  %s\n", w.Count, w.CountLastHour, msg)
 			}
 		}
 	}
