@@ -7,6 +7,41 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-05-25
+
+### Added
+
+- **Git-remote URL as canonical folder identity** — Phase 2 of
+  the receiver-decides-what-to-sync architecture, foundation
+  piece. Every dotkeeper-tracked git repo now carries a
+  `[git]` section in its `.dotkeeper.toml` with the remote URL
+  and its canonical form (e.g. `github.com/julian-corbet/cv`).
+
+  The canonical form is computed by `internal/gitident.Canonical`
+  and collapses every git URL syntax for the same upstream repo
+  into one identity string: HTTPS variants, SCP-style
+  (`git@host:path`), ssh-URL form with or without explicit
+  default ports, `git://`. Two operators with the same repo
+  arrive at the same canonical regardless of which URL syntax
+  their git client recorded.
+
+  `dotkeeper track` populates the field at track time from the
+  local working tree's `origin` remote. Non-git folders (dotfiles
+  dirs, scratch areas) legitimately leave `[git]` unset and fall
+  back to name-based identity.
+
+  Syncthing folder labels now carry the canonical URL when
+  available so peers' ClusterConfigs advertise the load-bearing
+  identity. This is the wire-level primitive that the subscription
+  matcher (next PR) reads to decide whether a peer's offered
+  folder matches a local subscription.
+
+  No migration required: existing folders retain their current
+  `dk-<name>-<hash>` IDs and continue working; the canonical URL
+  is added alongside as label metadata. This is the bump to v1.2.x
+  because the schema evolves (new `[git]` section), not because
+  behaviour changes (yet — subscriptions arrive in v1.2.1+).
+
 ## [1.1.23] - 2026-05-25
 
 ### Added
