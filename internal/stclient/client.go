@@ -292,6 +292,77 @@ func (c *Client) GetFolderStatus(folderID string) (*FolderStatus, error) {
 	return &s, nil
 }
 
+// PendingFolder is one entry of /rest/cluster/pending/folders: a
+// folder a peer has advertised in its ClusterConfig but the local
+// Syncthing hasn't accepted. dotkeeper's subscription matcher
+// reads these as "offers" — when an offer's label matches a
+// declared subscription (by canonical-URL identity), reconcile
+// provisions the folder locally.
+type PendingFolder struct {
+	// ID is the Syncthing folder ID the peer assigned.
+	ID string `json:"-"`
+	// Label is the human-readable label the peer set on the
+	// folder. For dotkeeper-managed peers running v1.2+, this
+	// carries the canonical git-remote URL.
+	Label string `json:"label"`
+	// ReceivedFrom is the Syncthing device ID of the peer who
+	// advertised the folder.
+	ReceivedFrom string `json:"receivedFromDevice"`
+	// Time is when Syncthing first saw this advertisement; useful
+	// for ranking offers chronologically in the discovery UI.
+	Time string `json:"time"`
+}
+
+// GetPendingFolders returns all folders advertised by paired peers
+// that we haven't accepted yet. Maps folder ID → PendingFolder.
+// Empty map (not nil) when nothing is pending. Cheap: one REST
+// call to a local endpoint; not cached because pending offers
+// change as peers come and go.
+//
+// The shape of the response is a nested map:
+//
+//	{
+//	  "<folder-id>": {
+//	    "offeredBy": {
+//	      "<device-id>": {"label": "...", "time": "..."},
+//	      ...
+//	    }
+//	  },
+//	  ...
+//	}
+//
+// We flatten to one entry per (folder, peer) pair so the caller
+// can iterate without doing a second loop. When the same folder
+// is offered by multiple peers, you get multiple entries with the
+// same ID but different ReceivedFrom.
+func (c *Client) GetPendingFolders() ([]PendingFolder, error) {
+	data, err := c.get("rest/cluster/pending/folders")
+	if err != nil {
+		return nil, err
+	}
+	var raw map[string]struct {
+		OfferedBy map[string]struct {
+			Label string `json:"label"`
+			Time  string `json:"time"`
+		} `json:"offeredBy"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("decode pending folders: %w", err)
+	}
+	out := make([]PendingFolder, 0, len(raw))
+	for folderID, entry := range raw {
+		for deviceID, offer := range entry.OfferedBy {
+			out = append(out, PendingFolder{
+				ID:           folderID,
+				Label:        offer.Label,
+				ReceivedFrom: deviceID,
+				Time:         offer.Time,
+			})
+		}
+	}
+	return out, nil
+}
+
 // Canonical scheduler defaults written by dotkeeper into every managed
 // Syncthing folder. Centralised so the diff (which detects drift) and
 // the applier (which writes the desired values) share one definition.

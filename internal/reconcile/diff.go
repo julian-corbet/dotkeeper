@@ -5,12 +5,41 @@
 package reconcile
 
 import (
+	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/julian-corbet/dotkeeper/internal/config"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
+	"github.com/julian-corbet/dotkeeper/internal/subscribe"
 )
+
+// defaultMirrorPath computes the local path for a newly-accepted
+// subscription when the operator didn't specify an explicit Path.
+// Convention: <mirrorRoot>/<basename-of-canonical-or-name>. The
+// mirrorRoot defaults to ~/Documents/GitHub when blank — same
+// convention dotkeeper's discovery walks use, so the next
+// discovery scan picks the folder up automatically.
+func defaultMirrorPath(mirrorRoot string, acc subscribe.Acceptance) string {
+	if mirrorRoot == "" {
+		mirrorRoot = "~/Documents/GitHub"
+	}
+	var name string
+	switch {
+	case acc.Subscription.Canonical != "":
+		// e.g. "github.com/foo/rag" → "rag"
+		name = filepath.Base(acc.Subscription.Canonical)
+	case acc.Subscription.Name != "":
+		name = acc.Subscription.Name
+	default:
+		name = "unnamed-folder"
+	}
+	// Strip any residual ".git" the canonical might have carried
+	// (defensive — the gitident canonical strips it already).
+	name = strings.TrimSuffix(name, ".git")
+	return filepath.Join(mirrorRoot, name)
+}
 
 // Diff computes the Plan needed to move observed state towards desired state.
 // It is a pure function: given the same inputs it always returns the same
@@ -159,17 +188,69 @@ func Diff(desired Desired, observed Observed) Plan {
 		}
 	}
 
-	// Emit remove actions for observed folders not in desired.
-	// Sort for deterministic output.
+	// Phase 2: subscription matching. For each declared subscription
+	// that matches a peer-offered folder, emit AcceptSubscription.
+	// The acceptedFolderIDs set lets the remove loop below skip
+	// just-accepted folders that aren't yet in desired.Repos (the
+	// next discovery scan picks them up via the written
+	// .dotkeeper.toml).
+	acceptedFolderIDs := make(map[string]bool)
+	if len(desired.Subscriptions) > 0 {
+		// Build "what does the local already have?" set for the
+		// resolver — folders we've already accepted should not
+		// trigger duplicate AcceptSubscription actions.
+		localFolderIDs := make(map[string]bool, len(observed.ManagedFolders))
+		for _, f := range observed.ManagedFolders {
+			localFolderIDs[f.SyncthingFolderID] = true
+		}
+		offers := make([]subscribe.Offer, 0, len(observed.OfferedFolders))
+		for _, o := range observed.OfferedFolders {
+			peerName := observed.PeerNameByID[o.FromDeviceID]
+			offers = append(offers, subscribe.Offer{
+				FolderID:     o.FolderID,
+				Label:        o.Label,
+				FromPeerName: peerName,
+				FromDeviceID: o.FromDeviceID,
+			})
+		}
+		result := subscribe.Resolve(desired.Subscriptions, offers, localFolderIDs)
+		for _, acc := range result.Acceptances {
+			path := acc.Subscription.Path
+			if path == "" {
+				path = defaultMirrorPath(desired.DefaultMirrorPath, acc)
+			}
+			plan = append(plan, AcceptSubscription{
+				FolderID:     acc.Offer.FolderID,
+				Label:        acc.Offer.Label,
+				Path:         path,
+				FromDeviceID: acc.Offer.FromDeviceID,
+				FromPeerName: acc.Offer.FromPeerName,
+				// CloneRemote left empty in this PR — auto-clone
+				// lands in a follow-up. Syncthing will seed the
+				// working tree from the peer; operators can add a
+				// git remote manually if they want history.
+			})
+			acceptedFolderIDs[acc.Offer.FolderID] = true
+		}
+	}
+
+	// Emit remove actions for observed folders not in desired AND
+	// not just-accepted by a subscription this tick.
 	sortedObsFolders := make([]FolderObs, len(observed.ManagedFolders))
 	copy(sortedObsFolders, observed.ManagedFolders)
 	sort.Slice(sortedObsFolders, func(i, j int) bool {
 		return sortedObsFolders[i].SyncthingFolderID < sortedObsFolders[j].SyncthingFolderID
 	})
 	for _, obs := range sortedObsFolders {
-		if _, wanted := desiredFolderIndex[obs.SyncthingFolderID]; !wanted {
-			plan = append(plan, RemoveSyncthingFolder{FolderID: obs.SyncthingFolderID})
+		if _, wanted := desiredFolderIndex[obs.SyncthingFolderID]; wanted {
+			continue
 		}
+		if acceptedFolderIDs[obs.SyncthingFolderID] {
+			// Just-accepted via subscription; discovery will
+			// register it as desired on the next reconcile tick.
+			continue
+		}
+		plan = append(plan, RemoveSyncthingFolder{FolderID: obs.SyncthingFolderID})
 	}
 
 	// Repo reconciliation: sort observed repos for deterministic output.

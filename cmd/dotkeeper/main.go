@@ -82,6 +82,7 @@ func main() {
 	root.AddCommand(subscribeCmd())
 	root.AddCommand(unsubscribeCmd())
 	root.AddCommand(subscriptionsCmd())
+	root.AddCommand(offersCmd())
 	root.AddCommand(bareInitCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {

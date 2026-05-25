@@ -148,6 +148,8 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 		return applyEnsureIgnoreFile(act)
 	case EnsureFolderMarker:
 		return applyEnsureFolderMarker(act)
+	case AcceptSubscription:
+		return a.applyAcceptSubscription(act)
 	case GitCommitDirty:
 		// Capture HEAD before the commit attempt. applyGitCommitDirty
 		// may take a fast path that returns successfully without
@@ -182,6 +184,103 @@ func (a *RealApplier) Apply(ctx context.Context, action Action) error {
 	default:
 		return fmt.Errorf("unknown action type: %T", action)
 	}
+}
+
+// applyAcceptSubscription provisions a folder declared by a
+// subscription:
+//
+//  1. Resolve the local path (already absolute and expanded by
+//     Diff; defensive expansion here covers paths typed by hand
+//     into state.toml).
+//  2. mkdir -p — Syncthing requires the folder root to exist
+//     before adding it.
+//  3. Write a minimal .dotkeeper.toml so the next discovery scan
+//     picks the folder up via the normal path. Without this, the
+//     diff-vs-desired loop would see the folder as
+//     "observed but not desired" on the next reconcile and emit
+//     RemoveSyncthingFolder.
+//  4. Add the folder to Syncthing's config with the offering peer
+//     in share-with. From here, BEP gossip from the offerer seeds
+//     the working tree.
+//
+// Auto-clone via `git clone CloneRemote Path` is intentionally
+// deferred — Syncthing will populate the path from the peer's
+// existing working tree, which is enough for content. Operators
+// who want git history can run `git init && git remote add origin
+// <Label>` themselves; a follow-up PR will automate this when
+// CloneRemote is set.
+func (a *RealApplier) applyAcceptSubscription(act AcceptSubscription) error {
+	if a.ST == nil {
+		return fmt.Errorf("AcceptSubscription %q: Syncthing client not available", act.Label)
+	}
+	if act.Path == "" {
+		return fmt.Errorf("AcceptSubscription %q: empty path", act.Label)
+	}
+	path := expandSubscriptionPath(act.Path)
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return fmt.Errorf("AcceptSubscription %q: mkdir %q: %w", act.Label, path, err)
+	}
+	if err := writeSubscriptionMarker(path, act); err != nil {
+		return fmt.Errorf("AcceptSubscription %q: write .dotkeeper.toml: %w", act.Label, err)
+	}
+	if err := applyEnsureFolderMarker(EnsureFolderMarker{RepoPath: path}); err != nil {
+		return fmt.Errorf("AcceptSubscription %q: ensure marker: %w", act.Label, err)
+	}
+	if err := a.ST.AddOrUpdateFolder(act.FolderID, act.Label, path, []string{act.FromDeviceID}); err != nil {
+		return fmt.Errorf("AcceptSubscription %q: AddOrUpdateFolder: %w", act.Label, err)
+	}
+	return nil
+}
+
+// expandSubscriptionPath normalises a path that may have come from
+// hand-edited TOML: leading ~ → home dir, relative → absolute.
+func expandSubscriptionPath(p string) string {
+	if strings.HasPrefix(p, "~/") || p == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			p = filepath.Join(home, strings.TrimPrefix(p, "~"))
+		}
+	}
+	if !filepath.IsAbs(p) {
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+	}
+	return p
+}
+
+// writeSubscriptionMarker creates the minimal .dotkeeper.toml that
+// makes the just-provisioned folder visible to the discovery scan.
+// The file is written via the public config writer so future
+// schema bumps don't require a parallel marker-writer here.
+func writeSubscriptionMarker(path string, act AcceptSubscription) error {
+	// If the file already exists, don't overwrite — operator may
+	// have customised it. Re-tracking via discovery will pick up
+	// their version.
+	markerPath := filepath.Join(path, config.RepoConfigFileName)
+	if _, err := os.Stat(markerPath); err == nil {
+		return nil
+	}
+	cfg := &config.RepoConfigV2{
+		SchemaVersion: 2,
+		Meta: config.RepoMeta{
+			Name:    filepath.Base(path),
+			Added:   time.Now().UTC().Format(time.RFC3339),
+			AddedBy: "subscription:" + act.FromPeerName,
+		},
+		Sync: config.RepoSyncConfig{
+			SyncthingFolderID: act.FolderID,
+			Ignore:            []string{},
+			ShareWith:         []string{act.FromDeviceID},
+		},
+		Commit:    config.RepoCommitConfig{},
+		GitBackup: config.RepoGitBackupConfig{SkipSlots: []uint{}},
+	}
+	// If the label looks like a canonical git-remote URL, populate
+	// [git] so the next-tick discovery can use it for routing.
+	if strings.Contains(act.Label, "/") && !strings.HasPrefix(act.Label, "dk:") {
+		cfg.Git = config.RepoGitConfig{Canonical: act.Label}
+	}
+	return config.WriteRepoConfigV2(path, cfg)
 }
 
 func applyEnsureFolderMarker(act EnsureFolderMarker) error {

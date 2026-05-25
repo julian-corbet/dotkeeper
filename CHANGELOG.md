@@ -7,6 +7,50 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-05-25
+
+### Added
+
+- **Subscription reconcile + offers discovery** (Phase 2, final
+  piece). Subscriptions declared in `machine.toml` or via
+  `dotkeeper subscribe` now actually do something:
+
+  1. Each reconcile, dotkeeper reads Syncthing's pending-folders
+     API and the declared subscriptions, runs the pure
+     `subscribe.Resolve` matcher, and emits `AcceptSubscription`
+     actions for matches.
+  2. The applier creates the local path, writes a
+     `.dotkeeper.toml` stub so the next discovery scan registers
+     the folder normally, adds the Syncthing folder with the
+     offering peer in share-with. Syncthing's BEP gossip seeds
+     the working tree from the peer.
+  3. Subscriptions stay in three categories — accepted, pending
+     (no matching offer yet), ambiguous (multiple distinct
+     folder IDs claim the same canonical) — surfaced via
+     `subscribe.Resolve`'s Result.
+
+- **`dotkeeper offers`** CLI lists folders peers are advertising
+  that this machine could subscribe to. Output includes a
+  shell-paste-ready `dotkeeper subscribe …` action column.
+  Onboarding aid for the 2-to-200 device scale: see what's
+  available, paste the line for each folder you want.
+
+- **`internal/subscribe`** package — pure-function matching
+  engine. O(N+M) in offers + subscriptions via hashmap
+  lookups. Eight test cases cover happy path, pending,
+  ambiguous, already-local skip, name-based fallback for
+  non-git folders, mixed subscription types, and empty-label
+  offer rejection.
+
+### Notes
+
+- Auto-clone (git clone before mounting) is intentionally
+  deferred — Syncthing seeds the working tree from the peer's
+  files, which covers content. A follow-up PR will run
+  `git clone` first when the subscription's canonical names a
+  reachable remote, giving the new machine full git history out
+  of the box.
+
 ## [1.2.1] - 2026-05-25
 
 ### Added

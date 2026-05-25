@@ -550,6 +550,17 @@ func (s *stubQuerier) GetStatus() (*stclient.SystemStatus, error) {
 	return &stclient.SystemStatus{MyID: myID}, nil
 }
 
+// GetPendingFolders returns nil — the subscription-matcher tests
+// supply their own offers via the Observed.OfferedFolders field
+// directly; this stub just needs to satisfy the interface without
+// affecting other tests.
+func (s *stubQuerier) GetPendingFolders() ([]stclient.PendingFolder, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return nil, nil
+}
+
 func TestObservedProvider_NilClient(t *testing.T) {
 	t.Parallel()
 
