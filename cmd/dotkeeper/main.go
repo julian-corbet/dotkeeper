@@ -79,6 +79,9 @@ func main() {
 	root.AddCommand(untrackCmd())
 	root.AddCommand(transportCmd())
 	root.AddCommand(benchNowCmd())
+	root.AddCommand(subscribeCmd())
+	root.AddCommand(unsubscribeCmd())
+	root.AddCommand(subscriptionsCmd())
 	root.AddCommand(bareInitCmd())
 
 	if err := root.ExecuteContext(ctx); err != nil {

@@ -48,6 +48,13 @@ type MachineConfigV2 struct {
 	// Default: "5m".
 	ReconcileInterval string `toml:"reconcile_interval"`
 
+	// Subscribe is the declarative list of folder subscriptions for
+	// this machine. Nix/Home Manager generates these; the
+	// reconciler merges them with state.toml's imperative
+	// subscriptions (CLI-written) by canonical URL. Same pattern
+	// as Peers above.
+	Subscribe []SubscriptionEntry `toml:"subscribe"`
+
 	// Debug holds knobs that are useful for performance investigation
 	// but disabled by default. Production installs leave Debug at its
 	// zero value; operators who need a profile flip the field they
