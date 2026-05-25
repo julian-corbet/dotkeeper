@@ -37,6 +37,45 @@ type StateV2 struct {
 
 	// LastSeenPeers maps Syncthing device IDs to the last time they were seen.
 	LastSeenPeers map[string]time.Time `toml:"last_seen_peers"`
+
+	// Subscriptions is the imperative list of folder subscriptions
+	// added via `dotkeeper subscribe`. Declarative subscriptions can
+	// also live in machine.toml's `[[subscribe]]`; the reconciler
+	// merges both sources by canonical URL. Same pattern as Peers
+	// above.
+	Subscriptions []SubscriptionEntry `toml:"subscriptions"`
+}
+
+// SubscriptionEntry declares that this machine wants a particular
+// folder synced from any peer that has it. Identity is the canonical
+// git-remote URL (e.g. "github.com/foo/rag") or — for non-git
+// folders — a logical name. Path defaults to the mirror convention
+// when empty.
+//
+// The matcher treats `Canonical` as the primary key. Two
+// subscriptions with the same Canonical but different paths are
+// treated as a configuration error and surfaced in
+// `dotkeeper health`; we don't try to be clever about resolving
+// the ambiguity.
+type SubscriptionEntry struct {
+	// Canonical is the canonical git-remote identity. Mutually
+	// exclusive with Name. Required for git-backed folders.
+	Canonical string `toml:"canonical"`
+
+	// Name is the logical-name identity, used only for non-git
+	// folders that have no canonical URL. Mutually exclusive
+	// with Canonical.
+	Name string `toml:"name"`
+
+	// Path is the absolute or tilde-expanded local path where this
+	// folder should land. Empty means "use the mirror convention":
+	// the first scan root + the basename derived from Canonical
+	// (or Name).
+	Path string `toml:"path"`
+
+	// AddedAt records when this subscription was added. Operator-
+	// visible only; not used by the matcher.
+	AddedAt time.Time `toml:"added_at"`
 }
 
 // PeerEntry records a mesh peer's identity as learned during pairing.
