@@ -7,6 +7,42 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-05-25
+
+### Added
+
+- **Subscription schema + CLI** (Phase 2, second piece).
+  Declarative subscriptions live in `machine.toml`:
+
+  ```toml
+  [[subscribe]]
+  canonical = "github.com/julian-corbet/cv"
+  # path = "..." optional override; defaults to mirror convention
+  ```
+
+  Imperative subscriptions go into `state.toml` via three new
+  CLI subcommands:
+
+  - `dotkeeper subscribe <git-url>` — any URL form (HTTPS, SCP,
+    ssh://) is normalised via `gitident.Canonical` before being
+    stored. Accepts `--name NAME` for non-git folders, `--path`
+    to override the mirror-convention default.
+  - `dotkeeper unsubscribe <git-url-or-name>` — removes an
+    imperative subscription. Declarative entries in `machine.toml`
+    must be removed there.
+  - `dotkeeper subscriptions list` — shows the merged
+    `(declarative + imperative)` list with a SOURCE column so
+    operators can see which entries come from where.
+
+  `config.MergeSubscriptions(declarative, imperative)`
+  deduplicates by identity (canonical URL first, name fallback);
+  declarative wins on conflict — Nix-managed config is the source
+  of truth and can't be silently overridden by a CLI-added entry.
+
+  No reconcile-side behaviour yet — subscriptions are parsed,
+  validated, persisted, and listed. Provisioning + auto-clone
+  arrive in the next PR.
+
 ## [1.2.0] - 2026-05-25
 
 ### Added
