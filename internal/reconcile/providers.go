@@ -288,6 +288,7 @@ type SyncthingQuerier interface {
 	GetConfig() (map[string]any, error)
 	GetConnections() (*stclient.Connections, error)
 	GetStatus() (*stclient.SystemStatus, error)
+	GetPendingFolders() ([]stclient.PendingFolder, error)
 }
 
 // NewObservedProvider returns an ObservedProvider that queries the live
@@ -399,6 +400,23 @@ func newObservedProvider(
 			}
 			obs.ManagedFolders = folders
 			obs.LivePeers = peers
+			// Phase 2: pending folder offers (folders peers have
+			// advertised that we haven't accepted). The subscription
+			// matcher in Diff reads these. Best-effort — if the
+			// pending-folders endpoint errors (older Syncthing
+			// versions, transient API issue), we leave the slice
+			// nil and the matcher contributes zero acceptances.
+			if pf, perr := querier.GetPendingFolders(); perr == nil {
+				offered := make([]OfferedFolder, 0, len(pf))
+				for _, f := range pf {
+					offered = append(offered, OfferedFolder{
+						FolderID:     f.ID,
+						Label:        f.Label,
+						FromDeviceID: f.ReceivedFrom,
+					})
+				}
+				obs.OfferedFolders = offered
+			}
 		}
 
 		// 1b. Activity timestamps for auto-pause decisions. When the

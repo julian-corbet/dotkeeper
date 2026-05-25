@@ -29,6 +29,20 @@ type Desired struct {
 
 	// Peers is the list of devices that should be peered with this machine.
 	Peers []PeerDesired
+
+	// Subscriptions is the merged subscription list (declarative
+	// machine.toml + imperative state.toml). Phase 2: reconcile
+	// matches these against offered folders from peers' ClusterConfigs
+	// and emits AcceptSubscription actions for matches. nil/empty
+	// → subscription matching is a no-op.
+	Subscriptions []config.SubscriptionEntry
+
+	// DefaultMirrorPath, when non-empty, is the scan root where
+	// newly-accepted subscriptions land by convention:
+	// <DefaultMirrorPath>/<folder-name-from-canonical>. Empty
+	// falls back to "~/Documents/GitHub" so we never write to an
+	// undefined location.
+	DefaultMirrorPath string
 }
 
 // RepoDesired is the desired state for a single tracked repository.
@@ -136,6 +150,32 @@ type Observed struct {
 	// time.Now() inside Diff keeps Diff a pure function — same inputs
 	// always produce the same plan.
 	Now time.Time
+
+	// OfferedFolders is the list of folders peers have advertised
+	// via ClusterConfig but the local Syncthing hasn't accepted.
+	// Populated from Syncthing's /rest/cluster/pending/folders API.
+	// Phase 2 subscription matcher reads this; legacy callers can
+	// leave nil and the matcher will produce zero acceptances.
+	OfferedFolders []OfferedFolder
+
+	// PeerNameByID maps Syncthing device ID → human-readable
+	// peer name so the subscription matcher can render
+	// operator-friendly status strings. Populated from
+	// machine.toml + state.toml's peer rosters.
+	PeerNameByID map[string]string
+}
+
+// OfferedFolder is a folder that a peer has advertised via
+// ClusterConfig but the local Syncthing hasn't accepted yet.
+// Phase 2 subscription matching reads these.
+type OfferedFolder struct {
+	// FolderID is the Syncthing folder ID the offering peer assigned.
+	FolderID string
+	// Label is what the offering peer set on the folder. dotkeeper
+	// v1.2+ peers set this to the canonical git-remote URL.
+	Label string
+	// FromDeviceID is the offering peer's Syncthing device ID.
+	FromDeviceID string
 }
 
 // FolderHealth is reconcile's view of the watchhealth.Status for
@@ -185,6 +225,25 @@ func BuildDesired(machine *config.MachineConfigV2, repos map[string]*config.Repo
 		for _, p := range state.Peers {
 			addPeer(p)
 		}
+	}
+
+	// Subscriptions merge: machine.toml (declarative) + state.toml
+	// (imperative). Declarative wins on conflict — same precedence
+	// as Peers above.
+	var declSubs, impSubs []config.SubscriptionEntry
+	if machine != nil {
+		declSubs = machine.Subscribe
+	}
+	if state != nil {
+		impSubs = state.Subscriptions
+	}
+	d.Subscriptions = config.MergeSubscriptions(declSubs, impSubs)
+	// DefaultMirrorPath: first configured scan root, expanded.
+	// Used by Diff to place subscriber-side folders that don't
+	// have an explicit path. Falls back to "~/Documents/GitHub"
+	// in the helper itself.
+	if machine != nil && len(machine.Discovery.ScanRoots) > 0 {
+		d.DefaultMirrorPath = machine.Discovery.ScanRoots[0]
 	}
 
 	defaultCommitPolicy := "manual"
@@ -396,6 +455,49 @@ type AddSyncthingFolder struct {
 
 func (a AddSyncthingFolder) Describe() string {
 	return "add Syncthing folder " + a.FolderID + " at " + a.Path
+}
+
+// AcceptSubscription is emitted when a declared subscription
+// matches an offered folder from a peer. The applier:
+//  1. Materialises Path (mkdir + optional git clone if Canonical
+//     names a reachable remote and Path doesn't already exist)
+//  2. Writes the local .dotkeeper.toml so the next discovery scan
+//     re-finds the folder via the normal path
+//  3. Adds the folder to Syncthing's config with the offering
+//     peer in share-with
+//
+// This is one-shot per subscription per folder ID: after the first
+// successful accept, subsequent reconciles see the folder in
+// observed.ManagedFolders and skip re-emitting.
+type AcceptSubscription struct {
+	// FolderID is the Syncthing folder ID the peer assigned.
+	FolderID string
+	// Label is the canonical identity (URL or "dk:<name>") to
+	// stamp on the local folder so other peers see the same
+	// identity once we re-share it.
+	Label string
+	// Path is the absolute local path where the folder will
+	// land. Caller (Diff) computed this from the subscription's
+	// Path field or the mirror-convention default.
+	Path string
+	// FromDeviceID is the offering peer; reconcile adds them to
+	// the new folder's share-with so initial sync starts from
+	// them.
+	FromDeviceID string
+	// FromPeerName is for log/diagnostic strings only.
+	FromPeerName string
+	// CloneRemote, when non-empty, is the git URL the applier
+	// should clone into Path before adding the Syncthing folder.
+	// Empty: skip cloning (path already exists OR caller wants
+	// Syncthing to seed the working tree directly).
+	CloneRemote string
+}
+
+func (a AcceptSubscription) Describe() string {
+	if a.CloneRemote != "" {
+		return "accept subscription " + a.Label + " (clone+mount " + a.Path + ")"
+	}
+	return "accept subscription " + a.Label + " (mount " + a.Path + ")"
 }
 
 // RemoveSyncthingFolder is emitted when a Syncthing folder should be removed.
