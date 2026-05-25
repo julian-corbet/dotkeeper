@@ -134,11 +134,11 @@ func TestCanonicalEmptyAndUnparseable(t *testing.T) {
 // GitHub-specific assumptions.
 func TestCanonicalSelfHostedAndCustomDomains(t *testing.T) {
 	cases := map[string]string{
-		"https://gitlab.com/group/sub/repo.git":  "gitlab.com/group/sub/repo",
-		"git@bitbucket.org:org/repo.git":         "bitbucket.org/org/repo",
-		"https://git.corbet.ch/me/notes":         "git.corbet.ch/me/notes",
-		"ssh://git@codeberg.org/foo/bar.git":     "codeberg.org/foo/bar",
-		"https://gitea.local/u/r":                "gitea.local/u/r",
+		"https://gitlab.com/group/sub/repo.git": "gitlab.com/group/sub/repo",
+		"git@bitbucket.org:org/repo.git":        "bitbucket.org/org/repo",
+		"https://git.corbet.ch/me/notes":        "git.corbet.ch/me/notes",
+		"ssh://git@codeberg.org/foo/bar.git":    "codeberg.org/foo/bar",
+		"https://gitea.local/u/r":               "gitea.local/u/r",
 	}
 	for in, want := range cases {
 		t.Run(in, func(t *testing.T) {
