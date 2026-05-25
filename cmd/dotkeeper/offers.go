@@ -76,7 +76,7 @@ func runOffers() error {
 	// Reach the local Syncthing for the pending-folders feed.
 	key, err := engine().APIKey()
 	if err != nil {
-		return fmt.Errorf("Syncthing not initialised: %w", err)
+		return fmt.Errorf("syncthing not initialised: %w", err)
 	}
 	c := stclient.New(key)
 	pending, err := c.GetPendingFolders()
