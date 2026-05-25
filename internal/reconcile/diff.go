@@ -52,9 +52,10 @@ func Diff(desired Desired, observed Observed) Plan {
 
 	// Index desired repos by SyncthingFolderID.
 	type desiredFolder struct {
-		folderID string
-		path     string
-		devices  []string
+		folderID  string
+		path      string
+		devices   []string
+		canonical string // git-canonical URL, becomes the Syncthing folder label
 	}
 	var desiredFolders []desiredFolder
 	for _, r := range desired.Repos {
@@ -62,9 +63,10 @@ func Diff(desired Desired, observed Observed) Plan {
 			continue
 		}
 		desiredFolders = append(desiredFolders, desiredFolder{
-			folderID: r.SyncthingFolderID,
-			path:     r.Path,
-			devices:  r.ShareWith,
+			folderID:  r.SyncthingFolderID,
+			path:      r.Path,
+			devices:   r.ShareWith,
+			canonical: r.GitCanonical,
 		})
 	}
 	// Sort for deterministic output.
@@ -97,6 +99,7 @@ func Diff(desired Desired, observed Observed) Plan {
 				FolderID: df.folderID,
 				Path:     df.path,
 				Devices:  df.devices,
+				Label:    df.canonical,
 			})
 		} else if !stringSlicesEqual(sortedCopy(obs.Devices), sortedCopy(df.devices)) {
 			plan = append(plan, UpdateSyncthingFolderDevices{

@@ -25,6 +25,7 @@ import (
 
 	"github.com/julian-corbet/dotkeeper/internal/activity"
 	"github.com/julian-corbet/dotkeeper/internal/config"
+	"github.com/julian-corbet/dotkeeper/internal/gitident"
 	"github.com/julian-corbet/dotkeeper/internal/reconcile"
 	"github.com/julian-corbet/dotkeeper/internal/stclient"
 	"github.com/julian-corbet/dotkeeper/internal/watchhealth"
@@ -222,6 +223,20 @@ func ensureRepoConfig(repoPath string) (*config.RepoConfigV2, error) {
 		}
 		if name, err := loadMachineName(); err == nil {
 			cfg.Meta.AddedBy = name
+		}
+		// Discover the git remote at track time. Best-effort: a
+		// non-git folder (dotfiles dir, scratch) is legitimate and
+		// produces empty Git fields, which the subscription
+		// matcher treats as "name-based identity only" (legacy
+		// behaviour). A git folder with a malformed remote
+		// surfaces as Remote set + Canonical empty — operator
+		// can fix the URL and re-run `dotkeeper track` to
+		// repopulate.
+		if remote := gitRemoteOrigin(repoPath); remote != "" {
+			cfg.Git.Remote = remote
+			if c, err := gitident.Canonical(remote); err == nil {
+				cfg.Git.Canonical = c
+			}
 		}
 		if err := config.WriteRepoConfigV2(repoPath, cfg); err != nil {
 			return nil, err
