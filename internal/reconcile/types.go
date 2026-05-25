@@ -59,6 +59,13 @@ type RepoDesired struct {
 
 	// MachineSlot is copied from machine.toml for skip-slot evaluation.
 	MachineSlot uint
+
+	// GitCanonical is the canonical git-remote identity for this
+	// repo, derived from .git/config's origin URL at track time.
+	// Empty for non-git folders. Reconcile uses it as the
+	// Syncthing folder label so peers' ClusterConfigs carry the
+	// load-bearing identity needed for subscription matching.
+	GitCanonical string
 }
 
 // PeerDesired is the desired state for a single Syncthing peer.
@@ -219,6 +226,7 @@ func BuildDesired(machine *config.MachineConfigV2, repos map[string]*config.Repo
 			GitInterval:       gitInterval,
 			SkipSlots:         append([]uint(nil), r.GitBackup.SkipSlots...),
 			MachineSlot:       machineSlot,
+			GitCanonical:      r.Git.Canonical,
 		}
 	}
 	return d
@@ -376,6 +384,14 @@ type AddSyncthingFolder struct {
 	FolderID string
 	Path     string
 	Devices  []string
+	// Label is the human-readable identifier Syncthing displays
+	// for this folder. When the repo is git-backed dotkeeper sets
+	// this to the canonical-URL identity (e.g.
+	// "github.com/julian-corbet/dotkeeper") so the Syncthing UI
+	// and the dotkeeper discovery surface both show something
+	// meaningful. Empty falls back to FolderID (legacy behaviour
+	// — non-git folders or pre-v1.2 installs).
+	Label string
 }
 
 func (a AddSyncthingFolder) Describe() string {

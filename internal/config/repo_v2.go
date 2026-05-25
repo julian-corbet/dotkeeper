@@ -28,6 +28,34 @@ type RepoConfigV2 struct {
 
 	// GitBackup holds per-repo git backup schedule overrides.
 	GitBackup RepoGitBackupConfig `toml:"git_backup"`
+
+	// Git holds the canonical git-remote identity for this repo.
+	// Populated by `dotkeeper track` from the local working tree's
+	// `origin` remote, or left empty for non-git folders. When
+	// non-empty, the Canonical field is the load-bearing identity
+	// dotkeeper uses for Syncthing folder labels, subscription
+	// matching, and operator-facing surfaces — every machine with
+	// the same upstream repo arrives at the same canonical regardless
+	// of which URL syntax their git client recorded.
+	Git RepoGitConfig `toml:"git"`
+}
+
+// RepoGitConfig captures the git-remote identity that lets every
+// machine refer to the same upstream repo by the same string.
+// Zero-value fields are legitimate for non-git folders (dotfiles
+// dirs, scratch areas) — callers should branch on Canonical=="".
+type RepoGitConfig struct {
+	// Remote is the raw remote URL as recorded in the local
+	// repo's `.git/config` (typically `origin`). Stored verbatim
+	// for diagnostic purposes; identity comparisons go through
+	// Canonical.
+	Remote string `toml:"remote"`
+
+	// Canonical is the normalised identity form of Remote, produced
+	// by internal/gitident.Canonical. Example:
+	// "github.com/julian-corbet/dotkeeper" regardless of whether the
+	// underlying Remote was the HTTPS, SCP, or ssh:// variant.
+	Canonical string `toml:"canonical"`
 }
 
 // RepoMeta holds repo identity metadata.
@@ -134,6 +162,16 @@ func WriteRepoConfigV2(repoRoot string, cfg *RepoConfigV2) error {
 		fmt.Fprintf(&b, "%d", s)
 	}
 	b.WriteString("]\n")
+
+	// [git] is omitted entirely for non-git folders so the file
+	// stays clean for the dotfiles/scratch case. When present,
+	// Canonical is the load-bearing identity (subscription matching,
+	// folder labels); Remote is kept for diagnostics.
+	if cfg.Git.Remote != "" || cfg.Git.Canonical != "" {
+		b.WriteString("\n[git]\n")
+		fmt.Fprintf(&b, "remote = %q\n", cfg.Git.Remote)
+		fmt.Fprintf(&b, "canonical = %q\n", cfg.Git.Canonical)
+	}
 
 	path := RepoConfigPath(repoRoot)
 	return WriteFileAtomic(path, []byte(b.String()), 0o644)

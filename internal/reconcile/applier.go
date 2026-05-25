@@ -316,8 +316,15 @@ func (a *RealApplier) applyAddSyncthingFolder(act AddSyncthingFolder) error {
 	if err := applyEnsureFolderMarker(EnsureFolderMarker{RepoPath: act.Path}); err != nil {
 		return fmt.Errorf("AddSyncthingFolder %q: %w", act.FolderID, err)
 	}
-	// Use folder ID as label so the Syncthing UI shows something meaningful.
-	if err := a.ST.AddOrUpdateFolder(act.FolderID, act.FolderID, act.Path, act.Devices); err != nil {
+	// Prefer the git-canonical label when available; fall back to
+	// folder ID for non-git folders and pre-Phase-2 installs that
+	// don't yet carry an identity. The canonical label is what the
+	// subscription matcher reads from peer ClusterConfigs.
+	label := act.Label
+	if label == "" {
+		label = act.FolderID
+	}
+	if err := a.ST.AddOrUpdateFolder(act.FolderID, label, act.Path, act.Devices); err != nil {
 		return fmt.Errorf("AddSyncthingFolder %q: %w", act.FolderID, err)
 	}
 	return nil
