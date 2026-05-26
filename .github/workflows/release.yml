@@ -5,8 +5,13 @@ on:
     tags:
       - 'v*'
 
-# Least privilege at workflow level; only the `release` job elevates to write.
-permissions: read-all
+# Public repository: GITHUB_TOKEN doesn't need ANY scopes because all
+# checkouts/reads work anonymously. Locking permissions to {} is the
+# tightest available default. The `release` job runs without
+# GITHUB_TOKEN entirely — it uses PACKAGES_TOKEN (a user PAT) so the
+# release: published event downstream workflows depend on actually
+# fires.
+permissions: {}
 
 jobs:
   build:
@@ -79,6 +84,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Defense-in-depth: even with permissions: {} above, ask the
+          # checkout action not to leave the (already-empty) token in
+          # the local git config. Subsequent steps don't need to push
+          # back.
+          persist-credentials: false
 
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
@@ -142,6 +153,12 @@ jobs:
             suffix: linux_386
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Defense-in-depth: even with permissions: {} above, ask the
+          # checkout action not to leave the (already-empty) token in
+          # the local git config. Subsequent steps don't need to push
+          # back.
+          persist-credentials: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -219,6 +236,12 @@ jobs:
     # doesn't read the workflow-permission scoping.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Defense-in-depth: even with permissions: {} above, ask the
+          # checkout action not to leave the (already-empty) token in
+          # the local git config. Subsequent steps don't need to push
+          # back.
+          persist-credentials: false
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
