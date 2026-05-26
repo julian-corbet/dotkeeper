@@ -7,6 +7,49 @@ dotkeeper adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.2.3] - 2026-05-26
+
+Docs + CI release. No source changes; binary identical to v1.2.2.
+Tagged primarily to validate the new Alpine native-build workflow
+end-to-end on a real release event.
+
+### Added
+
+- **First-class Alpine packaging.** `alpine/APKBUILD` + a dedicated
+  `.github/workflows/alpine.yml` build the package using Alpine's
+  native `abuild` toolchain in an `alpine:edge` container on every
+  `release: published`. Distinct from the `nfpm`-produced `.apk`
+  in `release.yml` — the native one carries proper Alpine metadata
+  and is the version suitable for upstream submission into
+  `aports/community`. Two arches (`x86_64`, `aarch64`); native
+  `.apk` uploaded to the release page alongside the existing
+  artifacts. Acts on item 5 of @elrido's review in #82.
+
+### Changed
+
+- **Workflow hardening** (acts on #82 items 1–3):
+  - Both `ci.yml` and `release.yml` switch from
+    `permissions: read-all` to `permissions: {}`. The repo is
+    public so anonymous reads cover everything CI needs; nothing
+    writes via `GITHUB_TOKEN` (release uses `PACKAGES_TOKEN`).
+  - All `actions/checkout` invocations gain
+    `persist-credentials: false`. Defense in depth.
+  - `ci.yml`'s "Configure git identity for tests" step picks up
+    an inline comment explaining why it's needed and why the
+    identity never leaves the runner.
+
+- **Makefile is self-documenting** (acts on #82 item 4). Each
+  target carries an inline `## description`; `make help` (or just
+  `make`, now the default goal) prints them.
+
+- **README + landing site refreshed for v1.2.x.** Phase 2 surfaces
+  in the "How it works" + "Subscriptions" sections of README;
+  hero demo terminal on dotkeeper.corbet.ch shows the actual
+  onboarding flow (`offers` → `subscribe` → reconcile); commands
+  tables on both surfaces pick up `subscribe`, `unsubscribe`,
+  `subscriptions list`, `offers`, `health`, `transport repos`,
+  `bench-now`, `bare-init`.
+
 ## [1.2.2] - 2026-05-25
 
 ### Added
