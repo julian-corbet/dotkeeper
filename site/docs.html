@@ -63,10 +63,24 @@
   <h2>Architecture</h2>
   <p>dotkeeper embeds the Syncthing library as a Go dependency. The entire sync engine compiles into a single binary &mdash; no separate Syncthing installation needed.</p>
 
+  <h3>Multi-transport routing (v1.0+)</h3>
+  <p>Three ways to move a change between peers coexist:</p>
+  <ul>
+    <li><strong>Syncthing</strong> — universal fallback. Real-time bidirectional file sync over the open Syncthing mesh.</li>
+    <li><strong>GitSSH</strong> — direct <code>git push</code> over SSH (Tailscale-resolved by default). Lowest setup latency for small commits.</li>
+    <li><strong>Mutagen</strong> — sync sessions over SSH. Fastest for small-file workloads when <code>mutagen</code> is on <code>PATH</code> (detect-and-fallback; no setup needed).</li>
+  </ul>
+  <p>A cost model picks per change. It starts with sensible priors per transport family, learns from every observed transfer, and (since v1.1.22) actively benchmarks idle <code>(transport, peer, repo)</code> tuples in the background so the model self-tunes even for repos that rarely change.</p>
+
+  <h3>Subscriptions (v1.2+)</h3>
+  <p>A folder's identity is its <strong>canonical git remote URL</strong>. Every URL syntax for the same upstream repo collapses to one identity: HTTPS, SCP-style <code>git@host:path</code>, and <code>ssh://</code> all yield <code>github.com/foo/rag</code>.</p>
+  <p>On a fresh machine, <code>dotkeeper offers</code> shows what peers are advertising. <code>dotkeeper subscribe github.com/foo/rag</code> declares the local intent. Reconcile matches, provisions the path, and Syncthing's BEP gossip seeds the working tree from the peer. One command per repo &mdash; no manual <code>git clone</code> + <code>track</code> dance.</p>
+  <p>Declarative subscriptions live in <code>machine.toml</code>'s <code>[[subscribe]]</code> sections (Nix-friendly). Imperative ones live in <code>state.toml</code> via the CLI. The reconciler merges both sources; declarative wins on conflict.</p>
+
   <h3>Dual sync strategy</h3>
   <ul>
-    <li><strong>Syncthing</strong> handles instant, bidirectional file sync. Changes propagate in seconds.</li>
-    <li><strong>Git</strong> handles versioned history and remote backup. Auto-commits run on a configurable schedule (hourly, daily, weekly).</li>
+    <li><strong>Working-tree sync</strong> (Syncthing / Mutagen) handles instant, bidirectional file sync. Edits propagate in seconds.</li>
+    <li><strong>Git</strong> handles versioned history and remote backup. Auto-commits run on a configurable schedule (hourly, daily, weekly), staggered per machine via slot offsets so pushes never collide.</li>
   </ul>
 
   <h3>Isolated ports</h3>
@@ -86,7 +100,7 @@
     <tbody>
       <tr><td><code>machine.toml</code></td><td><code>~/.config/dotkeeper/</code></td><td>Declarative local config: name, slot, peers, defaults, scan roots</td><td>Never</td></tr>
       <tr><td><code>state.toml</code></td><td><code>~/.local/state/dotkeeper/</code></td><td>Tool-owned runtime state: Syncthing identity cache, learned peers, tracked overrides</td><td>Never</td></tr>
-      <tr><td><code>.dotkeeper.toml</code></td><td>Each local managed repo copy</td><td>Per-repo desired state</td><td>Never</td></tr>
+      <tr><td><code>.dotkeeper.toml</code></td><td>Each local managed repo copy</td><td>Per-repo desired state. v1.2+ adds a <code>[git]</code> section with the canonical remote URL — the load-bearing identity for subscriptions.</td><td>Never</td></tr>
     </tbody>
   </table>
 </div>
@@ -108,8 +122,29 @@
   <table>
     <tbody>
       <tr><td><code>dotkeeper reconcile</code></td><td>Run one reconcile pass and apply the plan.</td></tr>
-      <tr><td><code>dotkeeper track &lt;path&gt;</code></td><td>Bootstrap local <code>.dotkeeper.toml</code>, write local excludes, and register a git repo.</td></tr>
+      <tr><td><code>dotkeeper track &lt;path&gt;</code></td><td>Bootstrap local <code>.dotkeeper.toml</code>, write local excludes, and register a git repo. v1.2+ populates <code>[git]</code> with the canonical remote URL automatically.</td></tr>
       <tr><td><code>dotkeeper untrack &lt;path&gt;</code></td><td>Remove an out-of-root tracked override.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Subscriptions (v1.2+)</h3>
+  <table>
+    <tbody>
+      <tr><td><code>dotkeeper subscribe &lt;git-url&gt;</code></td><td>Declare this machine wants the named repo from any peer offering it. Any URL form (HTTPS / SCP / <code>ssh://</code>) is normalised. Flags: <code>--name NAME</code> for non-git folders, <code>--path</code> to override the mirror-convention default.</td></tr>
+      <tr><td><code>dotkeeper unsubscribe &lt;git-url-or-name&gt;</code></td><td>Remove an imperative subscription from <code>state.toml</code>. Declarative entries in <code>machine.toml</code> must be edited there.</td></tr>
+      <tr><td><code>dotkeeper subscriptions list</code></td><td>Show the merged subscription list (declarative + imperative) with a SOURCE column.</td></tr>
+      <tr><td><code>dotkeeper offers</code></td><td>List folders peers are advertising that this machine could subscribe to. Output includes a shell-paste-ready <code>dotkeeper subscribe …</code> action column.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Multi-transport (v1.0+)</h3>
+  <table>
+    <tbody>
+      <tr><td><code>dotkeeper transport list</code></td><td>List configured transports and their <code>Available()</code> state.</td></tr>
+      <tr><td><code>dotkeeper transport status [peer]</code></td><td>Per-peer reachability + cross-repo cost-model parameters (probe RTT, learned setup-ms, learned MB/s, effective sample count).</td></tr>
+      <tr><td><code>dotkeeper transport repos</code></td><td>Per-(transport, peer, repo) cost-model predictions with PRED@1KB / PRED@1MB columns. Supports <code>--peer</code> and <code>--transport</code> filters.</td></tr>
+      <tr><td><code>dotkeeper bench-now [--folder=PATH]</code></td><td>Operator-triggered transport benchmark. Runs one 64 KB probe per (synchronous transport, peer) pair, records observations in the cost model.</td></tr>
+      <tr><td><code>dotkeeper bare-init</code></td><td>Configure peer-side git repos for direct <code>git push</code> (sets <code>receive.denyCurrentBranch=updateInstead</code>).</td></tr>
     </tbody>
   </table>
 
@@ -118,6 +153,7 @@
     <tbody>
       <tr><td><code>dotkeeper start</code></td><td>Run embedded Syncthing and the reconcile daemon in the foreground.</td></tr>
       <tr><td><code>dotkeeper status</code></td><td>Show machine info, Syncthing status, repos, peers, and pending work.</td></tr>
+      <tr><td><code>dotkeeper health</code></td><td>Operational dashboard. Flags: <code>--explain</code> for guidance on warning kinds, <code>--watch=DURATION</code> for tmux-pane mode, <code>--json</code> for machine-readable output.</td></tr>
       <tr><td><code>dotkeeper doctor</code></td><td>Run self-diagnostic checks; use <code>--json</code> for machine-readable output.</td></tr>
       <tr><td><code>dotkeeper version</code></td><td>Print version and commit.</td></tr>
     </tbody>
@@ -139,13 +175,33 @@ dotkeeper peer add laptop KFZZ7TP-GH5OLNL-WNSTHWQ-...
 dotkeeper reconcile</code></pre>
   <p>Each machine keeps its own <code>machine.toml</code>. Home Manager, a flake activation script, or your own bootstrap script can generate it.</p>
 
-  <h3>Adding repos later</h3>
-  <pre><code># Repos under scan roots need local .dotkeeper.toml.
+  <h3>Adding repos on the first machine</h3>
+  <pre><code># Repos under scan roots get a local .dotkeeper.toml via track.
+# v1.2+ also discovers the git origin URL and stores its canonical form.
 dotkeeper track ~/Documents/GitHub/new-project
 
 # For repos outside scan roots:
 dotkeeper track ~/src/special-project
 dotkeeper reconcile</code></pre>
+
+  <h3>Adding repos on a fresh machine (v1.2+)</h3>
+  <pre><code># See what peers are offering you:
+dotkeeper offers
+
+# Subscribe by canonical git URL — any URL syntax works:
+dotkeeper subscribe github.com/foo/repo
+dotkeeper subscribe git@github.com:foo/repo.git
+dotkeeper subscribe https://github.com/foo/repo
+
+# Custom local path:
+dotkeeper subscribe github.com/foo/repo --path=~/code/repo
+
+# Reconcile picks it up (or wait for the next tick):
+dotkeeper reconcile</code></pre>
+  <p>Reconcile creates the local path, writes a <code>.dotkeeper.toml</code> stub, and adds the folder to Syncthing with the offering peer in share-with. BEP gossip seeds the working tree from the peer. Subscriptions can also be declared in <code>machine.toml</code>:</p>
+  <pre><code>[[subscribe]]
+canonical = "github.com/foo/repo"
+# path = "..."  optional; defaults to &lt;first scan_root&gt;/&lt;basename&gt;</code></pre>
 
   <h3>Nix / Home Manager denylist</h3>
   <p>For declarative setups, keep dotkeeper generic and put private topology in your own flake. Scan a few roots, generate local <code>.dotkeeper.toml</code> files for discovered Git repos, and list only the paths that must not sync.</p>

@@ -29,6 +29,7 @@ dotkeeper is one Go binary that runs as a daemon. It combines:
 
 - **Embedded Syncthing** — real-time P2P file sync over the open Syncthing mesh
 - **Reconciler loop** — pure `Diff(desired, observed) → Plan` that continuously converges the live system to what your TOML configs declare
+- **Declarative subscriptions** — a new machine subscribes to repos by their canonical git URL (`github.com/foo/rag`); `dotkeeper offers` shows what peers are advertising; one command adds a repo to a fresh machine
 - **Multi-transport routing** — picks per change between Syncthing, `git push` over SSH (Tailscale-resolved), and Mutagen (when installed). A self-tuning cost model learns the right choice per `(transport, peer, repo)` triple over time
 - **Staggered git backup** — auto-commits + pushes on a schedule, slot offsets keep machines from racing
 - **Performance budgets in CI** — hot-path benchmarks gate merges, so regressions can't ship
@@ -56,6 +57,27 @@ Three ways to move a change between peers coexist:
 A cost model picks per change. It starts with sensible priors per transport family, learns from every observed transfer, and (since v1.1.22) actively benchmarks idle tuples in the background so the model self-tunes even for repos that rarely change. See `dotkeeper transport repos` for the current per-(transport, peer, repo) predictions.
 
 `.git/` directories are excluded from Syncthing sync. Each machine keeps its own independent git history; histories converge via git remotes or the GitSSH transport, never by syncing raw git objects. This keeps the mesh fast and avoids the class of problems that come from syncing `.git/` directly.
+
+### Subscriptions (v1.2+)
+
+A folder's identity is its **canonical git remote URL**. Two operators arrive at the same identity for the same repo regardless of which URL syntax their git client recorded — HTTPS, SCP, or `ssh://` all collapse to `github.com/foo/rag`. Subscriptions reference folders by that identity:
+
+```toml
+# machine.toml
+[[subscribe]]
+canonical = "github.com/foo/rag"
+# path optional; defaults to <first scan_root>/<basename>
+```
+
+When a peer offers a folder whose label matches your subscription, dotkeeper provisions it: creates the local path, writes a `.dotkeeper.toml` stub, adds the folder to Syncthing with the offering peer in share-with. BEP gossip seeds the working tree from the peer. The whole onboarding flow on a fresh machine reduces to:
+
+```bash
+$ dotkeeper offers          # see what's available
+$ dotkeeper subscribe github.com/foo/rag
+$ dotkeeper reconcile       # or wait for the next tick
+```
+
+Folder identity (canonical URL) is wire-level metadata on the Syncthing folder label, so peers running v1.2+ see the same identity strings.
 
 ## Quick start
 
@@ -242,6 +264,10 @@ for a full generic activation sketch.
 | `dotkeeper conflict resolve-all` | Batch auto-resolve trivial conflicts (dedup + text merge) |
 | `dotkeeper conflict keep <path>` | Delete the conflict variant, keep the current file |
 | `dotkeeper conflict accept <path>` | Replace current file with the conflict variant and commit |
+| `dotkeeper subscribe <git-url>` | Declare that this machine wants the named repo from any peer offering it; supports `--name NAME` for non-git folders, `--path` to override the mirror default |
+| `dotkeeper unsubscribe <git-url-or-name>` | Remove an imperative subscription (declarative entries in `machine.toml` must be edited there) |
+| `dotkeeper subscriptions list` | Show the merged subscription list (declarative + imperative) with a SOURCE column |
+| `dotkeeper offers` | List folders peers are advertising that this machine could subscribe to; output includes a shell-paste-ready subscribe action |
 | `dotkeeper transport list` | List configured transports and which are currently available |
 | `dotkeeper transport status [peer]` | Per-peer reachability + cross-repo cost-model parameters |
 | `dotkeeper transport repos` | Per-(transport, peer, repo) cost-model predictions; supports `--peer` and `--transport` filters |
@@ -261,7 +287,15 @@ for a full generic activation sketch.
 
 ## Status
 
-**v1.1.x** is the current release line. Headline pieces since v1.0:
+**v1.2.x** is the current release line. Headline pieces since v1.0:
+
+### v1.2 — declarative subscriptions
+
+- **v1.2.0** — git-remote URL as canonical folder identity. `internal/gitident.Canonical` collapses every URL syntax (HTTPS / SCP / `ssh://`) into one identity string. Syncthing folder labels carry it; subscription matching reads it.
+- **v1.2.1** — subscription schema + CLI (`dotkeeper subscribe / unsubscribe / subscriptions list`). Declarative `[[subscribe]]` in `machine.toml`; imperative entries in `state.toml`. Merge precedence: declarative wins.
+- **v1.2.2** — reconcile wiring + `dotkeeper offers` discovery. `subscribe.Resolve` matches subscriptions against peer-offered folders; `AcceptSubscription` action provisions the local path + Syncthing folder. End-to-end onboarding flow on a fresh machine: `dotkeeper subscribe github.com/foo/rag` → working.
+
+### v1.1 — perf foundation + multi-transport
 
 - **v1.1.0 – v1.1.12** — `dotkeeper health` operational dashboard (`--explain`, `--watch`, top warning kinds, JSON output)
 - **v1.1.14** — autoAccept storm fix (folder-membership is opt-in per machine, ending the multi-thousand-errors-per-hour Syncthing ClusterConfig loop on partial-overlap fleets)
