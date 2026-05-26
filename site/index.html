@@ -36,7 +36,7 @@
   <div class="hero-content">
     <h1>dotkeeper</h1>
     <p class="tagline">Keep every machine in sync</p>
-    <p class="subtitle">Real-time P2P file sync powered by Syncthing. Declarative repo config, staggered git backup, and no config server.</p>
+    <p class="subtitle">Real-time P2P sync for code, dotfiles, and notes — with git history underneath. One binary, no central server, no cloud account.</p>
     <div class="cta">
       <a href="#install" class="btn btn-primary">Get Started</a>
       <a href="https://github.com/julian-corbet/dotkeeper" class="btn btn-secondary">View on GitHub</a>
@@ -49,40 +49,30 @@
         <div class="terminal-dots">
           <span></span><span></span><span></span>
         </div>
-        <span class="terminal-title">dotkeeper</span>
+        <span class="terminal-title">dotkeeper — onboarding a fresh machine</span>
       </div>
       <pre class="terminal-body"><code><span class="prompt">$</span> dotkeeper init --name laptop --slot 0
 <span class="output">[dotkeeper] machine: laptop (slot 0)
 [dotkeeper] Syncthing identity generated
 [dotkeeper] device ID: KFZZ7TP-GH5OLNL-WNSTHWQ-...</span>
 
-<span class="prompt">$</span> dotkeeper identity
-<span class="output">laptop	KFZZ7TP-GH5OLNL-WNSTHWQ-...</span>
+<span class="prompt">$</span> dotkeeper peer add desktop WB25TET-...
+<span class="output">[dotkeeper] peer added: desktop</span>
 
-<span class="prompt">$</span> dotkeeper track ~/Documents/project
-<span class="output">[dotkeeper] tracked: /home/me/Documents/project</span>
+<span class="prompt">$</span> dotkeeper offers
+<span class="output">PEER     REPO                          STATUS         ACTION
+desktop  github.com/me/dotfiles        not subscribed dotkeeper subscribe github.com/me/dotfiles
+desktop  github.com/me/notes           not subscribed dotkeeper subscribe github.com/me/notes
+desktop  github.com/me/code            not subscribed dotkeeper subscribe github.com/me/code</span>
+
+<span class="prompt">$</span> dotkeeper subscribe github.com/me/dotfiles
+<span class="output">✓ subscribed: github.com/me/dotfiles
+  local path: (mirror convention — first scan_root + basename)
+  next reconcile picks it up; force with `dotkeeper reconcile`</span>
 
 <span class="prompt">$</span> dotkeeper reconcile
 <span class="output">Plan:
-  + add Syncthing folder project
-  + share project with laptop
-  + push git backup for project</span>
-
-<span class="prompt">$</span> dotkeeper status
-<span class="output">=== Machine ===
-  Name: laptop
-  Slot: 0
-
-=== Syncthing (embedded, API 127.0.0.1:18384) ===
-  Status: running
-  Peers: 1
-  Folders: 3
-
-=== Repos ===
-  project: ~/Documents/project [ok, git, syncthing]
-
-=== Reconcile ===
-  Pending actions: 0</span></code></pre>
+  + accept subscription github.com/me/dotfiles (mount ~/Documents/GitHub/dotfiles)</span></code></pre>
     </div>
   </div>
 </header>
@@ -96,17 +86,17 @@
       <div class="step">
         <div class="step-num">1</div>
         <h3>Initialize</h3>
-        <p><code>dotkeeper init</code> on your first machine. Generates a Syncthing identity and creates your config.</p>
+        <p><code>dotkeeper init</code> on your first machine. Generates a Syncthing identity, scaffolds <code>machine.toml</code>.</p>
       </div>
       <div class="step">
         <div class="step-num">2</div>
-        <h3>Declare peers</h3>
-        <p>Put peer device IDs in <code>machine.toml</code>, or use <code>dotkeeper peer add</code> for imperative bootstrap scripts.</p>
+        <h3>Pair peers</h3>
+        <p>Exchange device IDs between machines via <code>machine.toml</code> or <code>dotkeeper peer add</code>. P2P mesh — no central hub.</p>
       </div>
       <div class="step">
         <div class="step-num">3</div>
-        <h3>Track repos</h3>
-        <p>Run <code>dotkeeper track</code> or generate local <code>.dotkeeper.toml</code> files from Nix/Home Manager. Scan roots pick them up automatically.</p>
+        <h3>Subscribe</h3>
+        <p><code>dotkeeper offers</code> shows what peers have. <code>dotkeeper subscribe github.com/foo/repo</code> opts in. Files arrive in seconds.</p>
       </div>
     </div>
   </div>
@@ -117,12 +107,20 @@
     <h2>Features</h2>
     <div class="feature-grid">
       <div class="feature">
+        <h3>One-command onboarding</h3>
+        <p><code>dotkeeper subscribe github.com/foo/repo</code> on a fresh machine. The mesh seeds the working tree from any peer that has it. No manual <code>git clone</code> + <code>track</code> dance.</p>
+      </div>
+      <div class="feature">
+        <h3>Self-tuning multi-transport</h3>
+        <p>Syncthing, <code>git push</code> over SSH, and Mutagen coexist. A cost model picks per change and learns from every transfer. Active benchmarking refines per-folder predictions in the background.</p>
+      </div>
+      <div class="feature">
         <h3>Zero infrastructure</h3>
-        <p>No cloud server, no VPN, no SSH tunnel. Machines find each other via Syncthing's discovery network and connect peer-to-peer.</p>
+        <p>No cloud server, no VPN, no SSH tunnel required. Machines find each other via Syncthing's open discovery network and connect peer-to-peer.</p>
       </div>
       <div class="feature">
         <h3>Single binary</h3>
-        <p>Syncthing is compiled into the dotkeeper binary. Download, run, done. No separate Syncthing installation, no conflicts with existing setups.</p>
+        <p>Syncthing is compiled into the dotkeeper binary. Download, run, done. No separate Syncthing installation, no conflicts with an existing setup.</p>
       </div>
       <div class="feature">
         <h3>Git history</h3>
@@ -139,6 +137,10 @@
       <div class="feature">
         <h3>Privacy-first</h3>
         <p>No telemetry, no crash reporting, no usage tracking. Syncthing's full network stack for connectivity, with all reporting disabled.</p>
+      </div>
+      <div class="feature">
+        <h3>Performance is a fail criterion</h3>
+        <p>Idle steady-state CPU sits at ~0%. Hot-path benchmarks are gated by CI — perf regressions can't ship. Cold-start scans spread across time so the daemon stays invisible to the dev experience.</p>
       </div>
     </div>
   </div>
@@ -221,14 +223,24 @@ make install</code></pre>
         <tr><td><code>dotkeeper start</code></td><td>Run the daemon (Syncthing + reconciler)</td></tr>
         <tr><td><code>dotkeeper reconcile</code></td><td>Converge Syncthing and git now</td></tr>
         <tr><td><code>dotkeeper status</code></td><td>Show full status</td></tr>
+        <tr><td><code>dotkeeper health</code></td><td>Operational dashboard with <code>--explain</code>, <code>--watch</code>, <code>--json</code></td></tr>
         <tr><td><code>dotkeeper doctor</code></td><td>Run diagnostic checks</td></tr>
         <tr><td><code>dotkeeper peer add/list/remove</code></td><td>Manage imperative peers</td></tr>
         <tr><td><code>dotkeeper track &lt;path&gt;</code></td><td>Register an out-of-root repo</td></tr>
         <tr><td><code>dotkeeper untrack &lt;path&gt;</code></td><td>Remove an out-of-root override</td></tr>
+        <tr><td><code>dotkeeper subscribe &lt;git-url&gt;</code></td><td>Declare this machine wants the named repo (Phase 2)</td></tr>
+        <tr><td><code>dotkeeper unsubscribe &lt;git-url&gt;</code></td><td>Remove an imperative subscription</td></tr>
+        <tr><td><code>dotkeeper subscriptions list</code></td><td>Show merged subscription list with SOURCE column</td></tr>
+        <tr><td><code>dotkeeper offers</code></td><td>List folders peers are advertising that this machine could subscribe to</td></tr>
         <tr><td><code>dotkeeper conflict list</code></td><td>List Syncthing sync-conflict files</td></tr>
         <tr><td><code>dotkeeper conflict resolve-all</code></td><td>Auto-resolve trivial conflicts (dedup + 3-way merge)</td></tr>
         <tr><td><code>dotkeeper conflict keep &lt;path&gt;</code></td><td>Keep current, drop the conflict variant</td></tr>
         <tr><td><code>dotkeeper conflict accept &lt;path&gt;</code></td><td>Replace current with the variant and commit</td></tr>
+        <tr><td><code>dotkeeper transport list</code></td><td>List configured transports + availability</td></tr>
+        <tr><td><code>dotkeeper transport status [peer]</code></td><td>Per-peer reachability + cross-repo cost-model parameters</td></tr>
+        <tr><td><code>dotkeeper transport repos</code></td><td>Per-(transport, peer, repo) cost-model predictions</td></tr>
+        <tr><td><code>dotkeeper bench-now</code></td><td>Operator-triggered transport benchmark</td></tr>
+        <tr><td><code>dotkeeper bare-init</code></td><td>Configure peer-side git repos for direct <code>git push</code></td></tr>
         <tr><td><code>dotkeeper version</code></td><td>Print version and commit</td></tr>
       </tbody>
     </table>
