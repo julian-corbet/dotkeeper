@@ -48,6 +48,13 @@ jobs:
         # disposable key per run — packages are signed but the
         # signature isn't relevant to the GitHub release upload (the
         # release uses its own checksums_sha256.txt).
+        #
+        # The disposable public key MUST be copied into /etc/apk/keys/
+        # before `abuild -r` runs, otherwise the final "update
+        # repository index" step rejects the just-built .apk with
+        # ERROR: UNTRUSTED signature — apk's index builder uses the
+        # system keyring to verify packages it incorporates, and the
+        # fresh per-run key isn't there by default.
         run: |
           adduser -D -G abuild builder
           mkdir -p /home/builder/.abuild
@@ -57,6 +64,8 @@ jobs:
           echo 'PACKAGER_PRIVKEY="/home/builder/.abuild/builder.rsa"' \
             > /home/builder/.abuild/abuild.conf
           chown -R builder:abuild /home/builder/.abuild
+          # Trust the disposable public key for this build only.
+          cp /home/builder/.abuild/builder.rsa.pub /etc/apk/keys/
 
       - name: Stage APKBUILD
         # `abuild` requires the APKBUILD + source files in a directory
