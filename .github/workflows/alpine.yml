@@ -107,8 +107,13 @@ jobs:
 
       - name: Locate built APK
         id: locate
+        # We match `dotkeeper-[0-9]*.apk` rather than `dotkeeper-*.apk` so the
+        # -doc subpackage (`dotkeeper-doc-<ver>.apk`) doesn't get picked up as
+        # the main artifact. The doc subpackage exists for the upstream aports
+        # submission (Alpine convention: docs live in a separate package) but
+        # we don't ship it on the GitHub release.
         run: |
-          APK=$(find /home/builder/packages -name 'dotkeeper-*.apk' | head -1)
+          APK=$(find /home/builder/packages -name 'dotkeeper-[0-9]*.apk' | head -1)
           if [ -z "$APK" ]; then
             echo "::error::built APK not found under /home/builder/packages"
             exit 1
