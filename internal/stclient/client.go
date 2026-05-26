@@ -52,12 +52,32 @@ type Client struct {
 // loss-of-peer event for more than half the reconcile interval.
 const connectionsCacheTTL = 30 * time.Second
 
+// clientTimeout caps every REST call. Reads (Ping, GetStatus,
+// GetConfig, GetPendingFolders, GetConnections) complete in tens of
+// milliseconds on a healthy daemon, so the cap only matters when
+// Syncthing is genuinely unresponsive.
+//
+// Writes (SetConfig in particular) need real headroom: applyAction
+// goroutines mid-reconcile can serialise behind a single SetConfig
+// while Syncthing replays the new config into running folders. On a
+// cold-start daemon — exactly the multipeer-e2e CI scenario — a
+// `SetConfig` carrying a fresh folder + device pair can take 5–10 s
+// to ack. The previous 5 s timeout fired exactly in that window and
+// produced the recurring "context deadline exceeded (Client.Timeout
+// exceeded while awaiting headers)" flake.
+//
+// 30 s is the smallest value that consistently absorbs cold-start
+// SetConfig duration in CI, with comfortable headroom. Reconcile's
+// own ctx still bounds total time spent; this timeout is the
+// per-request circuit breaker for "Syncthing is wedged."
+const clientTimeout = 30 * time.Second
+
 // New creates a REST API client for the embedded Syncthing instance.
 func New(apiKey string) *Client {
 	return &Client{
 		baseURL: "http://" + APIAddress,
 		apiKey:  apiKey,
-		http:    &http.Client{Timeout: 5 * time.Second},
+		http:    &http.Client{Timeout: clientTimeout},
 	}
 }
 
