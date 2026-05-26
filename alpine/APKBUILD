@@ -9,7 +9,13 @@ arch="x86_64 aarch64 armv7 x86 ppc64le s390x riscv64"
 license="AGPL-3.0-only"
 depends="git"
 makedepends="go"
-options="!check"  # full suite needs Docker for multipeer-e2e; opt in via abuild -K.
+# !check  — full suite needs Docker for multipeer-e2e; opt in via `abuild -K`.
+# !strip  — Go binaries are already stripped via `-ldflags="-s -w"` in build().
+#           abuild's strip step calls `<arch>-alpine-linux-musl-strip` which
+#           isn't present in the container when CARCH differs from the host
+#           arch (cross-compile path). Skipping is correct + simpler than
+#           pulling in cross-binutils.
+options="!check !strip"
 source="$pkgname-$pkgver.tar.gz::https://github.com/julian-corbet/dotkeeper/archive/v$pkgver.tar.gz"
 builddir="$srcdir/$pkgname-$pkgver"
 
