@@ -1,0 +1,56 @@
+# Maintainer: Julian Corbet <julian-corbet@users.noreply.github.com>
+pkgname=dotkeeper
+pkgver=0.0.0
+pkgrel=0
+pkgdesc="P2P repo sync with git history — embedded Syncthing + git auto-sync"
+url="https://github.com/julian-corbet/dotkeeper"
+# Pure-Go binary (CGO_ENABLED=0); same arch matrix as the GitHub release.
+arch="x86_64 aarch64 armv7 x86 ppc64le s390x riscv64"
+license="AGPL-3.0-only"
+depends="git"
+makedepends="go"
+options="!check"  # full suite needs Docker for multipeer-e2e; opt in via abuild -K.
+source="$pkgname-$pkgver.tar.gz::https://github.com/julian-corbet/dotkeeper/archive/v$pkgver.tar.gz"
+builddir="$srcdir/$pkgname-$pkgver"
+
+# Go module + build caches in $srcdir so abuild's tmpfs handles them.
+export GOPATH="$srcdir/go"
+export GOCACHE="$srcdir/gocache"
+# Pure-Go build — Alpine's musl shouldn't matter, but CGO=0 makes that
+# guarantee explicit. Same flags as the GitHub release pipeline.
+export CGO_ENABLED=0
+
+build() {
+	# Inject version + commit at build time. pkgver is the canonical
+	# version string; the short commit comes from the tag the source
+	# tarball was produced from (we don't have it here, so use the
+	# version slug instead — diagnostically meaningful, no random
+	# bytes leaked).
+	go build \
+		-tags noassets \
+		-ldflags="-s -w -X main.version=$pkgver -X main.commit=alpine-$pkgver" \
+		-o dotkeeper \
+		./cmd/dotkeeper
+}
+
+# Opt-in: `abuild -K rootbld` to keep the build dir + run the suite.
+# Multipeer-e2e is excluded because it needs Docker. The unit + fuzz +
+# perf-budget tiers run cleanly under the noassets tag.
+check() {
+	go test -tags noassets -short ./... \
+		|| return 1
+}
+
+package() {
+	install -Dm755 dotkeeper "$pkgdir"/usr/bin/dotkeeper
+	install -Dm644 LICENSE "$pkgdir"/usr/share/licenses/$pkgname/LICENSE
+	install -Dm644 README.md "$pkgdir"/usr/share/doc/$pkgname/README.md
+	install -Dm644 docs/examples/repo-config.toml \
+		"$pkgdir"/usr/share/doc/$pkgname/repo-config.toml
+}
+
+# sha512sums is left for `abuild checksum` to populate at build time.
+# The GitHub Actions workflow at .github/workflows/alpine.yml regenerates
+# this on each release; for a manual `abuild -r` run, the maintainer
+# does it themselves after editing pkgver.
+sha512sums=""

@@ -1,0 +1,128 @@
+name: Alpine
+
+# Builds dotkeeper as a native Alpine package using `abuild` inside an
+# alpine:edge container, then uploads the resulting `.apk` to the
+# GitHub release. Replaces the nfpm-produced `.apk` from release.yml —
+# native abuild is what `aports/community` expects upstream, and the
+# resulting package has the correct musl/Alpine metadata.
+#
+# Triggered on the same `v*` tag push as release.yml. Runs after the
+# normal `release` job has created the release (so we attach to an
+# existing release rather than create one).
+
+on:
+  release:
+    types: [published]
+
+permissions: {}
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:edge
+    strategy:
+      matrix:
+        # Alpine arch names differ from Go's GOARCH; build only the
+        # subset we have GitHub-hosted runners for and that map cleanly.
+        include:
+          - alpine_arch: x86_64
+            goarch: amd64
+          - alpine_arch: aarch64
+            goarch: arm64
+
+    steps:
+      - name: Install build deps
+        # alpine-sdk is the meta-package that brings abuild + sudo +
+        # build essentials. go is the toolchain; git is needed for
+        # `make build`'s VERSION lookup.
+        run: |
+          apk add --no-cache alpine-sdk go git curl tar bash
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure abuild keys
+        # abuild requires a signing key. For CI builds we generate a
+        # disposable key per run — packages are signed but the
+        # signature isn't relevant to the GitHub release upload (the
+        # release uses its own checksums_sha256.txt).
+        run: |
+          adduser -D -G abuild builder
+          mkdir -p /home/builder/.abuild
+          openssl genrsa -out /home/builder/.abuild/builder.rsa 4096
+          openssl rsa -in /home/builder/.abuild/builder.rsa -pubout \
+            -out /home/builder/.abuild/builder.rsa.pub
+          echo 'PACKAGER_PRIVKEY="/home/builder/.abuild/builder.rsa"' \
+            > /home/builder/.abuild/abuild.conf
+          chown -R builder:abuild /home/builder/.abuild
+
+      - name: Stage APKBUILD
+        # `abuild` requires the APKBUILD + source files in a directory
+        # writable by the builder user. We stage in /home/builder/build
+        # so abuild can write the resulting .apk into the standard
+        # /home/builder/packages location.
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -eu
+          # Strip the leading 'v' from the tag for pkgver.
+          PKGVER="${TAG#v}"
+          mkdir -p /home/builder/build/dotkeeper
+          cp alpine/APKBUILD /home/builder/build/dotkeeper/APKBUILD
+          # Patch pkgver in-place so we don't need a separate sed dance
+          # in the APKBUILD itself — keeps the in-repo file at a
+          # placeholder version that obviously needs replacement.
+          sed -i "s/^pkgver=0\\.0\\.0/pkgver=${PKGVER}/" \
+            /home/builder/build/dotkeeper/APKBUILD
+          chown -R builder:abuild /home/builder/build
+
+      - name: Build APK
+        # `abuild checksum` computes the sha512 of the source tarball.
+        # `abuild -r` runs build_function + check + package_function,
+        # producing /home/builder/packages/build/<arch>/<pkgname>-<ver>.apk.
+        run: |
+          set -eu
+          cd /home/builder/build/dotkeeper
+          # Switch arch on the host abuild expects. The GitHub
+          # ubuntu-latest runner is amd64; we cross-build to aarch64
+          # by setting CARCH in abuild.conf. abuild itself runs `go
+          # build` with CGO_ENABLED=0 and our GOARCH override.
+          export CARCH="${{ matrix.alpine_arch }}"
+          export GOARCH="${{ matrix.goarch }}"
+          # abuild expects sha512sums to be present; we computed
+          # SKIP in the in-repo APKBUILD and regenerate here.
+          su builder -c "abuild -F checksum"
+          su builder -c "abuild -F -r"
+
+      - name: Locate built APK
+        id: locate
+        run: |
+          APK=$(find /home/builder/packages -name 'dotkeeper-*.apk' | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::built APK not found under /home/builder/packages"
+            exit 1
+          fi
+          NAME="dotkeeper_${{ github.event.release.tag_name }}_alpine_${{ matrix.alpine_arch }}.apk"
+          cp "$APK" "/tmp/${NAME}"
+          echo "apk_path=/tmp/${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK to release
+        env:
+          GH_TOKEN: ${{ secrets.PACKAGES_TOKEN }}
+        # Same PAT-based pattern as release.yml — gh CLI with
+        # PACKAGES_TOKEN, attaching to the already-created release.
+        # If PACKAGES_TOKEN isn't set, we surface a warning but don't
+        # fail (so first-time setup doesn't tank every release).
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::PACKAGES_TOKEN not set — Alpine APK will not be uploaded."
+            exit 0
+          fi
+          # gh CLI in the alpine:edge container — install via apk.
+          apk add --no-cache github-cli
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "${{ steps.locate.outputs.apk_path }}" \
+            --repo "${{ github.repository }}" \
+            --clobber
