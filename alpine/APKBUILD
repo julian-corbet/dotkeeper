@@ -1,19 +1,15 @@
-# Contributor: Julian Corbet <julian-corbet@users.noreply.github.com>
 # Maintainer: Julian Corbet <julian-corbet@users.noreply.github.com>
 pkgname=dotkeeper
 pkgver=0.0.0
 pkgrel=0
 pkgdesc="P2P repo sync with git history — embedded Syncthing + git auto-sync"
 url="https://github.com/julian-corbet/dotkeeper"
-arch="all"
+# Pure-Go binary (CGO_ENABLED=0); same arch matrix as the GitHub release.
+arch="x86_64 aarch64 armv7 x86 ppc64le s390x riscv64"
 license="AGPL-3.0-only"
 depends="git"
 makedepends="go"
-subpackages="$pkgname-doc"
-# net    — go fetches modules during build.
-# !check — full suite needs Docker for multipeer-e2e; opt in via `abuild -K`.
-# !strip — Go binary is already stripped via `-ldflags="-s -w"` in build().
-options="net !check !strip"
+options="!check"  # full suite needs Docker for multipeer-e2e; opt in via abuild -K.
 source="$pkgname-$pkgver.tar.gz::https://github.com/julian-corbet/dotkeeper/archive/v$pkgver.tar.gz"
 builddir="$srcdir/$pkgname-$pkgver"
 
