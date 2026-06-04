@@ -83,7 +83,7 @@ jobs:
           # upstream for the same reason.
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           # Defense-in-depth: even with permissions: {} above, ask the
           # checkout action not to leave the (already-empty) token in
@@ -152,7 +152,7 @@ jobs:
             nfpm_arch: "386"
             suffix: linux_386
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           # Defense-in-depth: even with permissions: {} above, ask the
           # checkout action not to leave the (already-empty) token in
@@ -235,7 +235,7 @@ jobs:
     # No `permissions:` block — PACKAGES_TOKEN is a user PAT and
     # doesn't read the workflow-permission scoping.
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           # Defense-in-depth: even with permissions: {} above, ask the
           # checkout action not to leave the (already-empty) token in
