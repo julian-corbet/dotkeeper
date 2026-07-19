@@ -1,0 +1,50 @@
+# dotkeeper
+
+> dotkeeper is a single Go binary that gives you real-time, peer-to-peer sync of your code, dotfiles, and notes across two or more machines, with an automatic git history underneath for rollback. It embeds Syncthing for sub-second working-tree propagation over an open P2P mesh — no central server, no cloud account, no subscription — and a declarative reconciler loop keeps each machine converged to TOML config. Auto-commits are staggered on a schedule so paired machines never race.
+
+## What it is
+
+- [README](https://github.com/julian-corbet/dotkeeper/blob/main/README.md): single binary, runs as a daemon, embeds Syncthing for P2P file sync plus staggered git auto-backup for history.
+- [How it works](https://github.com/julian-corbet/dotkeeper#how-it-works): embedded Syncthing + reconciler loop + declarative subscriptions + multi-transport routing + staggered git backup.
+- [Architecture walkthrough](https://github.com/julian-corbet/dotkeeper/blob/main/docs/architecture.md): the readable narrative of the design — reconciler model, config-file roles, discovery, what does not sync.
+- [Homepage](https://dotkeeper.corbet.ch): project landing page and overview.
+
+## Who it's for / not for
+
+- [Is this for you?](https://github.com/julian-corbet/dotkeeper#is-this-for-you): for anyone working across two or more machines (laptop + desktop, dev box + lab box) who wants sub-second sync, automatic git history, no central infrastructure, and a single binary with no daemons to manage.
+- NOT for: collaborative editing (use git), large binary asset distribution (use a CDN), or one-machine-only setups.
+
+## Key concepts
+
+- [The reconcile loop](https://github.com/julian-corbet/dotkeeper#the-reconcile-loop): a pure `diff(desired, observed) → plan` controller. `desired` comes from `machine.toml` + local `.dotkeeper.toml` files; `observed` from the Syncthing REST API, git, and the filesystem. `diff()` is pure and deterministic; `apply()` does the idempotent side effects. Triggered by inotify events, a periodic timer (default 5 min), and explicit `dotkeeper reconcile`.
+- [Multi-transport routing](https://github.com/julian-corbet/dotkeeper#multi-transport-routing): three coexisting ways to move a change — Syncthing's BEP gossip (universal fallback), `git push` over SSH (fastest for small commits), and Mutagen (when on PATH). A self-tuning cost model picks per `(transport, peer, repo)` triple and benchmarks idle tuples in the background. `.git/` directories are excluded from Syncthing; each machine keeps its own git history.
+- [Subscriptions](https://github.com/julian-corbet/dotkeeper#subscriptions-v12): a folder's identity is its canonical git remote URL (HTTPS / SCP / `ssh://` all collapse to e.g. `github.com/foo/rag`). `dotkeeper offers` lists what peers advertise; `dotkeeper subscribe <url>` declares intent; reconcile provisions the local path and Syncthing folder.
+- [Config files](https://github.com/julian-corbet/dotkeeper/blob/main/docs/architecture.md#state-locations): `machine.toml` (declarative machine identity/policy, Nix-authorable), `state.toml` (tool-owned runtime state, not hand-edited), `.dotkeeper.toml` (per-repo local desired state, intentionally NOT synced).
+- [Port isolation](https://github.com/julian-corbet/dotkeeper#port-isolation): the embedded Syncthing runs on non-default ports (API 18384, sync 12000, discovery 11027) and a separate config dir, so it never conflicts with a system-installed Syncthing.
+
+## Install
+
+- [Quick start / install](https://github.com/julian-corbet/dotkeeper#install): Arch (AUR `dotkeeper-bin` / `dotkeeper-git`), macOS/Linux Homebrew (`brew tap julian-corbet/dotkeeper && brew install dotkeeper`), pre-built binaries from Releases, or from source with `make build && make install`.
+- Requirements: Go 1.26+ (build only), `git`, a service manager (systemd / launchd / cron), internet access for cross-network sync (LAN-only also works).
+- [Build note](https://github.com/julian-corbet/dotkeeper#install): build with `make build`, not `go build ./...` — the embedded Syncthing requires the `-tags noassets` build tag, which the Makefile, Dockerfile, and CI set automatically.
+
+## Commands
+
+- [Full command table](https://github.com/julian-corbet/dotkeeper#commands).
+- First run: `dotkeeper init` (generate Syncthing identity, write `state.toml`, scaffold `machine.toml`), `dotkeeper identity` (print this machine's device ID), `dotkeeper track <path>` (manage a repo), `dotkeeper start` (run the daemon).
+- Day to day: `dotkeeper status`, `dotkeeper health` (`--explain` / `--watch` / `--json`), `dotkeeper reconcile`, `dotkeeper doctor` (`--json`).
+- Peers & subscriptions: `dotkeeper peer add/list/remove`, `dotkeeper subscribe / unsubscribe / subscriptions list`, `dotkeeper offers`.
+- Transports: `dotkeeper transport list / status / repos`, `dotkeeper bench-now`, `dotkeeper bare-init`.
+- Conflicts: `dotkeeper conflict list / resolve-all / keep / accept`.
+
+## Optional / further reading
+
+- [Architecture Decision Records](https://github.com/julian-corbet/dotkeeper/blob/main/docs/adr/README.md): the durable decision record behind the design.
+- [ADR 0003 — reconciler loop](https://github.com/julian-corbet/dotkeeper/blob/main/docs/adr/0003-reconciler-loop.md): why reconcile is a pure `Diff(desired, observed) → Plan`.
+- [ADR 0001 — per-repo config](https://github.com/julian-corbet/dotkeeper/blob/main/docs/adr/0001-per-repo-config.md): why local `.dotkeeper.toml` is authoritative.
+- [ADR 0006 — Syncthing v2 migration](https://github.com/julian-corbet/dotkeeper/blob/main/docs/adr/0006-syncthing-v2-migration.md): the embedded-Syncthing v2 migration and pseudo-version pin.
+- [Nix / Home Manager topology](https://github.com/julian-corbet/dotkeeper#nix--home-manager-topology) and the [denylist example](https://github.com/julian-corbet/dotkeeper/blob/main/docs/examples/home-manager-denylist.nix): keep the public program generic, put private sync topology in your own flake.
+- [CONTRIBUTING](https://github.com/julian-corbet/dotkeeper/blob/main/CONTRIBUTING.md): build/test/lint, PR workflow, commit conventions, release process.
+- [CHANGELOG](https://github.com/julian-corbet/dotkeeper/blob/main/CHANGELOG.md): full release notes.
+- [Go reference](https://pkg.go.dev/github.com/julian-corbet/dotkeeper): package docs.
+- [SECURITY](https://github.com/julian-corbet/dotkeeper/blob/main/SECURITY.md): private vulnerability disclosure channel.
