@@ -9,19 +9,7 @@ arch="x86_64 aarch64 armv7 x86 ppc64le s390x riscv64"
 license="AGPL-3.0-only"
 depends="git"
 makedepends="go"
-# !check     — full suite needs Docker for multipeer-e2e; opt in via `abuild -K`.
-# !strip     — Go binaries are already stripped via `-ldflags="-s -w"` in build().
-#              abuild's strip step calls `<arch>-alpine-linux-musl-strip` which
-#              isn't present in the container when CARCH differs from the host
-#              arch (cross-compile path). Skipping is correct + simpler than
-#              pulling in cross-binutils.
-# !tracedeps — pure-Go CGO_ENABLED=0 build produces no shared-object
-#              dependencies. abuild's tracedeps invokes `apk info --who-owns`
-#              which apk-tools 4.x (Alpine edge as of 2026-05) renamed,
-#              breaking the call site upstream. Our `depends="git"` already
-#              declares what we need; tracedeps would only confirm zero
-#              shared-library deps, so skipping is no information loss.
-options="!check !strip !tracedeps"
+options="!check"  # full suite needs Docker for multipeer-e2e; opt in via abuild -K.
 source="$pkgname-$pkgver.tar.gz::https://github.com/julian-corbet/dotkeeper/archive/v$pkgver.tar.gz"
 builddir="$srcdir/$pkgname-$pkgver"
 
