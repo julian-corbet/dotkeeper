@@ -561,10 +561,10 @@ right tool for every job, automatically improving over time.
 ### Changed
 
 - **Test fixture scrub:** `cmd/dotkeeper/transport_cli_test.go`
-  was using the maintainer's personal username `alice` as an SSH
-  user in synthetic test cases. The v1.0.1 scrub (PR #48) caught
-  the same pattern in `gitssh_test.go` but missed this file.
-  Replaced with synthetic `alice` throughout.
+  was using the maintainer's personal username as an SSH user in
+  synthetic test cases. The v1.0.1 scrub (PR #48) caught the same
+  pattern in `gitssh_test.go` but missed this file. Replaced with
+  synthetic `alice` throughout.
 
 ## [1.1.8] - 2026-05-24
 
