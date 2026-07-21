@@ -8,7 +8,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/syncthing/syncthing v1.30.0-rc.1.0.20260512055947-c0c401efebf2
 	github.com/thejerf/suture/v4 v4.0.6
-	golang.org/x/sys v0.44.0
+	golang.org/x/sys v0.47.0
 )
 
 require (
